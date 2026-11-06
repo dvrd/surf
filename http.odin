@@ -6,6 +6,7 @@ import http1 "../http/v1"
 import tls_api "core:crypto/tls"
 import trans "core:net"
 import "core:mem"
+import "core:io"
 import "core:net"
 import "core:slice"
 import "core:strings"
@@ -26,6 +27,8 @@ HTTP_Error :: struct {
 	status: int,
 	// Numeric external-provider code only; native paths leave it zero.
 	provider_code: int,
+	// Source-stream failure during a request upload; no path/body is retained.
+	source_io: io.Error,
 }
 
 Config :: struct {
@@ -82,8 +85,13 @@ response_header :: proc(
 // from the URL rather than reusing a different host's TLS config. Roots borrow
 // the caller's Root_Pool. Each redirect establishes a fresh connection.
 execute :: proc(request: http.Request, config: Config, allocator := context.allocator) -> (Response, HTTP_Error) {
+	return execute_with_upload(request, config, nil, allocator)
+}
+
+@(private)
+execute_with_upload :: proc(request: http.Request, config: Config, upload: ^Upload_Source, allocator: mem.Allocator) -> (Response, HTTP_Error) {
 	last_status := 0
-	response, error := execute_internal(request, config, &last_status, allocator)
+	response, error := execute_internal(request, config, &last_status, allocator, upload)
 	if error.kind != .None {
 		if error.phase == .Unknown {error = http_error_classify(error, .Configuration, .Not_Sent)}
 		if error.status == 0 {error.status = last_status}
@@ -98,6 +106,7 @@ execute_internal :: proc(
 	config: Config,
 	last_status: ^int,
 	allocator: mem.Allocator,
+	upload: ^Upload_Source,
 ) -> (
 	response: Response,
 	err: HTTP_Error,
@@ -120,7 +129,9 @@ execute_internal :: proc(
 	for redirects := 0;; redirects += 1 {
 		// Preflight before networking, including all caller-controlled headers.
 		storage: [http.MAX_HEADER_SIZE]u8
-		_, validation := http1.request_encode(storage[:], current)
+		content_length: i64 = -1
+		if upload != nil {content_length = upload.content_length}
+		_, validation := http1.request_encode(storage[:], current, content_length)
 		if validation.kind != .None {
 			error := http_protocol_error(validation)
 			error.phase = .Configuration
@@ -140,9 +151,9 @@ execute_internal :: proc(
 		}
 
 		if u.secure {
-			response, err = execute_tls(u, current, config, total_deadline, allocator)
+			response, err = execute_tls(u, current, config, total_deadline, allocator, upload)
 		} else {
-			response, err = execute_tcp(u, current, config, total_deadline, allocator)
+			response, err = execute_tcp(u, current, config, total_deadline, allocator, upload)
 		}
 
 		if err.kind != .None do return {}, err
@@ -171,7 +182,7 @@ execute_internal :: proc(
 
 execute_tls :: proc(
 	url: http.URL, request: http.Request, config: Config, total_deadline: time.Time,
-	allocator: mem.Allocator,
+	allocator: mem.Allocator, upload: ^Upload_Source = nil,
 ) -> (response: Response, err: HTTP_Error) {
 	connection, allocation_err := new(
 		tls_api.Conn,
@@ -211,12 +222,11 @@ execute_tls :: proc(
 		total_deadline,
 	)
 	if deadline_err.kind == .None {
-		response, err = exchange(
-			stream,
-			request,
-			config.max_body_size,
-			allocator,
-		)
+		if upload != nil {
+			response, err = exchange_upload(stream, request, upload^, config.max_body_size, allocator, total_deadline)
+		} else {
+			response, err = exchange(stream, request, config.max_body_size, allocator)
+		}
 		if err.kind == .IO_Failed {
 			err.tls_io = adapter.last_error
 			err = http_error_classify(err, err.phase, err.write_effect, err.status)
@@ -237,7 +247,7 @@ execute_tls :: proc(
 
 execute_tcp :: proc(
 	url: http.URL, request: http.Request, config: Config, total_deadline: time.Time,
-	allocator: mem.Allocator,
+	allocator: mem.Allocator, upload: ^Upload_Source = nil,
 ) -> (response: Response, err: HTTP_Error) {
 	socket, dial_err := net.dial_tcp(url.host, url.port)
 	if dial_err != nil {
@@ -253,12 +263,11 @@ execute_tcp :: proc(
 		total_deadline,
 	)
 	if deadline_err.kind == .None {
-		response, err = exchange(
-			stream,
-			request,
-			config.max_body_size,
-			allocator,
-		)
+		if upload != nil {
+			response, err = exchange_upload(stream, request, upload^, config.max_body_size, allocator, total_deadline)
+		} else {
+			response, err = exchange(stream, request, config.max_body_size, allocator)
+		}
 	} else {
 		err = {
 			kind      = .Deadline_Failed,
@@ -371,7 +380,6 @@ exchange_internal :: proc(
 	stream: trans.Connection, request: http.Request, max_body_size: int,
 	allocator: mem.Allocator, outcome: ^HTTP_Exchange_Outcome,
 ) -> (Response, HTTP_Error) {
-	response: Response
 	if !trans.connection_valid(stream) {
 		return {}, {kind = .Invalid_Config}
 	}
@@ -403,6 +411,12 @@ exchange_internal :: proc(
 		return {}, {kind = .IO_Failed, transport = write_err, phase = .Write}
 	}
 
+	return exchange_read_response(stream, request, limit, allocator, outcome)
+}
+
+@(private)
+exchange_read_response :: proc(stream: trans.Connection, request: http.Request, limit: int, allocator: mem.Allocator, outcome: ^HTTP_Exchange_Outcome) -> (Response, HTTP_Error) {
+	response: Response
 	reader := Reader {
 		stream = stream,
 	}
