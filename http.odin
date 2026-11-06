@@ -20,6 +20,12 @@ HTTP_Error :: struct {
 	tls_dial:   tls_api.Dial_Error,
 	tls_io:     tls_api.IO_Error,
 	allocation: mem.Allocator_Error,
+	phase: HTTP_Phase,
+	write_effect: HTTP_Write_Effect,
+	// Last validated HTTP status, including failures while reading its body.
+	status: int,
+	// Numeric external-provider code only; native paths leave it zero.
+	provider_code: int,
 }
 
 Config :: struct {
@@ -75,14 +81,28 @@ response_header :: proc(
 // Single blocking request. HTTPS authentication always derives server_name
 // from the URL rather than reusing a different host's TLS config. Roots borrow
 // the caller's Root_Pool. Each redirect establishes a fresh connection.
-execute :: proc(
+execute :: proc(request: http.Request, config: Config, allocator := context.allocator) -> (Response, HTTP_Error) {
+	last_status := 0
+	response, error := execute_internal(request, config, &last_status, allocator)
+	if error.kind != .None {
+		if error.phase == .Unknown {error = http_error_classify(error, .Configuration, .Not_Sent)}
+		if error.status == 0 {error.status = last_status}
+		if last_status != 0 && error.write_effect == .Not_Sent {error.write_effect = .Response_Received}
+	}
+	return response, error
+}
+
+@(private)
+execute_internal :: proc(
 	request: http.Request,
 	config: Config,
-	allocator := context.allocator,
+	last_status: ^int,
+	allocator: mem.Allocator,
 ) -> (
 	response: Response,
 	err: HTTP_Error,
 ) {
+
 	if e := config_validate(config); e.kind != .None {
 		return {}, e
 	}
@@ -101,7 +121,12 @@ execute :: proc(
 		// Preflight before networking, including all caller-controlled headers.
 		storage: [http.MAX_HEADER_SIZE]u8
 		_, validation := http1.request_encode(storage[:], current)
-		if validation.kind != .None do return {}, http_protocol_error(validation)
+		if validation.kind != .None {
+			error := http_protocol_error(validation)
+			error.phase = .Configuration
+			if validation.kind == .Body_Oversized {error.phase = .Body_Limit}
+			return {}, error
+		}
 
 		u, e := http.url_parse(current.url)
 		if e.kind != .None do return {}, http_protocol_error(e)
@@ -122,6 +147,7 @@ execute :: proc(
 
 		if err.kind != .None do return {}, err
 
+		last_status^ = response.status
 		redirect := slice.contains(
 			[]type_of(response.status){301, 302, 303, 307, 308},
 			response.status,
@@ -153,7 +179,7 @@ execute_tls :: proc(
 	)
 	if allocation_err != nil {
 		return {}, {
-			kind = .Allocation_Failed,
+			kind = .Allocation_Failed, phase = .Configuration, write_effect = .Not_Sent,
 			allocation = allocation_err,
 		}
 	}
@@ -168,7 +194,7 @@ execute_tls :: proc(
 	)
 	if dial_err.kind != .None {
 		free(connection, allocator)
-		return {}, {kind = .TLS_Failed, tls_dial = dial_err}
+		return {}, http_error_classify({kind = .TLS_Failed, tls_dial = dial_err}, .TLS, .Not_Sent)
 	}
 
 	adapter := TLS_Adapter {
@@ -193,6 +219,7 @@ execute_tls :: proc(
 		)
 		if err.kind == .IO_Failed {
 			err.tls_io = adapter.last_error
+			err = http_error_classify(err, err.phase, err.write_effect, err.status)
 		}
 	} else {
 		err = {
@@ -204,6 +231,7 @@ execute_tls :: proc(
 	tls_api.abort(connection)
 	free(connection, allocator)
 
+	if err.kind != .None && err.phase == .Unknown {err = http_error_classify(err, .TLS, .Not_Sent)}
 	return response, err
 }
 
@@ -213,7 +241,7 @@ execute_tcp :: proc(
 ) -> (response: Response, err: HTTP_Error) {
 	socket, dial_err := net.dial_tcp(url.host, url.port)
 	if dial_err != nil {
-		return {}, {kind = .Dial_Failed, network = dial_err}
+		return {}, http_error_classify({kind = .Dial_Failed, network = dial_err}, .Connect, .Not_Sent)
 	}
 
 	connection := trans.TCP_Connection {
@@ -240,6 +268,7 @@ execute_tcp :: proc(
 
 	stream.close(stream.data)
 
+	if err.kind != .None && err.phase == .Unknown {err = http_error_classify(err, .Connect, .Not_Sent)}
 	return response, err
 }
 
@@ -320,14 +349,28 @@ redirect_origin_safe :: proc(request: http.Request, previous, next: http.URL) ->
 // policy, does not close it, and consumes exactly one response. The caller must
 // set deadlines. Any unconsumed bytes are discarded: do not reuse the stream.
 exchange :: proc(
-	stream: trans.Connection,
-	request: http.Request,
-	max_body_size: int = 0,
+	stream: trans.Connection, request: http.Request, max_body_size: int = 0,
 	allocator := context.allocator,
-) -> (
-	Response,
-	HTTP_Error,
-) {
+) -> (Response, HTTP_Error) {
+	outcome: HTTP_Exchange_Outcome
+	response, error := exchange_internal(stream, request, max_body_size, allocator, &outcome)
+	if error.kind != .None {
+		effect: HTTP_Write_Effect = .Not_Sent
+		if outcome.write_started {effect = .Unknown}
+		if outcome.status != 0 {effect = .Response_Received}
+		error = http_error_classify(error, .Read, effect, outcome.status)
+	}
+	return response, error
+}
+
+@(private)
+HTTP_Exchange_Outcome :: struct {write_started: bool, status: int}
+
+@(private)
+exchange_internal :: proc(
+	stream: trans.Connection, request: http.Request, max_body_size: int,
+	allocator: mem.Allocator, outcome: ^HTTP_Exchange_Outcome,
+) -> (Response, HTTP_Error) {
 	response: Response
 	if !trans.connection_valid(stream) {
 		return {}, {kind = .Invalid_Config}
@@ -342,30 +385,40 @@ exchange :: proc(
 
 	encoded: [http.MAX_HEADER_SIZE]u8
 	n, e := http1.request_encode(encoded[:], request)
-	if e.kind != .None do return {}, http_protocol_error(e)
+	if e.kind != .None {
+		error := http_protocol_error(e)
+		error.phase = .Configuration
+		if e.kind == .Body_Oversized {error.phase = .Body_Limit}
+		return {}, error
+	}
 
+	outcome.write_started = true
 	if _, write_err := trans.write_all(stream, encoded[:n]);
 	   write_err.kind != .None {
-		return {}, {kind = .IO_Failed, transport = write_err}
+		return {}, {kind = .IO_Failed, transport = write_err, phase = .Write}
 	}
 
 	if _, write_err := trans.write_all(stream, request.body);
 	   write_err.kind != .None {
-		return {}, {kind = .IO_Failed, transport = write_err}
+		return {}, {kind = .IO_Failed, transport = write_err, phase = .Write}
 	}
 
 	reader := Reader {
 		stream = stream,
 	}
 	storage: [http.MAX_HEADER_SIZE]u8
-	used, header_error := response_read_header(&reader, storage[:])
+	used, header_error := response_read_header(&reader, storage[:], &outcome.status)
 	if header_error.kind != .None {return {}, header_error}
 	response.allocator = allocator
 	success := false
 	defer if !success do response_destroy(&response)
 
 	head, initialize_error := response_initialize(&response, storage[:used], limit, allocator)
-	if initialize_error.kind != .None {return {}, initialize_error}
+	if initialize_error.kind != .None {
+		if response.status != 0 {outcome.status = response.status}
+		return {}, initialize_error
+	}
+	outcome.status = head.status
 	// HEAD describes the representation, but carries no response body.
 	http1.response_apply_method(&head, request.method)
 	if body_error := response_read_body(&reader, &response, head, limit); body_error.kind != .None {
@@ -376,7 +429,7 @@ exchange :: proc(
 	return response, {}
 }
 
-response_read_header :: proc(reader: ^Reader, storage: []u8) -> (int, HTTP_Error) {
+response_read_header :: proc(reader: ^Reader, storage: []u8, observed_status: ^int = nil) -> (int, HTTP_Error) {
 	assert(len(storage) == http.MAX_HEADER_SIZE)
 	used := 0
 	for informational := 0;; informational += 1 {
@@ -401,6 +454,7 @@ response_read_header :: proc(reader: ^Reader, storage: []u8) -> (int, HTTP_Error
 		}
 		head, _, he := http1.response_header_decode(storage[:used])
 		if he.kind != .None do return 0, http_protocol_error(he)
+		if observed_status != nil {observed_status^ = head.status}
 
 		if head.status == 101 {
 			return 0, {kind = .Invalid_Status}
@@ -869,5 +923,5 @@ redirect_path_normalize :: proc(dst: []u8, target: string) -> int {
 }
 
 http_protocol_error :: proc(error: http.Error) -> HTTP_Error {
-	return {kind = error.kind, allocation = error.allocation}
+	return {kind = error.kind, allocation = error.allocation, phase = .Protocol}
 }
