@@ -1,4 +1,4 @@
-package client
+package surf
 
 import websocket "../websocket"
 import tls_api "core:crypto/tls"

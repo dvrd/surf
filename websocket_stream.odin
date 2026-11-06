@@ -1,4 +1,4 @@
-package client
+package surf
 
 import tls_api "core:crypto/tls"
 import tcp_api "core:net"

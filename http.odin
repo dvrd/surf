@@ -1,7 +1,8 @@
-package client
+package surf
 
 
 import http "../http"
+import http1 "../http/v1"
 import tls_api "core:crypto/tls"
 import trans "core:net"
 import "core:mem"
@@ -99,7 +100,7 @@ execute :: proc(
 	for redirects := 0;; redirects += 1 {
 		// Preflight before networking, including all caller-controlled headers.
 		storage: [http.MAX_HEADER_SIZE]u8
-		_, validation := http.request_encode(storage[:], current)
+		_, validation := http1.request_encode(storage[:], current)
 		if validation.kind != .None do return {}, http_protocol_error(validation)
 
 		u, e := http.url_parse(current.url)
@@ -340,7 +341,7 @@ exchange :: proc(
 	if limit == 0 do limit = http.DEFAULT_MAX_BODY_SIZE
 
 	encoded: [http.MAX_HEADER_SIZE]u8
-	n, e := http.request_encode(encoded[:], request)
+	n, e := http1.request_encode(encoded[:], request)
 	if e.kind != .None do return {}, http_protocol_error(e)
 
 	if _, write_err := trans.write_all(stream, encoded[:n]);
@@ -365,6 +366,8 @@ exchange :: proc(
 
 	head, initialize_error := response_initialize(&response, storage[:used], limit, allocator)
 	if initialize_error.kind != .None {return {}, initialize_error}
+	// HEAD describes the representation, but carries no response body.
+	http1.response_apply_method(&head, request.method)
 	if body_error := response_read_body(&reader, &response, head, limit); body_error.kind != .None {
 		return {}, body_error
 	}
@@ -396,7 +399,7 @@ response_read_header :: proc(reader: ^Reader, storage: []u8) -> (int, HTTP_Error
 				break
 			}
 		}
-		head, _, he := http.response_header_decode(storage[:used])
+		head, _, he := http1.response_header_decode(storage[:used])
 		if he.kind != .None do return 0, http_protocol_error(he)
 
 		if head.status == 101 {
@@ -414,26 +417,26 @@ response_read_header :: proc(reader: ^Reader, storage: []u8) -> (int, HTTP_Error
 
 response_initialize :: proc(
 	response: ^Response, storage: []u8, limit: int, allocator: mem.Allocator,
-) -> (http.Response_Head, HTTP_Error) {
+) -> (http1.Response_Head, HTTP_Error) {
 	header_storage, ae := make([]u8, len(storage), allocator)
 	if ae != nil {
-		return http.Response_Head{}, {kind = .Allocation_Failed, allocation = ae}
+		return http1.Response_Head{}, {kind = .Allocation_Failed, allocation = ae}
 	}
 
 	response.header_storage = header_storage
 	copy(header_storage, storage)
-	head, _, _ := http.response_header_decode(header_storage)
+	head, _, _ := http1.response_header_decode(header_storage)
 	response.status = head.status
 	headers, hae := make([]http.Header, head.header_count, allocator)
 	if hae != nil {
-		return http.Response_Head{}, {kind = .Allocation_Failed, allocation = hae}
+		return http1.Response_Head{}, {kind = .Allocation_Failed, allocation = hae}
 	}
 
 	response.headers = headers
 	copy(headers, head.headers[:head.header_count])
 	body, bae := make([dynamic]u8, 0, min(4096, limit), allocator)
 	if bae != nil {
-		return http.Response_Head{}, {kind = .Allocation_Failed, allocation = bae}
+		return http1.Response_Head{}, {kind = .Allocation_Failed, allocation = bae}
 	}
 
 	response.body_storage = body
@@ -441,7 +444,7 @@ response_initialize :: proc(
 }
 
 response_read_body :: proc(
-	reader: ^Reader, response: ^Response, head: http.Response_Head, limit: int,
+	reader: ^Reader, response: ^Response, head: http1.Response_Head, limit: int,
 ) -> HTTP_Error {
 	if head.framing == .Length &&
 	   head.content_length > cast(u64)limit {
@@ -498,7 +501,7 @@ response_read_chunked :: proc(reader: ^Reader, body: ^[dynamic]u8, limit: int) -
 		read_count, operation_error_2 := reader_line(reader, line[:], &metadata)
 		if operation_error_2.kind != .None do return operation_error_2
 
-		size, se := http.chunk_size_decode(cast(string)line[:read_count])
+		size, se := http1.chunk_size_decode(cast(string)line[:read_count])
 		if se.kind != .None do return http_protocol_error(se)
 
 		if size == 0 do break
@@ -531,8 +534,8 @@ response_read_chunked :: proc(reader: ^Reader, body: ^[dynamic]u8, limit: int) -
 
 		if read_count == 0 do break
 
-		h, he := http.header_line_decode(cast(string)line[:read_count])
-		if he.kind != .None || http.forbidden_trailer(h.name) {
+		h, he := http1.header_line_decode(cast(string)line[:read_count])
+		if he.kind != .None || http1.forbidden_trailer(h.name) {
 			return {kind = .Invalid_Trailer}
 		}
 	}

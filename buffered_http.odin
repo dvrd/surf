@@ -1,4 +1,4 @@
-package client
+package surf
 
 import "base:runtime"
 import "core:c"
