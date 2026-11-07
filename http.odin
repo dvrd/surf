@@ -37,10 +37,13 @@ Config :: struct {
 	max_body_size: int,
 	// Zero disables automatic redirects; maximum5. POST follows only307/308.
 	max_redirects: int,
-	// Zero selects30s for the entire I/O/redirect budget. DNS/TCP connect
-	// uses core:net's dial behavior; TLS handshake uses tls.handshake_timeout.
+	// Zero selects30s for the entire setup/I/O/redirect budget.
 	timeout:       time.Duration,
 	allow_http:    bool,
+	// Zero uses the remaining total budget. A positive value bounds DNS+TCP+TLS
+	// together for each new connection, always capped by the total deadline.
+	setup_timeout: time.Duration,
+	resolver:      net.Resolver_Options,
 }
 
 
@@ -188,7 +191,8 @@ execute_tls :: proc(
 		tls_api.Conn,
 		allocator,
 	)
-	if allocation_err != nil {
+	if allocation_err != nil || connection == nil {
+		if allocation_err == nil {allocation_err = .Out_Of_Memory}
 		return {}, {
 			kind = .Allocation_Failed, phase = .Configuration, write_effect = .Not_Sent,
 			allocation = allocation_err,
@@ -197,15 +201,30 @@ execute_tls :: proc(
 
 	settings := config.tls
 	settings.server_name = url.host
-	dial_err := tls_api.dial(
-		connection,
-		url.host,
-		url.port,
-		settings,
-	)
-	if dial_err.kind != .None {
+	if validation := tls_api.config_validate(settings); validation != .None {
 		free(connection, allocator)
-		return {}, http_error_classify({kind = .TLS_Failed, tls_dial = dial_err}, .TLS, .Not_Sent)
+		return {}, http_error_classify({kind = .TLS_Failed, tls_dial = {kind = .Invalid_Config, config = validation}}, .Configuration, .Not_Sent)
+	}
+	setup_deadline := connection_setup_deadline(config, total_deadline)
+	socket, setup_error := bounded_socket(url, config, setup_deadline)
+	if setup_error.kind != .None {free(connection, allocator); return {}, setup_error}
+	remaining := time.diff(time.now(), setup_deadline)
+	if remaining <= 0 {
+		net.close(socket)
+		free(connection, allocator)
+		return {}, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent}
+	}
+	underlying := trans.tcp_connection(&connection.tcp)
+	if client_error := tls_api.client(connection, underlying, settings); client_error != .None {
+		net.close(socket)
+		free(connection, allocator)
+		return {}, http_error_classify({kind = .TLS_Failed, tls_dial = {kind = .Invalid_Config, config = client_error}}, .Configuration, .Not_Sent)
+	}
+	connection.tcp = {socket = socket}
+	if handshake_error := tls_api.handshake_until(connection, setup_deadline); handshake_error.kind != .None {
+		tls_api.abort(connection)
+		free(connection, allocator)
+		return {}, http_error_classify({kind = .TLS_Failed, tls_dial = {kind = .Handshake_Failed, handshake = handshake_error}}, .TLS, .Not_Sent)
 	}
 
 	adapter := TLS_Adapter {
@@ -249,10 +268,8 @@ execute_tcp :: proc(
 	url: http.URL, request: http.Request, config: Config, total_deadline: time.Time,
 	allocator: mem.Allocator, upload: ^Upload_Source = nil,
 ) -> (response: Response, err: HTTP_Error) {
-	socket, dial_err := net.dial_tcp(url.host, url.port)
-	if dial_err != nil {
-		return {}, http_error_classify({kind = .Dial_Failed, network = dial_err}, .Connect, .Not_Sent)
-	}
+	socket, setup_error := bounded_socket(url, config, connection_setup_deadline(config, total_deadline))
+	if setup_error.kind != .None {return {}, setup_error}
 
 	connection := trans.TCP_Connection {
 		socket = socket,
@@ -727,7 +744,7 @@ config_validate :: proc(c: Config) -> HTTP_Error {
 	   c.max_body_size > http.MAX_BODY_SIZE ||
 	   c.max_redirects < 0 ||
 	   c.max_redirects > http.MAX_REDIRECTS ||
-	   c.timeout < 0 {
+	   c.timeout < 0 || c.setup_timeout < 0 {
 		return {kind = .Invalid_Config}
 	}
 

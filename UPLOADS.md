@@ -29,7 +29,7 @@ The source's `io.Error` is retained in `HTTP_Error.source_io`; no file path or p
 
 Once connected, native transport deadlines bound socket I/O. The upload driver also checks the absolute deadline around source reads. It cannot interrupt an arbitrary synchronous source callback: readers must provide their own cooperative bounds. Caller-owned transports can report cancellation through `net.Connection_Error.Cancelled`; the error retains its cancellation category and conservative write effect. These blocking APIs do not introduce an external cancellation mechanism.
 
-**The existing resolver/connect limitation remains:** native blocking DNS and TCP connection establishment do not accept Surf's absolute deadline, and the TLS handshake uses its existing configured handshake budget before the total I/O deadline is installed. This upload capability does not certify parity with the legacy adapter's explicit connect and total timeouts. The legacy curl adapter remains in place. Replacing it (OKAMI-133), migrating its consumers (OKAMI-134), and completing the parent migration (OKAMI-124) require deadline/trust/method parity; they are not completed by OKAMI-132.
+Connection establishment now uses the [bounded setup prerequisite](SETUP.md) for DNS, TCP and TLS on supported platforms. This upload capability and that prerequisite do not certify full compatibility with the legacy adapter. The legacy curl adapter remains in place. Replacing it (OKAMI-133), migrating its consumers (OKAMI-134), and completing the parent migration (OKAMI-124) still require trust/method/protocol and deadline parity; they are not completed by OKAMI-132 alone.
 
 ## Offline verification
 

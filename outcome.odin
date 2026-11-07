@@ -83,7 +83,10 @@ http_error_classify :: proc(error: HTTP_Error, fallback: HTTP_Phase, effect: HTT
 http_network_phase :: proc(error: net.Network_Error) -> HTTP_Phase {
 	if error == nil {return .Unknown}
 	#partial switch cause in error {
-	case net.Resolve_Error, net.DNS_Error: return .DNS
+	case net.Resolve_Error: return .DNS
+	case net.DNS_Error:
+		if cause == .Timeout {return .Deadline}
+		return .DNS
 	case net.Dial_Error:
 		if cause == .Timeout {return .Deadline}
 		return .Connect
