@@ -748,6 +748,11 @@ config_validate :: proc(c: Config) -> HTTP_Error {
 		return {kind = .Invalid_Config}
 	}
 
+	// Surf has only an HTTP/1 driver: never negotiate a protocol it cannot use.
+	if len(c.tls.alpn_protocols) > tls_api.MAX_ALPN_PROTOCOLS {return {kind = .Invalid_Config}}
+	for protocol in c.tls.alpn_protocols {
+		if protocol != "http/1.1" {return {kind = .Invalid_Config}}
+	}
 	return {}
 }
 effective_timeout :: proc(c: Config) -> time.Duration {
