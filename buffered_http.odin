@@ -7,7 +7,7 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:mem"
-import http "../http"
+import resources "core:sync/budget"
 import curl "vendor:curl"
 
 // Streaming file uploads retain the existing curl adapter: unlike execute(),
@@ -33,6 +33,7 @@ buffered_http_initialize :: proc() {
 	version := curl.version_info(.FIRST)
 	buffered_http_initialized = version != nil && version.features & curl.VERSION_ASYNCHDNS != 0
 }
+// Preserve the original procedure type for injected AWS/S3 HTTP callbacks.
 buffered_http_execute :: proc(
 	method, url: string,
 	body: []byte,
@@ -43,74 +44,79 @@ buffered_http_execute :: proc(
 	upload_file: ^os.File = nil,
 	upload_size: i64 = 0,
 ) -> (
+	[]byte,
+	Buffered_HTTP_Result,
+) {
+	return buffered_http_execute_managed(
+		method,
+		url,
+		body,
+		headers,
+		ca_file,
+		allow_http,
+		timeout_ms,
+		upload_file,
+		upload_size,
+	)
+}
+
+buffered_http_execute_managed :: proc(
+	method, url: string,
+	body: []byte,
+	headers: []string,
+	ca_file: string,
+	allow_http := false,
+	timeout_ms: i64 = 15000,
+	upload_file: ^os.File = nil,
+	upload_size: i64 = 0,
+	scope: resources.Scope = {},
+	allocator_scope: resources.Scope = {},
+) -> (
 	data: []byte,
 	result: Buffered_HTTP_Result,
 ) {
-	result.error = {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent}
-	parsed, parse_error := http.url_parse(url)
-	if parse_error.kind != .None {result.error.kind = parse_error.kind; return}
-	if !allow_http && !parsed.secure {result.error.kind = .Insecure_URL; return}
-	if !http.header_name_valid(method) {result.error.kind = .Invalid_Method; return}
-	if timeout_ms <= 0 || timeout_ms > 120000 || upload_size < 0 {return}
-	sync.once_do(&buffered_http_ready, buffered_http_initialize)
-	if !buffered_http_initialized do return
-	handle := curl.easy_init()
-	if handle == nil {result.error.kind = .Allocation_Failed; return}
-	list: ^curl.slist
-	defer {curl.easy_cleanup(handle); if list != nil do curl.slist_free_all(list)}
-	for header in headers {
-		if strings.contains_any(header, "\r\n\x00") {result.error.kind = .Invalid_Header; return}
-		text, allocation_error := buffered_http_cstring_checked(header)
-		if allocation_error != nil {result.error = buffered_http_allocation_error(allocation_error); return}
-		next := curl.slist_append(list, text)
-		if next == nil {result.error.kind = .Allocation_Failed; return}
-		list = next
+	validation := buffered_http_validate(
+		method,
+		url,
+		headers,
+		allow_http,
+		timeout_ms,
+		upload_size,
+		scope != (resources.Scope{}),
+	)
+	if validation.kind != .None do return nil, {error = validation}
+	// Borrowed output has no independent destructor: managed mode requires an
+	// explicit host promise about the temporary allocator's covered lifetime.
+	if scope != (resources.Scope{}) && allocator_scope == (resources.Scope{}) {
+		return nil, {error = budget_error(.Invalid_Config)}
 	}
-	if list != nil && !buffered_http_setopt(handle, .HTTPHEADER, list, &result.error) {return}
-	if !buffered_http_options(handle, method, url, ca_file, timeout_ms, &result.error) {return}
-	if upload_file != nil {
-		if !buffered_http_setopt(handle, .UPLOAD, c.long(1), &result.error) ||
-		   !buffered_http_setopt(handle, .READFUNCTION, buffered_http_read_file, &result.error) ||
-		   !buffered_http_setopt(handle, .READDATA, upload_file, &result.error) ||
-		   !buffered_http_setopt(handle, .INFILESIZE_LARGE, c.longlong(upload_size), &result.error) {return}
-	} else if method == "PUT" || method == "POST" {
-		empty: byte
-		pointer := raw_data(body)
-		if pointer == nil do pointer = &empty
-		if !buffered_http_setopt(handle, .POSTFIELDS, pointer, &result.error) ||
-		   !buffered_http_setopt(handle, .POSTFIELDSIZE_LARGE, c.longlong(len(body)), &result.error) {return}
-	}
+	ctx, output, admission := budget_begin(scope, allocator_scope, context.temp_allocator)
+	if admission.kind != .None do return nil, {error = admission}
+	defer budget_cleanup(&ctx)
+	scratch, denied := buffered_http_scratch(scope)
+	if denied.kind != .None do return nil, {error = denied}
+	defer resources.release(&scratch)
 	reply: Buffered_HTTP_Reply
-	if !buffered_http_setopt(handle, .WRITEFUNCTION, buffered_http_receive, &result.error) ||
-	   !buffered_http_setopt(handle, .WRITEDATA, &reply, &result.error) {
-		return
-	}
-	code := curl.easy_perform(handle)
-	status: c.long
-	info_code := curl.easy_getinfo(handle, .RESPONSE_CODE, &status)
-	if info_code == .E_OK {result.status = int(status)}
-	if code != .E_OK {
-		request_size: c.long = -1
-		if curl.easy_getinfo(handle, .REQUEST_SIZE, &request_size) != .E_OK {request_size = -1}
-		result.error = buffered_http_error(code, result.status, reply.limit_exceeded, upload_file != nil, i64(request_size))
-		return
-	}
-	if info_code != .E_OK {
-		result.error = {kind = .IO_Failed, phase = .Unknown, provider_code = int(info_code), write_effect = .Unknown}
-		return
-	}
-	copied, allocation_error := make([]byte, reply.used, context.temp_allocator)
-	if allocation_error != nil {
-		result.error = {kind = .Allocation_Failed, phase = .Read, allocation = allocation_error,
-                  status = result.status, write_effect = .Response_Received}
-		return
+	result = buffered_http_perform(
+		method,
+		url,
+		body,
+		headers,
+		ca_file,
+		timeout_ms,
+		upload_file,
+		upload_size,
+		&reply,
+	)
+	if !result.transport_ok do return
+	copied, ae := make([]byte, reply.used, output)
+	if ae != nil {
+		result = buffered_http_copy_error(result, ae); return
 	}
 	copy(copied, reply.data[:reply.used])
-	result.ok = status >= 200 && status < 300
-	result.transport_ok = true
-	result.error = {}
 	return copied, result
 }
+
 // Keep the existing bool helper interface; callers may request typed setup
 // diagnostics without losing allocation or provider option failure details.
 buffered_http_options :: proc(

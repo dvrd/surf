@@ -6,6 +6,7 @@ import http1 "../http/v1"
 import tls_api "core:crypto/tls"
 import trans "core:net"
 import "core:mem"
+import resources "core:sync/budget"
 import "core:io"
 import "core:net"
 import "core:slice"
@@ -29,6 +30,9 @@ HTTP_Error :: struct {
 	provider_code: int,
 	// Source-stream failure during a request upload; no path/body is retained.
 	source_io: io.Error,
+	// Exact scope admission cause; allocator-enforced byte failures retain the
+	// standard Allocation_Failed kind without guessing a concurrent cause.
+	budget: resources.Error,
 }
 
 Config :: struct {
@@ -44,6 +48,12 @@ Config :: struct {
 	// together for each new connection, always capped by the total deadline.
 	setup_timeout: time.Duration,
 	resolver:      net.Resolver_Options,
+	// Zero preserves unmanaged compatibility. Host supplies an operation Scope
+	// below its connection/global hierarchy.
+	scope: resources.Scope,
+	// Trusted coverage for a caller arena whose BOTH backings are charged.
+	// This reference does not extend the arena/storage lifetime.
+	allocator_scope: resources.Scope,
 }
 
 
@@ -56,17 +66,17 @@ Response :: struct {
 	allocator:      mem.Allocator,
 	header_storage: []u8,
 	body_storage:   [dynamic]u8,
+	_allocator_scope: resources.Scope,
 }
 response_destroy :: proc(response: ^Response) {
 	if response == nil do return
-
-	if response.allocator.procedure != nil {
-		delete(response.headers, response.allocator)
-		delete(response.header_storage, response.allocator)
-		delete(response.body_storage)
+	old := response^; response^ = {}
+	if old.allocator.procedure != nil {
+		delete(old.headers, old.allocator)
+		delete(old.header_storage, old.allocator)
+		delete(old.body_storage)
 	}
-
-	response^ = {}
+	resources.release_scope(&old._allocator_scope)
 }
 response_header :: proc(
 	response: ^Response,
@@ -92,14 +102,43 @@ execute :: proc(request: http.Request, config: Config, allocator := context.allo
 }
 
 @(private)
-execute_with_upload :: proc(request: http.Request, config: Config, upload: ^Upload_Source, allocator: mem.Allocator) -> (Response, HTTP_Error) {
-	last_status := 0
-	response, error := execute_internal(request, config, &last_status, allocator, upload)
-	if error.kind != .None {
-		if error.phase == .Unknown {error = http_error_classify(error, .Configuration, .Not_Sent)}
-		if error.status == 0 {error.status = last_status}
-		if last_status != 0 && error.write_effect == .Not_Sent {error.write_effect = .Response_Received}
+execute_with_upload :: proc(
+	request: http.Request,
+	config: Config,
+	upload: ^Upload_Source,
+	allocator: mem.Allocator,
+) -> (
+	Response,
+	HTTP_Error,
+) {
+	if validation := config_validate(config); validation.kind != .None {
+		return {}, http_error_classify(validation, .Configuration, .Not_Sent)
 	}
+	ctx, call_allocator, admission := budget_begin(config.scope, config.allocator_scope, allocator)
+	if admission.kind != .None do return {}, admission
+	defer budget_cleanup(&ctx)
+	previous_context := context
+	next_context := context
+	if resources.scope_of(ctx.stream) != (resources.Scope{}) {
+		next_context.allocator = call_allocator
+		next_context.temp_allocator = budget_temporary(&ctx, call_allocator)
+	}
+	context = next_context
+	defer context = previous_context
+	last_status := 0
+	response, error := execute_internal(request, config, &last_status, call_allocator, upload)
+	if error.kind != .None {
+		if error.phase == .Unknown {
+			error = http_error_classify(error, .Configuration, .Not_Sent)
+		}
+		if error.status == 0 {
+			error.status = last_status
+		}
+		if last_status != 0 && error.write_effect == .Not_Sent {
+			error.write_effect = .Response_Received
+		}
+	}
+	if error.kind == .None do budget_response(&ctx, &response)
 	return response, error
 }
 
@@ -375,17 +414,53 @@ redirect_origin_safe :: proc(request: http.Request, previous, next: http.URL) ->
 // policy, does not close it, and consumes exactly one response. The caller must
 // set deadlines. Any unconsumed bytes are discarded: do not reuse the stream.
 exchange :: proc(
-	stream: trans.Connection, request: http.Request, max_body_size: int = 0,
+	stream: trans.Connection,
+	request: http.Request,
+	max_body_size: int = 0,
 	allocator := context.allocator,
-) -> (Response, HTTP_Error) {
+) -> (
+	Response,
+	HTTP_Error,
+) {
+	return exchange_scoped(stream, request, max_body_size, allocator)
+}
+
+// Explicit scoped variant preserves exchange's original injectable procedure type.
+exchange_scoped :: proc(
+	stream: trans.Connection,
+	request: http.Request,
+	max_body_size: int = 0,
+	allocator := context.allocator,
+	scope: resources.Scope = {},
+	allocator_scope: resources.Scope = {},
+) -> (
+	Response,
+	HTTP_Error,
+) {
+	ctx, call_allocator, admission := budget_begin(scope, allocator_scope, allocator)
+	if admission.kind != .None do return {}, admission
+	defer budget_cleanup(&ctx)
+	previous_context := context
+	next_context := context
+	if resources.scope_of(ctx.stream) != (resources.Scope{}) {
+		next_context.allocator = call_allocator
+		next_context.temp_allocator = budget_temporary(&ctx, call_allocator)
+	}
+	context = next_context
+	defer context = previous_context
 	outcome: HTTP_Exchange_Outcome
-	response, error := exchange_internal(stream, request, max_body_size, allocator, &outcome)
+	response, error := exchange_internal(stream, request, max_body_size, call_allocator, &outcome)
 	if error.kind != .None {
 		effect: HTTP_Write_Effect = .Not_Sent
-		if outcome.write_started {effect = .Unknown}
-		if outcome.status != 0 {effect = .Response_Received}
+		if outcome.write_started {
+			effect = .Unknown
+		}
+		if outcome.status != 0 {
+			effect = .Response_Received
+		}
 		error = http_error_classify(error, .Read, effect, outcome.status)
 	}
+	if error.kind == .None do budget_response(&ctx, &response)
 	return response, error
 }
 
