@@ -266,7 +266,8 @@
       "layer": "API",
       "files": [
         "async/coordinator.odin",
-        "async/network_queue.odin"
+        "async/network_queue.odin",
+        "async/runtime_ownership.odin"
       ],
       "depends_on": [
         "101-16-bootstrap-verify",
@@ -276,7 +277,7 @@
       "agent": true,
       "status": "pending",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Actual metadata-only coordinator and network queue integration on frozen bootstrap + pure pool policy; separate timer/bounded persistent request/DNS scans, retained signal snapshots, safe queued completion and active-owner cancellation. No I/O. Pure pool/queue second-owner changes are split into phase3a to run in parallel with bootstrap."
+      "proof_scope": "Actual metadata-only coordinator and network queue integration on frozen bootstrap + pure pool policy; separate timer/bounded persistent request/DNS scans, retained signal snapshots, safe queued completion and active-owner cancellation. No I/O. Pure pool/queue second-owner changes are split into phase3a to run in parallel with bootstrap. Narrow explicit SECOND runtime_ownership owner fixes independently reproduced queued DNS block/awaiting metadata not burned on unstarted common cancellation; preserve State\u2192Kernel lock order and counters before physical frees."
     },
     {
       "id": "101-17-coordinator-verify",
