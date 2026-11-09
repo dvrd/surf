@@ -76,9 +76,10 @@
       ],
       "round": 14,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "One bounded nonblocking MSG_PEEK syscall; no EINTR retry; Empty/Data/Closed/errors; validates generation/stream/owner/cancel; no readiness/timer updates."
+      "proof_scope": "One bounded nonblocking MSG_PEEK syscall; no EINTR retry; Empty/Data/Closed/errors; validates generation/stream/owner/cancel; no readiness/timer updates.",
+      "evidence": "async candidate7403165 canonical728ac86; task-probe/receipt.json SHA42917ac5f41b7119051b1599db9eff236fa7821eb5910ca44dfd21847dd1edb0;8pairedcells runtime30/public47/signal3/2perSan, actualownedTCP/RST/noalloc/readinessunchanged"
     },
     {
       "id": "101-14-stream-probe-verify",
@@ -93,9 +94,10 @@
       ],
       "round": 15,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-idle-probe-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-idle-probe-thread",
-      "proof_scope": "Actual owner-loop Empty/Data/EOF/reset/partial bytes, byte remains readable, stale/wrongowner/dgram/cancel, no allocation/ready/timer changes; source-bound receipt."
+      "proof_scope": "Actual owner-loop Empty/Data/EOF/reset/partial bytes, byte remains readable, stale/wrongowner/dgram/cancel, no allocation/ready/timer changes; source-bound receipt.",
+      "evidence": "async candidate7403165 canonical728ac86; task-probe/receipt.json SHA42917ac5f41b7119051b1599db9eff236fa7821eb5910ca44dfd21847dd1edb0;8pairedcells runtime30/public47/signal3/2perSan, actualownedTCP/RST/noalloc/readinessunchanged"
     }
   ],
   "max_tasks_per_phase": 20,

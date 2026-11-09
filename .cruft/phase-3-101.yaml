@@ -72,9 +72,10 @@
       ],
       "round": 13,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_CORE/core/net\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Finite off-worker files/hosts/server limits, explicit nil-vs-empty policy and exact grants; old helpers unchanged."
+      "proof_scope": "Finite off-worker files/hosts/server limits, explicit nil-vs-empty policy and exact grants; old helpers unchanged.",
+      "evidence": "odin candidatef23341300; resolver-snapshot/receipt.json SHA0bfa1519da2fcc31b7ab6bdde74b1dcf785a54d850d14c6d4cbf51d589820395;6physicalcopychecks,25unitperASanTSan/24raw+95parserfaultcellsperSan/publicmanagedconsumerheapScope0"
     },
     {
       "id": "101-12-resolver-verify",
@@ -90,9 +91,10 @@
       ],
       "round": 14,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_CORE/core/net\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-12-resolver-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_CORE/core/net\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-12-resolver-verify-thread && \"$WEBTOOLS_ODIN\" run \"$WEBTOOLS_CORE/tests/webtools_resolver_snapshot\"",
-      "proof_scope": "Literal bounded files/aliases, explicit-empty rejection, overflow/Unsupported/allgrant rollback and public consumer."
+      "proof_scope": "Literal bounded files/aliases, explicit-empty rejection, overflow/Unsupported/allgrant rollback and public consumer.",
+      "evidence": "odin candidatef23341300; resolver-snapshot/receipt.json SHA0bfa1519da2fcc31b7ab6bdde74b1dcf785a54d850d14c6d4cbf51d589820395;6physicalcopychecks,25unitperASanTSan/24raw+95parserfaultcellsperSan/publicmanagedconsumerheapScope0"
     },
     {
       "id": "101-13-exchange-schema",
