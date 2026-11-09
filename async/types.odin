@@ -58,7 +58,7 @@ Completion :: struct {request:Request_Handle, error:surf.HTTP_Error}
 Client_Stats :: struct {
  capacities: Capacities,
  preparing_requests, queued_requests, active_requests, completed_requests, returning_requests: int,
- connecting_connections, active_connections, idle_connections, retiring_connections: int,
+ reserved_connections, connecting_connections, active_connections, idle_connections, retiring_connections: int,
  origins, dns_ids, dns_waiters, tasks: int,
  reuse_count, close_count, cancel_count, deadline_count: u64,
  scope: scopes.Snapshot,
@@ -70,7 +70,7 @@ Client_Stats :: struct {
 // Indices are one-based; zero is absent. Generation0 never names a live cell.
 Cell_Handle :: struct {slot:u32, generation:u64}
 Request_State :: enum {Free, Preparing, Queued, Active, Completed, Returning, Retired}
-Session_State :: enum {Free, Reserved, Connecting, Busy, Idle, Retiring, Retired}
+Session_State :: enum {Free, Reserved, Connecting, Busy, Idle, Retiring, Returning, Retired}
 Origin_State :: enum {Free, Occupied, Returning, Retired}
 Origin_Reference :: enum {Request, Session, Preparing, Waiter}
 
@@ -157,6 +157,16 @@ Kernel :: struct {
  request_free, origin_free, session_free: []u32,
  request_free_count, origin_free_count, session_free_count: int,
  completion_head, completion_tail, dispatch_cursor: u32,
+ // Independent bounded scan state. Every allocated-capacity inspection is work.
+ dispatch_origin: Cell_Handle,
+ dispatch_session_cursor: u32,
+ dispatch_remaining: int,
+ dispatch_dirty: bool,
+ idle_cursor: u32,
+ idle_remaining: int,
+ idle_dirty: bool,
+ // Earliest future idle/age expiry after a complete idle scan;0 means absent.
+ idle_deadline: i64,
  counters: Client_Stats,
  allocator: mem.Allocator,
 }

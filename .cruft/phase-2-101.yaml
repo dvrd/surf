@@ -117,19 +117,41 @@
       "evidence": "surf101/evidence/{identity/receipt.json,ownership07/owner/receipt.json};21packageaggregatesperASanTSan,42managed+42unmanagedmalformedgrantcellsperSan;closedmanagedchildred-to-green,source/heapguards"
     },
     {
-      "id": "101-08-admission-api",
-      "title": "Implement fixed request slots and terminal completion mailbox",
+      "id": "101-08-support",
+      "title": "Freeze bounded scan and distinct kernel identity handoff",
       "repository": "surf",
-      "layer": "API",
+      "layer": "schema",
       "files": [
-        "async/admission.odin",
-        "async/completion.odin"
+        "async/types.odin",
+        ".cruft/kernel101.md"
       ],
       "depends_on": [
         "101-06-identity-verify",
         "101-07-ownership-verify"
       ],
       "round": 8,
+      "agent": true,
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/.cruft/validate101.py\"",
+      "proof_scope": "Declaration/plan handoff review only. Types gain independent cursor/work/dirty state, Reserved counters and Returning session guard. Kernel identity is independent of immutable Profile policy; actual compile/native proofs belong08/09 paired gates. Charged capacity scan includes Free cells, not active-density claim.",
+      "status": "verified",
+      "evidence": "Kernel/type handoff review; actual fixed-size allocated-capacity cursors explicit, no hidden scan; independent Kernel IDs implemented by08constructor review fix, tested in08."
+    },
+    {
+      "id": "101-08-admission-api",
+      "title": "Implement fixed request slots and terminal completion mailbox",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/admission.odin",
+        "async/completion.odin",
+        "async/ownership.odin"
+      ],
+      "depends_on": [
+        "101-06-identity-verify",
+        "101-07-ownership-verify",
+        "101-08-support"
+      ],
+      "round": 9,
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Mutex metadata only; Preparing close/deadline rollback with State keepalive; one intrusive completion node/slot removed by poll OR direct take/release before generation reuse.",
@@ -146,12 +168,13 @@
       ],
       "depends_on": [
         "101-06-identity-verify",
-        "101-07-ownership-verify"
+        "101-07-ownership-verify",
+        "101-08-support"
       ],
-      "round": 8,
+      "round": 9,
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Connecting/active/idle/retiring counts, per-origin waiters/FIFO/round robin and reserved generation safe cells; no sockets or timers.",
+      "proof_scope": "Explicit serialized second schema owner: separate bounded dispatch/idle cursors and Returning session guard, charged allocated-capacity scan (including Free cells), Pending versus unchanged-sweep quiescence; no active-density efficiency claim. Fixed model/capacity/fairness only; no sockets/timers.",
       "status": "pending"
     },
     {
@@ -161,12 +184,13 @@
       "layer": "tests",
       "files": [
         "async/admission_test.odin",
-        "async/completion_test.odin"
+        "async/completion_test.odin",
+        "async/ownership_test.odin"
       ],
       "depends_on": [
         "101-08-admission-api"
       ],
-      "round": 9,
+      "round": 10,
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-08-admission-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-08-admission-verify-thread",
       "proof_scope": "Concurrent producers/consumers, >capacity complete\u2192take/release without poll, poll/take races, close during Preparing, stale aliases, retained completions, disposal outside lock.",
@@ -184,7 +208,7 @@
       "depends_on": [
         "101-09-pool-api"
       ],
-      "round": 9,
+      "round": 10,
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-09-pool-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-09-pool-verify-thread",
       "proof_scope": "Independent state model, all caps/exact/zero, connecting counts, unrelated origin progress and idle/retired slot selection.",
@@ -203,7 +227,7 @@
         "101-08-admission-verify",
         "101-09-pool-verify"
       ],
-      "round": 10,
+      "round": 11,
       "agent": true,
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/kernel101.py\" --odin \"$WEBTOOLS_ODIN\" --report /tmp/surf101-kernel.json",
       "proof_scope": "Actual paired kernel execution/heap/source manifests; no DNS/TLS/HTTP request or full101 pass claim.",
@@ -221,7 +245,7 @@
       "depends_on": [
         "101-10-kernel-review"
       ],
-      "round": 11,
+      "round": 12,
       "agent": true,
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/.cruft/validate101.py\"",
       "proof_scope": "Concrete <=20 tasks; required parent core/net PUBLIC bounded resolver snapshot+paired fixture tests before Surf DNS use, prepared ID bank, coordinator, persistent actor, HTTP1 IO, public wiring and smoke.",

@@ -52,8 +52,11 @@ reported grants precede typed views. It owns its copied server_name and ALPN
 bytes; TLS always uses the request origin hostname later. Root certificate
 objects themselves remain borrowed immutable through all session TLS closes.
 Profile owner_id is globally unique/nonzero; identity exhaustion fails rather
-than wraps. Kernel owner_id equals its unique Profile identity; one Kernel may
-use each Profile. Config equality never uses mutable root hashes or shared IPs.
+than wraps. Kernel owner_id is a separate nonreused constructor identity; handles cannot
+alias across simultaneous or later Kernels borrowing the same Profile. Profile
+owner_id remains the immutable authentication/policy key for Origin_Key. A caller
+may share a Profile only while keeping it alive/immutable through every borrowing
+Kernel; no implicit Profile destruction or mutable certificate identity is added. Config equality never uses mutable root hashes or shared IPs.
 
 Prepared_Origin owns its hostname backing independently. Origin_Key is exactly
 profile_id + secure scheme + canonical validated host + effective port. Only
@@ -81,8 +84,9 @@ Kernel reference through the last physical cleanup callback.
 Every free/live index is 1..array length; zero is absent. Generation initially1;
 only physical retirement makes a slot Free with generation+1. At max(u64) it
 becomes Retired and is never put on a free stack. New cell admission never scans
-unallocated capacity. Pool fairness may scan occupied origin/session indices only
-with explicit bounded work/cursor accounting; no hidden unbounded timer/I/O work.
+unallocated capacity. Pool fairness uses an honest allocated-capacity scan: Free/Retired cells also
+consume an explicit work unit, with persistent cursors. No occupied-density
+performance claim, hidden scan or unbounded timer/I/O work is made.
 
 ## Frozen phase2 handoffs
 
@@ -273,3 +277,71 @@ registration failure may cancel this partial set, so abort must preserve State
 until every registered callback retires. Publish initialized Client only after
 final commit; do not invent an init-before-Runtime.start restriction. This is a
 network-freeze obligation, not an inert Task registration facility in this kernel.
+
+
+## Task09 reviewed bounded-scan amendment
+
+Session.Returning is a physical-cleanup guard within retiring capacity. pool_retire
+marks it before unlocking for origin disposal, rejecting recursive/concurrent
+retire of that same generation until finalization and generation advancement.
+
+Kernel.dispatch_cursor is the round-robin origin cursor. dispatch_origin and
+dispatch_session_cursor preserve an in-progress scan within that origin;
+dispatch_remaining counts remaining origins in the current pass. Every examined
+origin/session, including Free/Retired capacity, is charged work. New-free-session
+selection is one additional bounded metadata work unit. There is no hidden scan.
+An assignment advances to the next origin. Reserved Queued claims are inspected
+separately from unassigned FIFO heads and cannot be hidden behind an uncommitted
+Preparing reservation. Only committed session0 requests enter each waiter FIFO.
+Origin.requests counts every associated slot through Completed/release; preparing
+is a subset; waiters counts unassigned Preparing+Queued claims.
+
+All relevant task08 commit/rollback/cancel/completion/release and task09 mutations
+set dispatch_dirty. It is cleared only when starting a fresh pass. At a pass end,
+dirty restarts one more bounded pass before quiescence, preventing lost work
+behind the cursor. Empty assignment plus Client_Error.Pending means unfinished
+scan work; empty plus None means a complete unchanged pass is quiescent. Positive
+assignment has None. Work argument must be1..MAX_WORK_PER_RESUME and work_used
+never exceeds it; allocator/network/clock calls do not occur inside scans.
+
+idle_cursor/idle_remaining are independent and never clobber dispatch progress.
+pool_idle_candidate reports Pending while its pass is incomplete, a due Idle
+handle on success, and None+empty on pass completion. idle_deadline is usable as
+the earliest future idle/max_age cutoff only after that completed empty pass;0
+means no future Idle cutoff. Arithmetic saturates instead of overflowing. The
+coordinator must rescan after relevant session changes, and may park until the
+completed scan's deadline. Neither helper claims to close a transport.
+
+Client_Stats.reserved_connections accounts for Preparing/Queued Reserved claims.
+Free/Idle→Reserved increments it (and removes Idle from idle_connections);
+dispatch/abandonment decrements it. Connecting, Busy/active, Idle, and combined
+Retiring/Returning each have their own counter. Sum of those five counters is
+physical/model session capacity in use; a fresh unopened Reserved claim still
+consumes a connection slot. Restoring a previous Idle claim adds idle_connections
+and preserves its physical generation, origin Session ref and age timestamps.
+
+A closed Kernel makes every Idle session immediately eligible for retirement,
+independent of idle/age timeout; dispatch of new requests returns Closed. Other
+active/connecting transport cancellation remains an actor obligation.
+
+
+## Identity review correction
+
+Kernel construction assigns a fresh nonzero identity only after all array grants
+succeed, using the same serialized, nonwrapping counter primitive with a separate
+Kernel counter. Recreating a Kernel with the same Profile does not recreate its
+request-handle namespace. Pool origin checks compare against Profile.owner_id;
+request handles compare against Kernel.owner_id. This is the required constructor
+contract for paired08 verification, not a caller assertion that one Profile can never be reused.
+
+
+Internal Cell_Handle is a Kernel-relative slot/generation address, not a portable
+owner token. Every internal caller must preserve its Kernel context; these cells
+are never accepted from public Client requests/completions. Public Request_Handle
+always checks the distinct nonreused Kernel owner identity. Do not claim that a
+context-free Cell_Handle can prove cross-Kernel provenance.
+
+Idle scans have their own dirty flag. Any transition creating/removing Idle work
+(or changing close policy) invalidates the current idle pass. A completed dirty
+pass repeats before claiming quiescence, so an Idle transition behind the cursor
+cannot lose its expiry timer after a coalesced notification.
