@@ -38,9 +38,10 @@
       ],
       "round": 26,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Pure begin Active->Returning(Preparing), fresh ready->Preparing, accepted fail->ReturningCompleted; same handle/lease/cutoff/ref transfer, detach old/new provenance, no ordinary rollback."
+      "proof_scope": "Pure begin Active->Returning(Preparing), fresh ready->Preparing, accepted fail->ReturningCompleted; same handle/lease/cutoff/ref transfer, detach old/new provenance, no ordinary rollback.",
+      "evidence": "redirect-foundations/final/receipt.json SHA3570ceb7b1b604a1c6207e4c2692fda67c5c1ffeae8caad4ea02fee8367fb8e1; ONEpaired18aggregate gate ledger6+prepare5+queue7 perASanTSan, exactsource/copy160/core2675/binaries. Actuallegacyhelper Freealignment0 SDKred fixedallocator1712560a; no native/public redirect claim."
     },
     {
       "id": "101-25-redirect-prepare",
@@ -56,9 +57,10 @@
       ],
       "round": 26,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Existing Root policy, checked temporary helper allocator with typed causes and no escape, exact target clone/origin/free, reentry guards and failure prefixes; no actor/IO yet."
+      "proof_scope": "Existing Root policy, checked temporary helper allocator with typed causes and no escape, exact target clone/origin/free, reentry guards and failure prefixes; no actor/IO yet.",
+      "evidence": "redirect-foundations/final/receipt.json SHA3570ceb7b1b604a1c6207e4c2692fda67c5c1ffeae8caad4ea02fee8367fb8e1; ONEpaired18aggregate gate ledger6+prepare5+queue7 perASanTSan, exactsource/copy160/core2675/binaries. Actuallegacyhelper Freealignment0 SDKred fixedallocator1712560a; no native/public redirect claim."
     },
     {
       "id": "101-26-redirect-queue",
@@ -73,9 +75,10 @@
       ],
       "round": 26,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Second source owner; exact old wrapper32, budget-aware0..32 helper reserves min16 before selection, zero-total named-newdial typed failure, empty-bank park, numeric/hosts/healthyIdle remain valid; same actual pool policy."
+      "proof_scope": "Second source owner; exact old wrapper32, budget-aware0..32 helper reserves min16 before selection, zero-total named-newdial typed failure, empty-bank park, numeric/hosts/healthyIdle remain valid; same actual pool policy.",
+      "evidence": "redirect-foundations/final/receipt.json SHA3570ceb7b1b604a1c6207e4c2692fda67c5c1ffeae8caad4ea02fee8367fb8e1; ONEpaired18aggregate gate ledger6+prepare5+queue7 perASanTSan, exactsource/copy160/core2675/binaries. Actuallegacyhelper Freealignment0 SDKred fixedallocator1712560a; no native/public redirect claim."
     },
     {
       "id": "101-24-redirect-ledger-verify",

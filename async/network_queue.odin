@@ -24,13 +24,22 @@ network_queue_forget_locked :: proc(s:^Client_State,handle:Request_Handle) {
  network_queue_changed_locked(s)
 }
 
+// Preserve ordinary first-hop admission and its exact callable type.
 network_queue_claim :: proc(s:^Client_State,preparing:Preparing_Request,origin:^Prepared_Origin,now:i64)->(Pool_Reservation,Client_Error) {
- if !network_valid(s) || origin==nil || now<0 {return {},{kind=.Invalid_Config}}
+ return network_queue_claim_budget(s,preparing,origin,now,DNS_TOTAL_QUERY_LIMIT)
+}
+
+// The allowance belongs to the original accepted request, including redirects.
+// Reserve no more than its remainder; assignment_take deducts the moved block
+// once. This helper does not replenish that allowance or inspect query state.
+// Zero allowance can still reuse verified Idle or use prepared/numeric addresses.
+network_queue_claim_budget :: proc(s:^Client_State,preparing:Preparing_Request,origin:^Prepared_Origin,now:i64,total_queries_remaining:int)->(Pool_Reservation,Client_Error) {
+ if !network_valid(s) || origin==nil || now<0 || total_queries_remaining<0 || total_queries_remaining>DNS_TOTAL_QUERY_LIMIT {return {},{kind=.Invalid_Config}}
  if origin.key.profile_id!=s.profile.owner_id || origin.key.port==0 || len(origin.key.host)<=0 || raw_data(origin.key.host)==nil ||
     len(origin.storage)!=len(origin.key.host) || raw_data(origin.storage)!=raw_data(origin.key.host) || origin.allocator.procedure==nil {return {},{kind=.Invalid_Config}}
  if !network_state_retain(s) {return {},{kind=.Closed}}
  defer network_state_release(s)
- metadata:=Request_Network{generation=preparing.request.generation,query_budget_left=DNS_TOTAL_QUERY_LIMIT}
+ metadata:=Request_Network{generation=preparing.request.generation,query_budget_left=total_queries_remaining}
  address:=net.parse_address(origin.key.host)
  if address!=nil {
   metadata.prepared_addresses[0]={address=address,port=int(origin.key.port)};metadata.prepared_address_count=1
@@ -59,8 +68,15 @@ network_queue_claim :: proc(s:^Client_State,preparing:Preparing_Request,origin:^
  sync.unlock(&s.kernel.mu)
  idle:=selection_error.kind==.None && selection.session.slot!=0
  if metadata.needs_dns && !idle {
+  // An exhausted original allowance cannot be repaired by fresh bank refill.
+  // Reject before committing any physical/waiter/origin claim. State.mu keeps
+  // the Idle observation serialized with network admission and publication.
+  if total_queries_remaining==0 {
+   sync.unlock(&s.mu)
+   return {},{kind=.Request_Error,http={kind=.Dial_Failed,phase=.DNS,network=net.Resolve_Error.Unable_To_Resolve,write_effect=.Not_Sent}}
+  }
   sync.unlock(&s.mu)
-  reserved,error:=network_dns_reserve(s,DNS_IDS_PER_QUERY)
+  reserved,error:=network_dns_reserve(s,min(DNS_IDS_PER_QUERY,total_queries_remaining))
   if error.kind!=.None && error.kind!=.Pending {return {},error}
   block=reserved
   sync.lock(&s.mu)
