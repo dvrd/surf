@@ -1,6 +1,6 @@
 {
   "issue": "OKAMI-101",
-  "status": "Phases1 and2 kernel implementation verified; network phase3 reviewed with explicit pre-actor TLS health gate",
+  "status": "Phase3 public native Client verified; phase4 accepted redirect/final acceptance freeze",
   "scope": "All five original criteria in spec101.md unchanged; phase1 only provides reusable async budgets and HTTP1 persistence metadata.",
   "repositories": {
     "surf": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/shared/surf",
@@ -137,6 +137,7 @@
     "plan101.yaml",
     "phase-2-101.yaml",
     "phase-3-101.yaml",
-    "phase-3a-101.yaml"
+    "phase-3a-101.yaml",
+    "phase-4-101.yaml"
   ]
 }

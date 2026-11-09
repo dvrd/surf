@@ -1,0 +1,312 @@
+{
+  "issue": "OKAMI-101",
+  "phase": 4,
+  "status": "Reviewed; execute only after local plan commit and Linear/continuation checkpoint",
+  "scope": "Accepted redirects and all remaining public acceptance; original five criteria unchanged",
+  "max_tasks_per_phase": 20,
+  "max_files_per_task": 5,
+  "max_owners_per_file": 2,
+  "tasks": [
+    {
+      "id": "101-23-redirect-schema",
+      "title": "Define stable accepted-hop owned handoff",
+      "repository": "surf",
+      "layer": "schema",
+      "files": [
+        "async/redirect_types.odin"
+      ],
+      "depends_on": [
+        "101-22-redirect-freeze"
+      ],
+      "round": 25,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Original Request_Handle plus Empty/Preparing/Ready owner phase before callbacks, cloned target/origin, next hop count, remaining draws and previous status; no State gate opening or runtime claim."
+    },
+    {
+      "id": "101-24-redirect-ledger",
+      "title": "Accepted-hop ledger without generation or lease churn",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/redirect_kernel.odin"
+      ],
+      "depends_on": [
+        "101-23-redirect-schema"
+      ],
+      "round": 26,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Pure begin Active->Returning(Preparing), fresh ready->Preparing, accepted fail->ReturningCompleted; same handle/lease/cutoff/ref transfer, detach old/new provenance, no ordinary rollback."
+    },
+    {
+      "id": "101-25-redirect-prepare",
+      "title": "Consume redirect response and prepare owned target",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/redirect_prepare.odin",
+        "async/redirect_allocator.odin"
+      ],
+      "depends_on": [
+        "101-23-redirect-schema"
+      ],
+      "round": 26,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Existing Root policy, checked temporary helper allocator with typed causes and no escape, exact target clone/origin/free, reentry guards and failure prefixes; no actor/IO yet."
+    },
+    {
+      "id": "101-26-redirect-queue",
+      "title": "Preserve original DNS allowance through queue admission",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/network_queue.odin"
+      ],
+      "depends_on": [
+        "101-23-redirect-schema"
+      ],
+      "round": 26,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Second source owner; exact old wrapper32, budget-aware0..32 helper reserves min16 before selection, zero-total named-newdial typed failure, empty-bank park, numeric/hosts/healthyIdle remain valid; same actual pool policy."
+    },
+    {
+      "id": "101-24-redirect-ledger-verify",
+      "title": "Independent accepted-hop lifetime and accounting tests",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/redirect_kernel_test.odin",
+        "tests/redirect_foundations101.py"
+      ],
+      "depends_on": [
+        "101-24-redirect-ledger"
+      ],
+      "round": 27,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/redirect_foundations101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-redirect-foundations.json",
+      "proof_scope": "Actual ledger transitions, exact counters/refs/leases/origins, stale/foreign/reject preservation, accepted failures and callback disposal. Own shared paired focused gate for all three foundation test streams."
+    },
+    {
+      "id": "101-25-redirect-prepare-verify",
+      "title": "Independent policy ownership and grant failure tests",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/redirect_prepare_test.odin"
+      ],
+      "depends_on": [
+        "101-25-redirect-prepare"
+      ],
+      "round": 27,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/redirect_foundations101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-redirect-foundations.json",
+      "proof_scope": "Literal Root method/origin/downgrade/relative/limit policy, owning consumed Response, full malformed allocation grants and every new allocation failure, reentry/exactfree; shares ONE foundation gate."
+    },
+    {
+      "id": "101-26-redirect-queue-verify",
+      "title": "Independent finite DNS allowance handoff tests",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/redirect_queue_test.odin"
+      ],
+      "depends_on": [
+        "101-26-redirect-queue"
+      ],
+      "round": 27,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/redirect_foundations101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-redirect-foundations.json",
+      "proof_scope": "Boundary0/1/15/16/17/32, ring exhaustion/refill vs original budget, no draw reset across hops, atomic rejection/ownership, numeric/hosts/Idle eligibility; shares ONE foundation gate."
+    },
+    {
+      "id": "101-27-redirect-actor",
+      "title": "Compose accepted redirects with persistent physical owner",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/network_types.odin",
+        "async/session.odin",
+        "async/session_close.odin",
+        "async/redirect_actor.odin",
+        "async/redirect_network.odin"
+      ],
+      "depends_on": [
+        "101-24-redirect-ledger-verify",
+        "101-25-redirect-prepare-verify",
+        "101-26-redirect-queue-verify"
+      ],
+      "round": 28,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Second State/session/close owners; embed stable handoff/hop metadata and open config gate atomically with driver. Prepare->close/drain->ledgerbegin/oldfree/modelretire->freshready->budgetclaim/commit same handle. Total32/originalcutoff, no intermediate completion/replay, all close/cancel/lifetime failure paths drain; preserve Unknown later-write effect."
+    },
+    {
+      "id": "101-28-redirect-native",
+      "title": "Independent public accepted-hop protocol and lifetime matrix",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/network_config_test.odin",
+        "async/redirect_actor_test.odin",
+        "tests/redirect101.py",
+        "tests/testdata/redirect101/main.odin",
+        "tests/testdata/redirect101/peer.go"
+      ],
+      "depends_on": [
+        "101-27-redirect-actor"
+      ],
+      "round": 29,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/redirect101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-redirect-native.json",
+      "proof_scope": "Second config test owner; allow redirect0..5, reject invalid. Public TCP/TLS statuses/methods/origins/relative/loop/body/hop caps, cap1, total chain cutoff and32DNSdraws, cancel/close accepted ticket, exactlyone completion; copied sources and peer bytes/events."
+    },
+    {
+      "id": "101-29-public-pool",
+      "title": "Public identity framing and stale reuse composition",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "tests/pool101.py",
+        "tests/testdata/pool101/main.odin",
+        "tests/testdata/pool101/peer.go"
+      ],
+      "depends_on": [
+        "101-27-redirect-actor"
+      ],
+      "round": 29,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/pool101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-public-pool.json",
+      "proof_scope": "Literal GET/HEAD/POST, framing/interims/chunk/trailer/EOF/truncation/malformed/surplus; host sameIP/port/scheme, separateClienttrust/ALPN isolation, realidle/maxage/stale/KU connection IDs, no ambiguous replay. Reference unchanged primitive oracle without claiming public proof."
+    },
+    {
+      "id": "101-30-public-cancel",
+      "title": "Public held-phase deadlines cancellation and worker progress",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "tests/cancel101.py",
+        "tests/testdata/cancel101/main.odin",
+        "tests/testdata/cancel101/peer.go",
+        "tests/testdata/cancel101/cases.json"
+      ],
+      "depends_on": [
+        "101-27-redirect-actor"
+      ],
+      "round": 29,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/cancel101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-public-cancel.json",
+      "proof_scope": "PositiveID DNS/TCP/TLS/write/header/body and redirect boundary; actual event barriers, one-worker cheap-origin progress, original queue/setup/total/lifetime cutoff and exact one terminal/callback drain. Preserve typed status/effect, no fake phase claims."
+    },
+    {
+      "id": "101-31-public-concurrency",
+      "title": "Concurrent public callers quotas and shutdown ownership",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/concurrency_test.odin",
+        "tests/concurrency101.py",
+        "tests/testdata/concurrency101/main.odin",
+        "tests/testdata/concurrency101/peer.go"
+      ],
+      "depends_on": [
+        "101-27-redirect-actor"
+      ],
+      "round": 29,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/concurrency101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-public-concurrency.json",
+      "proof_scope": "Real producer threads/poll-vs-take/direct unlink/close/runtime shutdown, capacity/byte/origin/waiter/perorigin/global exhaustion, work1 fairness, stale aliases, terminal results and lateResponse lifetime. Controller serialized init/destroy; no private completion injection."
+    },
+    {
+      "id": "101-32-public-failure",
+      "title": "New public clone requeue and physical callback failure boundaries",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/failure_test.odin",
+        "tests/failure101.py",
+        "tests/testdata/failure101/main.odin",
+        "tests/testdata/failure101/peer.go"
+      ],
+      "depends_on": [
+        "101-27-redirect-actor"
+      ],
+      "round": 29,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/failure101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-public-failure.json",
+      "proof_scope": "Inject actual NEW allocation/grant boundaries in public init/clone/requeue, closedScope/lateclock and callback close/stats/cancel, exact lease/backing release. Valid physicalheaderfree only cleared failedinit/successfuldestroy. Reference prior ctor414, no duplicate certification."
+    },
+    {
+      "id": "101-33-client-docs",
+      "title": "Document native Client API ownership and cancellation limits",
+      "repository": "surf",
+      "layer": "docs",
+      "files": [
+        "async/README.md"
+      ],
+      "depends_on": [
+        "101-28-redirect-native",
+        "101-29-public-pool",
+        "101-30-public-cancel",
+        "101-31-public-concurrency",
+        "101-32-public-failure"
+      ],
+      "round": 30,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Examples compile against actual API; fixed cloned bodies/directonly/Root redirect rules, origin/trust lifetime, response ownership, operational concurrency/controller serialization, DNS refill cryptographic source, nonpreemptible cancellation latency and Darwin-only evidence."
+    },
+    {
+      "id": "101-34-final-gate",
+      "title": "Required source-bound final acceptance and consumer gate",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "tests/final101.py",
+        "tests/test_final101.py"
+      ],
+      "depends_on": [
+        "101-33-client-docs"
+      ],
+      "round": 31,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/final101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-final-acceptance.json",
+      "proof_scope": "Require all public matrices and no skips/duplicates/stale source maps. Final current-source whole async/facade/consumer linked checks once; unchanged prerequisite references scoped honestly. Negative controls omitted/failed/stale required evidence; actual noSaba/native no easy_perform call/link evidence."
+    },
+    {
+      "id": "101-35-acceptance-review",
+      "title": "Independent five-criterion review and verified completion record",
+      "repository": "surf",
+      "layer": "docs",
+      "files": [
+        ".cruft/acceptance-final101.md",
+        ".cruft/spec101.md"
+      ],
+      "depends_on": [
+        "101-34-final-gate"
+      ],
+      "round": 32,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/.cruft/validate101.py\"",
+      "proof_scope": "Root+independent reviewer inspect actual receipts/current source and map allfive criteria; check spec only if verified. Commit owning repos, update/readback Linear+continuation, preserve worktrees/Mesa and neverpush. Otherwise keep criteria open and fix concrete gaps."
+    }
+  ]
+}
