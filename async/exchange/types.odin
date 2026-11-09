@@ -68,6 +68,7 @@ Operation_State :: struct {
 // encodes the head. Response allocations retain their own allocator provenance.
 Exchange :: struct {
  _self: ^Exchange,
+ _busy: bool,
  _options: Resolved_Options,
  _allocator: mem.Allocator,
  _phase: Exchange_Phase,
