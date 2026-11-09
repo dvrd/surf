@@ -30,7 +30,7 @@ config_normalize :: proc(input:Client_Config) -> (Normalized_Config,Client_Error
  }
  if len(input.http.resolver.name_servers) > MAX_NAME_SERVERS do return {}, {kind=.Invalid_Config}
  for endpoint in input.http.resolver.name_servers {
-  if endpoint.port == 0 do return {}, {kind=.Invalid_Config}
+  if endpoint.port < 1 || endpoint.port > 65535 do return {}, {kind=.Invalid_Config}
  }
  result := Normalized_Config{
   http=input.http, capacities=capacities, idle_timeout=input.idle_timeout,

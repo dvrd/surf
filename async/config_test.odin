@@ -140,9 +140,14 @@ schema_dns_snapshot_bounds_and_scalar_handles :: proc(t:^testing.T) {
  }
  _,error:=schema_normalize({http={resolver={name_servers=servers[:]}}})
  testing.expect_value(t,error.kind,.Invalid_Config)
- servers[0].port=0
+ for port in ([5]int{0,-1,65536,min(int),max(int)}) {
+  servers[0].port=port
+  _,error=schema_normalize({http={resolver={name_servers=servers[:1]}}})
+  testing.expect_value(t,error.kind,.Invalid_Config)
+ }
+ servers[0].port=65535
  _,error=schema_normalize({http={resolver={name_servers=servers[:1]}}})
- testing.expect_value(t,error.kind,.Invalid_Config)
+ testing.expect_value(t,error.kind,.None)
  handle:=Request_Handle{}
  testing.expect_value(t,handle.owner_id,u64(0));testing.expect_value(t,handle.slot,u32(0))
  testing.expect_value(t,handle.generation,u64(0))

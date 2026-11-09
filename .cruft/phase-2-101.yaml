@@ -1,7 +1,7 @@
 {
   "issue": "OKAMI-101",
   "phase": 2,
-  "status": "Concrete schema and paired verification complete; identity/resources selected",
+  "status": "Schema and identity/resources verified; admission/completion and pool model next",
   "scope": "Bounded owner/admission/pool kernel only; real networking and full public API in following frozen phase",
   "tasks": [
     {
@@ -58,7 +58,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Exact origin keys, immutable owned policy preparation; no endpoint coalescing.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/{identity/receipt.json,ownership07/owner/receipt.json};21packageaggregatesperASanTSan,42managed+42unmanagedmalformedgrantcellsperSan;closedmanagedchildred-to-green,source/heapguards"
     },
     {
       "id": "101-07-ownership-api",
@@ -76,7 +77,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Core Binding/lease/owned ABI, scope0 unmanaged compatibility, copied inputs and physical Response allocator lifetime, explicit bounded Signal heap exclusion; no new public moved-upload API.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/{identity/receipt.json,ownership07/owner/receipt.json};21packageaggregatesperASanTSan,42managed+42unmanagedmalformedgrantcellsperSan;closedmanagedchildred-to-green,source/heapguards"
     },
     {
       "id": "101-06-identity-verify",
@@ -93,7 +95,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-06-identity-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-06-identity-verify-thread",
       "proof_scope": "Scheme/host/port/client policy identity, roots lifetime, ALPN/direct proxy and normalized/default port vectors.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/{identity/receipt.json,ownership07/owner/receipt.json};21packageaggregatesperASanTSan,42managed+42unmanagedmalformedgrantcellsperSan;closedmanagedchildred-to-green,source/heapguards"
     },
     {
       "id": "101-07-ownership-verify",
@@ -110,7 +113,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-07-ownership-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-07-ownership-verify-thread",
       "proof_scope": "Every clone grant/rollback shape, rejection preservation, managed/foreign allocator, retained Response after owner teardown and callback physical disposal.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/{identity/receipt.json,ownership07/owner/receipt.json};21packageaggregatesperASanTSan,42managed+42unmanagedmalformedgrantcellsperSan;closedmanagedchildred-to-green,source/heapguards"
     },
     {
       "id": "101-08-admission-api",
