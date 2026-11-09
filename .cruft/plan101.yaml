@@ -1,16 +1,19 @@
 {
   "issue": "OKAMI-101",
-  "status": "Phase1 complete; phase2 concrete schema and paired verification complete; independent identity/resources next",
+  "status": "Phases1 and2 kernel implementation verified; network phase3 reviewed with explicit pre-actor TLS health gate",
   "scope": "All five original criteria in spec101.md unchanged; phase1 only provides reusable async budgets and HTTP1 persistence metadata.",
   "repositories": {
     "surf": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/shared/surf",
     "async": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/shared/async",
-    "http": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/shared/http"
+    "http": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/shared/http",
+    "odin": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/odin"
   },
   "environment": {
     "WEBTOOLS_ODIN": "/Users/kakurega/dev/oss/Odin/odin",
     "WEBTOOLS_SHARED": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/shared",
-    "PATH_prefix": "/opt/homebrew/opt/llvm@22/bin"
+    "PATH_prefix": "/opt/homebrew/opt/llvm@22/bin",
+    "WEBTOOLS_CORE": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/odin",
+    "ODIN_ROOT": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/odin"
   },
   "tasks": [
     {
@@ -123,12 +126,16 @@
     }
   ],
   "remaining_phases": {
-    "phase2": "Persistent session task/client bounded admission, real bounded DNS/connect/TLS and incremental HTTP1 request/response; explicit ownership/cancellation/redirect total budget. Concrete plan mandatory before edits.",
-    "phase3": "Bounded origin/trust/config pool, idle/LRU/stale retirement, concurrent submit/completion, backpressure and shutdown. Concrete plan mandatory before edits.",
-    "phase4": "Independent HTTP1/TLS loopbacks, pool exhaustion/stale/redirect/concurrency/workers, failure injection, ASan/TSan, physical consumer gates and docs. Full issue Done only all five criteria verified."
+    "phase3": "Reviewed bounded resolver/taskgroup/exchange then native actor/public Client; explicit idle-TLS validation gate before actor implementation.",
+    "phase4": "Real accepted-hop redirects and full independent native acceptance matrix; all five issue criteria remain open."
   },
   "commit_rule": "API plus paired verification before dependency-owner local commit; update Linear/continuation before next slice. Dependency commits precede Surf consumers; never push. Existing work/worktrees/Mesa preserved.",
   "max_tasks_per_phase": 20,
   "max_files_per_task": 5,
-  "max_owners_per_file": 2
+  "max_owners_per_file": 2,
+  "phase_files": [
+    "plan101.yaml",
+    "phase-2-101.yaml",
+    "phase-3-101.yaml"
+  ]
 }

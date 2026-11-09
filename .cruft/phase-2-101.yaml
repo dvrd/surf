@@ -1,7 +1,7 @@
 {
   "issue": "OKAMI-101",
   "phase": 2,
-  "status": "Pure kernel APIs/models/physical consumers verified; concrete network phase freeze remains",
+  "status": "All pure kernel/model/consumer and concrete network plan tasks verified",
   "scope": "Bounded owner/admission/pool kernel only; real networking and full public API in following frozen phase",
   "tasks": [
     {
@@ -245,7 +245,8 @@
       "layer": "design",
       "files": [
         ".cruft/network101.md",
-        ".cruft/phase-3-101.yaml"
+        ".cruft/phase-3-101.yaml",
+        ".cruft/validate101.py"
       ],
       "depends_on": [
         "101-10-kernel-review"
@@ -254,7 +255,8 @@
       "agent": true,
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/.cruft/validate101.py\"",
       "proof_scope": "Concrete <=20 tasks; required parent core/net PUBLIC bounded resolver snapshot+paired fixture tests before Surf DNS use, prepared ID bank, coordinator, persistent actor, HTTP1 IO, public wiring and smoke.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "network101.md and phase-3-101.yaml; independent source review evidence/network-design/review.md; 39 tasks/24 rounds/88 files plan validation only; idle-TLS native policy prerequisite before actor"
     }
   ],
   "max_tasks_per_phase": 20,

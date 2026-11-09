@@ -1,0 +1,405 @@
+{
+  "issue": "OKAMI-101",
+  "phase": 3,
+  "status": "Reviewed; execute after local plan commit and Linear/continuation checkpoint. Idle TLS policy gate blocks session actor, not independent foundations.",
+  "scope": "Real public persistent HTTP1/HTTPS firstnativephase plus required atomic/prestart taskgroup seam; explicit redirect gate until phase4, alloriginalcriteria remain",
+  "repositories": {
+    "odin": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/odin"
+  },
+  "environment": {
+    "WEBTOOLS_CORE": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/odin",
+    "ODIN_ROOT": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/odin"
+  },
+  "directories_to_create": [
+    "surf/async/exchange",
+    "surf/tests/testdata/exchange101",
+    "surf/tests/testdata/session_actor101",
+    "surf/tests/testdata/client101",
+    "surf/tests/testdata/consumer101",
+    "odin/tests/webtools_resolver_snapshot"
+  ],
+  "tasks": [
+    {
+      "id": "101-12-task-group-api",
+      "title": "Atomic task-group publication and prestart retirement",
+      "repository": "async",
+      "layer": "API",
+      "files": [
+        "runtime.odin",
+        "scheduler.odin",
+        "signal/signal.odin"
+      ],
+      "depends_on": [
+        "101-11-network-freeze"
+      ],
+      "round": 13,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "All-or-none noalloc registration using extracted register_locked; prestart Waiting/Queued retirement no on_done; prepared-unregistered Signal contract preserves old API."
+    },
+    {
+      "id": "101-12-task-group-verify",
+      "title": "Independent task-group Signal and shutdown publication proof",
+      "repository": "async",
+      "layer": "tests",
+      "files": [
+        "task_group_test.odin",
+        "signal/group_test.odin"
+      ],
+      "depends_on": [
+        "101-12-task-group-api"
+      ],
+      "round": 14,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-12-taskgroup-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-12-taskgroup-thread && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/signal\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-12-groupsignal-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/signal\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-12-groupsignal-thread",
+      "proof_scope": "Actual prestart/running/shutdown races, exact owner/no-callback counts, rejected group rollback, unrelated ready queue/attached IO, preparedSignal detach/wake and badgrant cleanup where applicable. PrestartRuntime.destroy invokeson_donewithouton_cancel; threadcreationfailedstart/retry; noCurrentTaskTLScallsfromon_done."
+    },
+    {
+      "id": "101-12-resolver-api",
+      "title": "Public bounded owning resolver snapshot",
+      "repository": "odin",
+      "layer": "API",
+      "files": [
+        "core/net/resolver_snapshot.odin",
+        "core/net/resolver_snapshot_parse.odin"
+      ],
+      "depends_on": [
+        "101-11-network-freeze"
+      ],
+      "round": 13,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_CORE/core/net\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Finite off-worker files/hosts/server limits, explicit nil-vs-empty policy and exact grants; old helpers unchanged."
+    },
+    {
+      "id": "101-12-resolver-verify",
+      "title": "Independent public resolver snapshot fixture/grant proof",
+      "repository": "odin",
+      "layer": "tests",
+      "files": [
+        "core/net/resolver_snapshot_test.odin",
+        "tests/webtools_resolver_snapshot/main.odin"
+      ],
+      "depends_on": [
+        "101-12-resolver-api"
+      ],
+      "round": 14,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_CORE/core/net\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-12-resolver-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_CORE/core/net\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-12-resolver-verify-thread && \"$WEBTOOLS_ODIN\" run \"$WEBTOOLS_CORE/tests/webtools_resolver_snapshot\"",
+      "proof_scope": "Literal bounded files/aliases, explicit-empty rejection, overflow/Unsupported/allgrant rollback and public consumer."
+    },
+    {
+      "id": "101-13-exchange-schema",
+      "title": "Freeze real generic async HTTP1 exchange state",
+      "repository": "surf",
+      "layer": "schema",
+      "files": [
+        "async/exchange/types.odin",
+        "async/exchange/config.odin"
+      ],
+      "depends_on": [
+        "101-11-network-freeze"
+      ],
+      "round": 13,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Concrete original-address operations/buffers/result ABI, config validation; no driver stubs."
+    },
+    {
+      "id": "101-13-exchange-schema-verify",
+      "title": "Independent exchange boundary validation",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/exchange/config_test.odin"
+      ],
+      "depends_on": [
+        "101-13-exchange-schema"
+      ],
+      "round": 14,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-13-exchange-schema-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-13-exchange-schema-thread",
+      "proof_scope": "Zero/exact/hardlimits/alias types; no request success claim."
+    },
+    {
+      "id": "101-14-exchange-api",
+      "title": "Real callback-driven bounded HTTP1 exchange",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/exchange/exchange.odin",
+        "async/exchange/write.odin",
+        "async/exchange/read.odin",
+        "async/exchange/ownership.odin"
+      ],
+      "depends_on": [
+        "101-13-exchange-schema-verify"
+      ],
+      "round": 15,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Keepalive encoder, existing head/chunk parser, whole16KiB plaintext reads, copied headers/body, accepted-op drain and fresh cutoff."
+    },
+    {
+      "id": "101-14-exchange-verify",
+      "title": "Independent async byte-stream framing/lifetime tests",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/exchange/exchange_test.odin",
+        "tests/exchange101.py",
+        "tests/testdata/exchange101/main.odin",
+        "tests/testdata/exchange101/peer.go",
+        ".cruft/idle-policy101.md"
+      ],
+      "depends_on": [
+        "101-14-exchange-api"
+      ],
+      "round": 16,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-14-exchange-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-14-exchange-verify-thread && python3 \"$WEBTOOLS_SHARED/surf/tests/exchange101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --require-idle-policy --report /tmp/101-14-exchange.json",
+      "proof_scope": "Literal partial/coalesced IO, all framing/EOF/surplus/cancel/deadline/exactgrant/latecallback vectors; actual adapter public host. REQUIREDsource-supportedpublicTLSidle-healthpolicy gate before18actor: actualseparate/partialrecord/KeyUpdate/close/healthyloopback+sourcereview; Pending/readinessorprivatefieldsnotproof. Conservative retirement untilapproved; blockedpolicyfailsrequiredflag."
+    },
+    {
+      "id": "101-15-network-state",
+      "title": "Freeze concrete Client State and task/callback ABI",
+      "repository": "surf",
+      "layer": "schema",
+      "files": [
+        "async/network_types.odin",
+        ".cruft/network-abi101.md"
+      ],
+      "depends_on": [
+        "101-12-resolver-verify",
+        "101-13-exchange-schema-verify",
+        "101-12-task-group-verify"
+      ],
+      "round": 15,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "New State embeds frozen Kernel; actual refcounts/constructing/publication/actor arrays, no modification to prior types. FreezeTask17genericpoolselectionhandoff andStateactor/DNSblockownershipbeforeparallel17/18; purepoolfunctiondeclared/implementedonlyby17beforeanycallerusesit. ConstructionownerbecomesClientbase; registeredrefs lastdropafterdetach/accounting; protectedlastregistrationclockwitness andprestarton_donefallback."
+    },
+    {
+      "id": "101-15-network-state-verify",
+      "title": "Independent network-state/config ABI checks",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/network_config_test.odin"
+      ],
+      "depends_on": [
+        "101-15-network-state"
+      ],
+      "round": 16,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-15-network-state-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-15-network-state-thread",
+      "proof_scope": "State bounds, explicit DNS nil/empty and partial-registration ownership contract; no transport success."
+    },
+    {
+      "id": "101-16-bootstrap-api",
+      "title": "Stable charged State and off-worker preparation",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/bootstrap.odin",
+        "async/dns_bank.odin",
+        "async/runtime_ownership.odin"
+      ],
+      "depends_on": [
+        "101-15-network-state-verify",
+        "101-12-resolver-verify"
+      ],
+      "round": 17,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Real prepare/dispose State API, stable Resources placement, finite resolver/entropy/bank, no task registration or fake Client_init. AllSignals preparedbeforeatomicgroupregistration; noPendingfailureowner."
+    },
+    {
+      "id": "101-16-bootstrap-verify",
+      "title": "Independent State preparation and DNS bank rollback",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/bootstrap_test.odin",
+        "async/dns_bank_test.odin"
+      ],
+      "depends_on": [
+        "101-16-bootstrap-api"
+      ],
+      "round": 18,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-16-bootstrap-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-16-bootstrap-verify-thread",
+      "proof_scope": "Allraw grants/scopes, nil-vs-empty, numeric0 nofileprep, bank exhaustion/refill, reentrant outside-lock physicalfree."
+    },
+    {
+      "id": "101-17-coordinator-api",
+      "title": "Metadata-only bounded coordinator Task",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/coordinator.odin",
+        "async/network_queue.odin",
+        "async/pool.odin",
+        "async/queue.odin"
+      ],
+      "depends_on": [
+        "101-16-bootstrap-verify"
+      ],
+      "round": 19,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Separate queue/idle timer, pool dirtyscan cursors, finite actor assignment/signal snapshots, cancel/on_done drain; no I/O. Real DNSwait-only admission/dispatch eligibility integration as SECOND pool/queue owner; no physicalslot monopoly while bankempty. Preserveoldpool_reservecallable via additivepool_reserve_policy; actualsharedpureselectionhelper (no networkdependency) frozenbeforeparallelwrites fornewphase4accepted-hop requeue."
+    },
+    {
+      "id": "101-17-coordinator-verify",
+      "title": "Independent parked queue expiry and scan wakes",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/coordinator_test.odin"
+      ],
+      "depends_on": [
+        "101-17-coordinator-api"
+      ],
+      "round": 20,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-17-coordinator-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-17-coordinator-verify-thread",
+      "proof_scope": "Actual runtime coordinator with controlled metadata actors, work1/bankempty/parked task expiry; no native Surf network claim."
+    },
+    {
+      "id": "101-18-session-api",
+      "title": "Persistent pinned DNS TCP TLS actor with real exchange",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/session.odin",
+        "async/dial.odin",
+        "async/session_tls.odin",
+        "async/session_close.odin"
+      ],
+      "depends_on": [
+        "101-16-bootstrap-verify",
+        "101-14-exchange-verify"
+      ],
+      "round": 19,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "OneTask/session, preparedID DNS_Connect, raw/TLS adapter+request cap, real exchange, fullclose callback drain and idle eligibility.",
+      "implementation_gate": "BLOCKED until101-14 exchange verification includes an approved public-seam TLS idle/checkout policy. Unresolved policy does not block independent prerequisite streams."
+    },
+    {
+      "id": "101-18-session-verify",
+      "title": "Independent actual actor transport/callback tests",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/session_test.odin",
+        "tests/session_actor101.py",
+        "tests/testdata/session_actor101/main.odin"
+      ],
+      "depends_on": [
+        "101-18-session-api"
+      ],
+      "round": 20,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-18-session-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-18-session-verify-thread && python3 \"$WEBTOOLS_SHARED/surf/tests/session_actor101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-18-session.json",
+      "proof_scope": "Owned DNS/TCP/TLS+HTTP exchanges via real actor, sameTLS A\u2192B cutoff, cancel/setupclose/KeyUpdate/surplus/retirement. Healthyreuse never calls closed-only quiescent; sameTask successivephysicalgen reset and latecallbacks mandatory."
+    },
+    {
+      "id": "101-19-client-api",
+      "title": "Real public Client admission task registration and results",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/client.odin",
+        "async/submission.odin",
+        "async/result.odin",
+        "async/shutdown.odin"
+      ],
+      "depends_on": [
+        "101-17-coordinator-verify",
+        "101-18-session-verify"
+      ],
+      "round": 21,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Actual Client API, originalcutoff beforeclone, constructing gate/registeredrefs/runningRT partialabort, finiteproducer and result ownership. Explicit max_redirects>0 gate until phase4. AtomicpreparedTaskgroup+prestartclose retirement; no failed-init Pending owner. Controller-serializedRuntime start/join/destroy; shutdownproducer-race supported; STARTINGretire rejection remainsPending/retry-safe afterThreadCreationFailed."
+    },
+    {
+      "id": "101-20-client-smoke",
+      "title": "Independent public native HTTP TLS concurrency smoke",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/client_test.odin",
+        "tests/client101.py",
+        "tests/testdata/client101/main.odin",
+        "tests/testdata/client101/peer.go"
+      ],
+      "depends_on": [
+        "101-19-client-api"
+      ],
+      "round": 22,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-20-client-smoke-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-20-client-smoke-thread && python3 \"$WEBTOOLS_SHARED/surf/tests/client101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-20-client.json",
+      "proof_scope": "Actual public requests/connectionIDs/copies/framing/DNS TLS body stalls on1worker, queueddeadline/cancel/results/FD scopecleanup. No fake/private completion."
+    },
+    {
+      "id": "101-21-native-consumers",
+      "title": "Source-bound native and unchanged facade consumers",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "tests/consumer101.py",
+        "tests/testdata/consumer101/main.odin"
+      ],
+      "depends_on": [
+        "101-20-client-smoke"
+      ],
+      "round": 23,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/consumer101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-21-consumers.json",
+      "proof_scope": "Standalone async executable plus unchanged blocking/HTTP/async dependency closure, paired linkedbinaries and exactsource/copied maps."
+    },
+    {
+      "id": "101-22-redirect-freeze",
+      "title": "Review native evidence and freeze complete redirect/final matrix phase",
+      "repository": "surf",
+      "layer": "design",
+      "files": [
+        ".cruft/redirect101.md",
+        ".cruft/phase-4-101.yaml"
+      ],
+      "depends_on": [
+        "101-21-native-consumers"
+      ],
+      "round": 24,
+      "agent": true,
+      "status": "pending",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/.cruft/validate101.py\"",
+      "proof_scope": "Concrete<=20tasks for accepted-hop requeue/originalcutoff redirect integration+allremainingacceptance. Full101 open."
+    }
+  ],
+  "max_tasks_per_phase": 20,
+  "max_files_per_task": 5,
+  "max_owners_per_file": 2
+}

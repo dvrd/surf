@@ -2,8 +2,10 @@
 """Validate scoped execution plans; this is not implementation validation."""
 import collections,json,pathlib,subprocess
 root=pathlib.Path(__file__).resolve().parent
-paths=[root/'plan101.yaml']
-if (root/'phase-2-101.yaml').exists():paths.append(root/'phase-2-101.yaml')
+index=json.loads((root/'plan101.yaml').read_text())
+paths=[root/name for name in index['phase_files']]
+assert paths[0]==root/'plan101.yaml' and len(paths)==len(set(paths))
+assert all(p.parent==root and p.is_file() for p in paths)
 subprocess.run(['ruby','-ryaml','-e','ARGV.each { |p| YAML.safe_load(File.read(p)) }',*map(str,paths)],check=True)
 index=json.loads(paths[0].read_text());tasks=[]
 for path in paths:

@@ -2,3 +2,4 @@ timestamp	feature	total_tasks	total_rounds	total_files	max_parallelism
 2026-11-09T16:32:06.124139+00:00	OKAMI-101 phase1	6	3	13	2
 2026-11-09T17:12:48.579930+00:00	OKAMI-101 phase2 kernel	12	8	22	2
 2026-11-09T19:11:24.334996+00:00	OKAMI-101 model handoff review	13	9	22	2
+2026-11-09T20:13:45.630631+00:00	OKAMI-101 native network phase3	20	12	52	3
