@@ -63,7 +63,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/http/v1\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Additive persistent request profile +borrowed response version/reuse eligibility. Old callable/wire default preserved. Framing/connection tokens and atomic bounds.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/persistence/owner/{receipt,review}.json;22fullHTTP1testsperASanTSan,25sources;existingSurfASanregressionpass"
     },
     {
       "id": "101-02-persistence-verify",
@@ -79,7 +80,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/http/v1\" -sanitize:address -out:/tmp/surf101-http1-asan && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/http/v1\" -sanitize:thread -out:/tmp/surf101-http1-tsan",
       "proof_scope": "Independent exact literals including oldwire, HTTP1.0/1.1 repeatedConnectionclose/keepalive, HEAD/CONNECT/101/EOF/truncation/alias/destination unchanged.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/persistence/owner/{receipt,review}.json;22fullHTTP1testsperASanTSan,25sources;existingSurfASanregressionpass"
     },
     {
       "id": "101-03-session-design",
