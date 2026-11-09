@@ -113,9 +113,10 @@
       ],
       "round": 17,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/async/connection\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Thin owner/self/live-transport checked delegate to existing async.probe_stream; no raw descriptor getter or new schema fields. Preserves phase4 second network_types owner."
+      "proof_scope": "Thin owner/self/live-transport checked delegate to existing async.probe_stream; no raw descriptor getter or new schema fields. Preserves phase4 second network_types owner.",
+      "evidence": "async candidate6bb74de canonical9bc0681; transport-probe/receipt.json SHA2b5e564f15e02ff29f920eb56b03bfa35dfbdb4d8d40f9e23ff65e8fe0de5cca;4pairedcells2internal+5publicperSan,3liveprofiles/unchangedbytes/adapterread"
     },
     {
       "id": "101-16-transport-probe-verify",
@@ -130,9 +131,10 @@
       ],
       "round": 18,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/connection\" -sanitize:address -out:/tmp/101-16-transport-probe-root-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/connection/tests\" -sanitize:address -out:/tmp/101-16-transport-probe-public-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/connection\" -sanitize:thread -out:/tmp/101-16-transport-probe-root-thread && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/connection/tests\" -sanitize:thread -out:/tmp/101-16-transport-probe-public-thread",
-      "proof_scope": "Real owner-loop Empty/Data and subsequent adapter read proves no consumption; wrongowner/nil/closed transport rejection, unchanged adapter bytes/callbacks, closed quiescence; paired existing adapter regressions. No new TLS wire claim."
+      "proof_scope": "Real owner-loop Empty/Data and subsequent adapter read proves no consumption; wrongowner/nil/closed transport rejection, unchanged adapter bytes/callbacks, closed quiescence; paired existing adapter regressions. No new TLS wire claim.",
+      "evidence": "async candidate6bb74de canonical9bc0681; transport-probe/receipt.json SHA2b5e564f15e02ff29f920eb56b03bfa35dfbdb4d8d40f9e23ff65e8fe0de5cca;4pairedcells2internal+5publicperSan,3liveprofiles/unchangedbytes/adapterread"
     },
     {
       "id": "101-17-pool-policy-api",
@@ -148,9 +150,10 @@
       ],
       "round": 17,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Explicit SECOND pool/queue source owner. Real pure pool_select_locked and separate pool_reserve_policy preserve old exact callable, full origin/caps/free-stack policy, FIFO and AwaitingIDs eligibility/Idle head unpark; no network imports or allocation."
+      "proof_scope": "Explicit SECOND pool/queue source owner. Real pure pool_select_locked and separate pool_reserve_policy preserve old exact callable, full origin/caps/free-stack policy, FIFO and AwaitingIDs eligibility/Idle head unpark; no network imports or allocation.",
+      "evidence": "Shared bootstrap16/final/receipt.json SHAc66421261f1bc23eab63133e2b8759eea515868ca162115ca2ff319809d8b1f1;ONEpaired4cells70package+27facadeperSan,414ctorfaultcells/6profiles,12constructorDNS+7policy+51base;actualTaskfixturepublication noClient/ProtocolIOclaim"
     },
     {
       "id": "101-17-pool-policy-verify",
@@ -165,9 +168,10 @@
       ],
       "round": 18,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-17-policy-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-17-policy-thread",
-      "proof_scope": "Exact old proc type, pure selection leaves full metadata/owners unchanged, policy false forbids Free but permits eligible Idle, AwaitingIDs FIFO head only Idle dispatch, work1 bounds/other-origin progress/caps/rejections. No coordinator or native Client claim."
+      "proof_scope": "Exact old proc type, pure selection leaves full metadata/owners unchanged, policy false forbids Free but permits eligible Idle, AwaitingIDs FIFO head only Idle dispatch, work1 bounds/other-origin progress/caps/rejections. No coordinator or native Client claim.",
+      "evidence": "Shared bootstrap16/final/receipt.json SHAc66421261f1bc23eab63133e2b8759eea515868ca162115ca2ff319809d8b1f1;ONEpaired4cells70package+27facadeperSan,414ctorfaultcells/6profiles,12constructorDNS+7policy+51base;actualTaskfixturepublication noClient/ProtocolIOclaim"
     }
   ],
   "max_tasks_per_phase": 20,

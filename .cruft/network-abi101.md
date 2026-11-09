@@ -259,3 +259,15 @@ SAME Awaiting-DNS FIFO head only to a healthy same-origin Idle session; Free/new
 session dispatch still requires prepared addresses or fresh reserved IDs. Shared
 assignment_take accepts IDs0 for actual Busy/reuse assignments, but Connecting
 requires addresses or a fresh block. Original request/cutoff/generation stay fixed.
+
+
+Task16 implementation precision: empty DNS refill is an accepted no-op on open
+prepared/published State, still Closed after close. Internal State/actor/request/
+task-index/DNS-ring aliases reject before copying. DNS statistics saturate; burn
+clears its move-only scalar block even for invalid count and records only counts
+within0..16. It does not manufacture foreign-bank provenance from a scalar block.
+Prepared disposal requires Constructing/base-only/no operation refs; final
+network_state_release requires the controller to clear base_owned before dropping
+the base (as future Client.destroy does). Registration/method releases never
+silently consume that base. Constructor rollback marks Disposing before any
+child/raw free so reentrant APIs cannot acquire an unpublished dying State.

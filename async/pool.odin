@@ -25,19 +25,22 @@ pool_expired :: proc(s:^Session_Model,k:^Kernel,now:i64)->bool {
  return age_expired || idle_expired
 }
 
-pool_reserve :: proc(k:^Kernel,preparing:Preparing_Request,origin:^Prepared_Origin,now:i64)->(Pool_Reservation,Client_Error) {
+// A borrowed selection witness, valid ONLY while the same Kernel.mu remains
+// held. It neither pins cells nor owns the key. Both ordinary admission and
+// accepted-hop consumers use this one policy before their own atomic commits.
+Pool_Selection :: struct {
+ origin,session:Cell_Handle,
+ new_origin,new_session,waiting:bool,
+}
+
+@(private)
+pool_select_locked :: proc(k:^Kernel,key:Origin_Key,now:i64,allow_new:bool)->(Pool_Selection,Client_Error) {
  if k==nil || k.self!=k {return {},{kind=.Invalid_State}}
- if origin==nil || origin.key.profile_id!=k.profile.owner_id || origin.key.port==0 || len(origin.key.host)==0 ||
-    len(origin.storage)!=len(origin.key.host) || raw_data(origin.storage)!=raw_data(origin.key.host) ||
-    origin.allocator.procedure==nil || now<0 {return {},{kind=.Invalid_Config}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ if key.profile_id!=k.profile.owner_id || key.port==0 || len(key.host)<=0 || raw_data(key.host)==nil || now<0 {return {},{kind=.Invalid_Config}}
  if k.closed {return {},{kind=.Closed}}
- request:=pool_request_locked(k,preparing.request)
- if request==nil {return {},{kind=.Invalid_Handle}}
- if request.state!=.Preparing || request.origin.slot!=0 || request.session.slot!=0 || request.cancel_requested {return {},{kind=.Invalid_State}}
  origin_index:u32
  for slot,i in k.origins {
-  if slot.state==.Occupied && origin_equal(slot.owner.key,origin.key) {origin_index=u32(i+1);break}
+  if slot.state==.Occupied && origin_equal(slot.owner.key,key) {origin_index=u32(i+1);break}
  }
  new_origin:=origin_index==0
  if new_origin {
@@ -53,27 +56,57 @@ pool_reserve :: proc(k:^Kernel,preparing:Preparing_Request,origin:^Prepared_Orig
   }
  }
  new_session:=false
- if session_index==0 && selected.sessions<k.config.capacities.connections_per_origin && k.session_free_count>0 {
+ if allow_new && session_index==0 && selected.sessions<k.config.capacities.connections_per_origin && k.session_free_count>0 {
   session_index=k.session_free[k.session_free_count-1];new_session=true
  }
  waiting:=session_index==0
  if waiting && selected.waiters>=k.config.capacities.waiters_per_origin {return {},{kind=.Capacity}}
- // Every mutation below is infallible after these counter/shape preflights.
+ // Preserve the existing conservative counter rejection even if a particular
+ // selection would not increment every category. No ownership changes occur.
  if selected.requests==max(int) || selected.preparing==max(int) || selected.waiters==max(int) || selected.sessions==max(int) {return {},{kind=.Capacity}}
- if new_origin {
-  if selected.state!=.Free || selected.generation==0 {return {},{kind=.Invalid_State}}
+ if new_origin && (selected.state!=.Free || selected.generation==0) {return {},{kind=.Invalid_State}}
+ selection:=Pool_Selection{origin=origin_handle,new_origin=new_origin,new_session=new_session,waiting=waiting}
+ if session_index!=0 {selection.session={slot=session_index,generation=k.sessions[int(session_index)-1].generation}}
+ return selection,{}
+}
+
+// Keep this exact callable signature for pure-kernel consumers.
+pool_reserve :: proc(k:^Kernel,preparing:Preparing_Request,origin:^Prepared_Origin,now:i64)->(Pool_Reservation,Client_Error) {
+ return pool_reserve_policy(k,preparing,origin,now,true)
+}
+
+// allow_new=false still permits healthy same-origin Idle reuse. Otherwise it
+// claims a configured waiter; it NEVER reserves an unopened physical session.
+pool_reserve_policy :: proc(k:^Kernel,preparing:Preparing_Request,origin:^Prepared_Origin,now:i64,allow_new:bool)->(Pool_Reservation,Client_Error) {
+ if k==nil || k.self!=k {return {},{kind=.Invalid_State}}
+ if origin==nil || origin.key.profile_id!=k.profile.owner_id || origin.key.port==0 || len(origin.key.host)==0 ||
+    len(origin.storage)!=len(origin.key.host) || raw_data(origin.storage)!=raw_data(origin.key.host) ||
+    origin.allocator.procedure==nil || now<0 {return {},{kind=.Invalid_Config}}
+ sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ if k.closed {return {},{kind=.Closed}}
+ request:=pool_request_locked(k,preparing.request)
+ if request==nil {return {},{kind=.Invalid_Handle}}
+ if request.state!=.Preparing || request.origin.slot!=0 || request.session.slot!=0 || request.cancel_requested {return {},{kind=.Invalid_State}}
+ selection,error:=pool_select_locked(k,origin.key,now,allow_new)
+ if error.kind!=.None {return {},error}
+ // Selection and ownership commit share this lock. A selection copied across
+// an unlock is not an admission right and must be recomputed by its consumer.
+ origin_handle:=selection.origin
+ selected:=&k.origins[int(origin_handle.slot)-1]
+ if selection.new_origin {
   selected.state=.Occupied;selected.owner=origin^;origin^={}
   k.origin_free_count-=1;k.counters.origins+=1
  }
  assert(kernel_origin_retain_locked(k,origin_handle,.Request).kind==.None)
  assert(kernel_origin_retain_locked(k,origin_handle,.Preparing).kind==.None)
  request.origin=origin_handle
- reservation:=Pool_Reservation{request=preparing.request,origin=origin_handle,waiting=waiting}
+ reservation:=Pool_Reservation{request=preparing.request,origin=origin_handle,waiting=selection.waiting}
  k.dispatch_dirty=true;k.idle_dirty=true
- if waiting {assert(kernel_origin_retain_locked(k,origin_handle,.Waiter).kind==.None);return reservation,{}}
+ if selection.waiting {assert(kernel_origin_retain_locked(k,origin_handle,.Waiter).kind==.None);return reservation,{}}
+ session_index:=selection.session.slot
  session:=&k.sessions[int(session_index)-1]
  previous:=session.state
- if new_session {
+ if selection.new_session {
   k.session_free_count-=1
   assert(kernel_origin_retain_locked(k,origin_handle,.Session).kind==.None)
   generation:=session.generation

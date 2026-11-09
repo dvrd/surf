@@ -3,16 +3,17 @@ package surf_async
 import "core:sync"
 
 @(private)
-pool_dispatchable :: proc(request:^Request_Slot,now:i64)->bool {
+pool_dispatchable :: proc(request:^Request_Slot,now:i64,allow_waiting_dns:bool=false)->bool {
  return request!=nil && request.state==.Queued && !request.cancel_requested &&
+        (request.stage!=.Awaiting_DNS_IDs || allow_waiting_dns) &&
         (request.deadline.at==0 || now<request.deadline.at)
 }
 @(private)
-pool_head_locked :: proc(k:^Kernel,origin:Cell_Handle,now:i64)->^Request_Slot {
+pool_head_locked :: proc(k:^Kernel,origin:Cell_Handle,now:i64,allow_waiting_dns:bool=false)->^Request_Slot {
  slot:=&k.origins[int(origin.slot)-1]
  if slot.queue_head==0 || u64(slot.queue_head)>u64(len(k.requests)) {return nil}
  request:=&k.requests[int(slot.queue_head)-1]
- if !pool_dispatchable(request,now) || request.origin!=origin || request.session.slot!=0 {return nil}
+ if !pool_dispatchable(request,now,allow_waiting_dns) || request.origin!=origin || request.session.slot!=0 {return nil}
  return request
 }
 @(private)
@@ -22,7 +23,8 @@ pool_assign_locked :: proc(k:^Kernel,origin:Cell_Handle,session_index:u32,now:i6
  request:^Request_Slot
  handle:Request_Handle
  if waiting {
-  request=pool_head_locked(k,origin,now)
+  // Only an already healthy Idle connection can bypass missing DNS IDs.
+  request=pool_head_locked(k,origin,now,session.state==.Idle)
   assert(request!=nil)
   handle={owner_id=k.owner_id,slot=selected.queue_head,generation=request.generation}
   selected.queue_head=request.queue_next
@@ -92,11 +94,11 @@ pool_dispatch :: proc(k:^Kernel,work:int,now:i64)->(Assignment,int,Client_Error)
    if session.origin!=origin_handle {continue}
    if session.state==.Reserved {
     request:=pool_request_locked(k,session.request)
-    if pool_dispatchable(request,now) && request.origin==origin_handle &&
+    if pool_dispatchable(request,now,session.reserved_from==.Idle) && request.origin==origin_handle &&
        request.session==(Cell_Handle{slot=u32(index+1),generation=session.generation}) {
      return pool_assign_locked(k,origin_handle,u32(index+1),now,false),used,{}
     }
-   } else if session.state==.Idle && !pool_expired(session,k,now) && pool_head_locked(k,origin_handle,now)!=nil {
+   } else if session.state==.Idle && !pool_expired(session,k,now) && pool_head_locked(k,origin_handle,now,true)!=nil {
     return pool_assign_locked(k,origin_handle,u32(index+1),now,true),used,{}
    }
    continue
