@@ -116,7 +116,8 @@
       "agent": true,
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/foundations101.py\" --odin \"$WEBTOOLS_ODIN\" --report /tmp/surf101-foundation-consumers.json",
       "proof_scope": "Physical-copy public prerequisite consumers and existing Surf facade compile/run; does not certify full101.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/foundations101/receipt.json SHA0427b9a6cdb7b57006361582a9edfc750aa618399f31b17ecd5985072fd07363;9actualsteps:publicbuildrunx2,Http22/Surffacade27perSan,nested4requestcapcells;120sourcefiles/sourcecopybound"
     }
   ],
   "remaining_phases": {
