@@ -1,0 +1,102 @@
+{
+  "issue": "OKAMI-101",
+  "phase": "3a",
+  "status": "Reviewed public-seam prerequisite; all original criteria open",
+  "scope": "Conservative TLS checkout capability; does not block resolver/taskgroup/exchange schema",
+  "tasks": [
+    {
+      "id": "101-14-idle-freeze",
+      "title": "Freeze public conservative TLS checkout seam",
+      "repository": "surf",
+      "layer": "design",
+      "files": [
+        ".cruft/idle101.md",
+        ".cruft/phase-3a-101.yaml",
+        ".cruft/phase-3-101.yaml",
+        ".cruft/plan101.yaml"
+      ],
+      "depends_on": [
+        "101-11-network-freeze"
+      ],
+      "round": 13,
+      "agent": true,
+      "status": "verified",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/.cruft/validate101.py\"",
+      "proof_scope": "Source review only; current readiness/TLS APIs cannot certify empty buffered/native ciphertext. No networking claim.",
+      "evidence": "Source review of actual APIs and independent recommendation; no native seam implementation or execution yet"
+    },
+    {
+      "id": "101-14-tls-idle-api",
+      "title": "Public pure async TLS idle classification",
+      "repository": "odin",
+      "layer": "API",
+      "files": [
+        "core/crypto/tls/async_idle.odin"
+      ],
+      "depends_on": [
+        "101-14-idle-freeze"
+      ],
+      "round": 14,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_CORE/core/crypto/tls\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Owner-thread noallocation/noIO/nochanges; opaque enum includes all pending protocol/executor/raw/application state. Ready alone does not certify native receive queue."
+    },
+    {
+      "id": "101-14-tls-idle-verify",
+      "title": "Independent TLS residual-state classifier proof",
+      "repository": "odin",
+      "layer": "tests",
+      "files": [
+        "core/crypto/tls/async_idle_test.odin"
+      ],
+      "depends_on": [
+        "101-14-tls-idle-api"
+      ],
+      "round": 15,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_CORE/core/crypto/tls\" -sanitize:address -out:/tmp/101-idle-tls-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_CORE/core/crypto/tls\" -sanitize:thread -out:/tmp/101-idle-tls-thread",
+      "proof_scope": "Actual Ready/Busy/Buffered/Closed/Invalid state vectors, rejection of partial record/plaintext/posthandshake/keyupdate and mutation/allocator guards. Actual TLS wire proof remains exchange idle-policy gate."
+    },
+    {
+      "id": "101-14-stream-probe-api",
+      "title": "Bounded owner-only nonconsuming native stream probe",
+      "repository": "async",
+      "layer": "API",
+      "files": [
+        "stream_probe.odin",
+        "stream_probe_posix.odin",
+        "stream_probe_unsupported.odin"
+      ],
+      "depends_on": [
+        "101-14-idle-freeze"
+      ],
+      "round": 14,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "One bounded nonblocking MSG_PEEK syscall; no EINTR retry; Empty/Data/Closed/errors; validates generation/stream/owner/cancel; no readiness/timer updates."
+    },
+    {
+      "id": "101-14-stream-probe-verify",
+      "title": "Independent owned socket nonconsumption and state proof",
+      "repository": "async",
+      "layer": "tests",
+      "files": [
+        "stream_probe_test.odin"
+      ],
+      "depends_on": [
+        "101-14-stream-probe-api"
+      ],
+      "round": 15,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-idle-probe-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-idle-probe-thread",
+      "proof_scope": "Actual owner-loop Empty/Data/EOF/reset/partial bytes, byte remains readable, stale/wrongowner/dgram/cancel, no allocation/ready/timer changes; source-bound receipt."
+    }
+  ],
+  "max_tasks_per_phase": 20,
+  "max_files_per_task": 5,
+  "max_owners_per_file": 2
+}

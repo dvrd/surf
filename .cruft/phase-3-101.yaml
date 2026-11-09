@@ -160,7 +160,9 @@
         ".cruft/idle-policy101.md"
       ],
       "depends_on": [
-        "101-14-exchange-api"
+        "101-14-exchange-api",
+        "101-14-tls-idle-verify",
+        "101-14-stream-probe-verify"
       ],
       "round": 16,
       "agent": true,

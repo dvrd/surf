@@ -136,6 +136,7 @@
   "phase_files": [
     "plan101.yaml",
     "phase-2-101.yaml",
-    "phase-3-101.yaml"
+    "phase-3-101.yaml",
+    "phase-3a-101.yaml"
   ]
 }
