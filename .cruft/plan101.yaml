@@ -27,7 +27,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/async/connection\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Add idle-only request cap preserving immutable lifetime cap; no callback/IO/allocation on replacement.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/request-budget/{receipt,review}.json;physicalcopyASanTSan2internal+3publicaggregatesperSan;realB/Qnewcap,32MiBpartialwrite,fd0delta,panicallocator,rejectionbytes"
     },
     {
       "id": "101-01-budget-verify",
@@ -36,7 +37,6 @@
       "files": [
         "connection/request_budget_test.odin",
         "connection/tests/request_budget_test.odin",
-        "connection/tests/testdata/request_budget/main.odin",
         "connection/tests/request_budget_gate.py"
       ],
       "depends_on": [
@@ -46,7 +46,8 @@
       "agent": true,
       "done_when": "python3 \"$WEBTOOLS_SHARED/async/connection/tests/request_budget_gate.py\" --odin \"$WEBTOOLS_ODIN\" --sanitizers address thread --report /tmp/surf101-request-budget.json",
       "proof_scope": "Paired actual socket sequential leases, original cap, rejection immutability, canceled/closed/foreign task, callbacks/heap/fd cleanup; source-bound receipt.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/request-budget/{receipt,review}.json;physicalcopyASanTSan2internal+3publicaggregatesperSan;realB/Qnewcap,32MiBpartialwrite,fd0delta,panicallocator,rejectionbytes"
     },
     {
       "id": "101-02-persistence-api",
