@@ -1,7 +1,7 @@
 {
   "issue": "OKAMI-101",
   "phase": 2,
-  "status": "Pure kernel API/model pairs verified; physical-copy kernel consumer and network-phase freeze remain",
+  "status": "Pure kernel APIs/models/physical consumers verified; concrete network phase freeze remains",
   "scope": "Bounded owner/admission/pool kernel only; real networking and full public API in following frozen phase",
   "tasks": [
     {
@@ -235,7 +235,8 @@
       "agent": true,
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/kernel101.py\" --odin \"$WEBTOOLS_ODIN\" --report /tmp/surf101-kernel.json",
       "proof_scope": "Actual paired kernel execution/heap/source manifests; no DNS/TLS/HTTP request or full101 pass claim.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/kernel101/receipt.json;8physicalcopychecks,46kernel+27facadeperSan,standalonebuild/runperSan,126sourcefiles/2670std/14artifacts;2modelcompletions+2MEMORYcodec,noActors/sockets/TLS"
     },
     {
       "id": "101-11-network-freeze",
