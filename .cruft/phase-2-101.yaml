@@ -1,7 +1,7 @@
 {
   "issue": "OKAMI-101",
   "phase": 2,
-  "status": "Reviewed and approved for type/schema gate first; all implementation tasks pending",
+  "status": "Concrete schema and paired verification complete; identity/resources selected",
   "scope": "Bounded owner/admission/pool kernel only; real networking and full public API in following frozen phase",
   "tasks": [
     {
@@ -21,7 +21,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Freeze concrete Kernel/Slot/Profile/Origin/Session_Model layouts and internal handoff signatures before parallel API writers; types/pure normalization only, no fake network public stubs.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/schema/{receipt,stdlib-review}.json;6puretestsperASanTSan;types e72c319b/configc8829ac8/doc9be5303c/sourceguards;two-phasecleanup/reservationrollback/origin-finalize reviewed, not behavior completion"
     },
     {
       "id": "101-05-schema-verify",
@@ -38,7 +39,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-05-schema-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-05-schema-verify-thread",
       "proof_scope": "Explicit capacities, arithmetic, invalid handles, stable owner types; no network claim.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/schema/{receipt,stdlib-review}.json;6puretestsperASanTSan;types e72c319b/configc8829ac8/doc9be5303c/sourceguards;two-phasecleanup/reservationrollback/origin-finalize reviewed, not behavior completion"
     },
     {
       "id": "101-06-identity-api",

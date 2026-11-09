@@ -1,6 +1,6 @@
 {
   "issue": "OKAMI-101",
-  "status": "All phase1 prerequisites/design verified; phase2 kernel schema gate selected",
+  "status": "Phase1 complete; phase2 concrete schema and paired verification complete; independent identity/resources next",
   "scope": "All five original criteria in spec101.md unchanged; phase1 only provides reusable async budgets and HTTP1 persistence metadata.",
   "repositories": {
     "surf": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/shared/surf",
