@@ -150,9 +150,10 @@
       ],
       "round": 15,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Keepalive encoder, existing head/chunk parser, whole16KiB plaintext reads, copied headers/body, accepted-op drain and fresh cutoff. Explicit second schema owner adds _busy only, rejecting allocator-reentrant public mutation; 5 files total. Physical allocation/free requires next fresh-clock Drive barrier before success."
+      "proof_scope": "Keepalive encoder, existing head/chunk parser, whole16KiB plaintext reads, copied headers/body, accepted-op drain and fresh cutoff. Explicit second schema owner adds _busy only, rejecting allocator-reentrant public mutation; 5 files total. Physical allocation/free requires next fresh-clock Drive barrier before success.",
+      "evidence": "Surf candidate2455675; exchange14/final/receipt.json SHAea3424432659918c14d5944c828c326589a69938e2672fe0158a20aa9246e962;11unitperASanTSan+28actualTCP/TLScells,inlineKUack/oldcutoffreuse/dirtyretirement,sourcecopied111+std2675/executablesguarded"
     },
     {
       "id": "101-14-exchange-verify",
@@ -173,9 +174,10 @@
       ],
       "round": 16,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-14-exchange-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-14-exchange-verify-thread && python3 \"$WEBTOOLS_SHARED/surf/tests/exchange101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --require-idle-policy --report /tmp/101-14-exchange.json",
-      "proof_scope": "Literal partial/coalesced IO, all framing/EOF/surplus/cancel/deadline/exactgrant/latecallback vectors; actual adapter public host. REQUIREDsource-supportedpublicTLSidle-healthpolicy gate before18actor: actualseparate/partialrecord/KeyUpdate/close/healthyloopback+sourcereview; Pending/readinessorprivatefieldsnotproof. Conservative retirement untilapproved; blockedpolicyfailsrequiredflag."
+      "proof_scope": "Literal partial/coalesced IO, all framing/EOF/surplus/cancel/deadline/exactgrant/latecallback vectors; actual adapter public host. REQUIREDsource-supportedpublicTLSidle-healthpolicy gate before18actor: actualseparate/partialrecord/KeyUpdate/close/healthyloopback+sourcereview; Pending/readinessorprivatefieldsnotproof. Conservative retirement untilapproved; blockedpolicyfailsrequiredflag.",
+      "evidence": "Surf candidate2455675; exchange14/final/receipt.json SHAea3424432659918c14d5944c828c326589a69938e2672fe0158a20aa9246e962;11unitperASanTSan+28actualTCP/TLScells,inlineKUack/oldcutoffreuse/dirtyretirement,sourcecopied111+std2675/executablesguarded"
     },
     {
       "id": "101-15-network-state",
@@ -193,9 +195,10 @@
       ],
       "round": 15,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "New State embeds frozen Kernel; actual refcounts/constructing/publication/actor arrays, no modification to prior types. FreezeTask17genericpoolselectionhandoff andStateactor/DNSblockownershipbeforeparallel17/18; purepoolfunctiondeclared/implementedonlyby17beforeanycallerusesit. ConstructionownerbecomesClientbase; registeredrefs lastdropafterdetach/accounting; protectedlastregistrationclockwitness andprestarton_donefallback."
+      "proof_scope": "New State embeds frozen Kernel; actual refcounts/constructing/publication/actor arrays, no modification to prior types. FreezeTask17genericpoolselectionhandoff andStateactor/DNSblockownershipbeforeparallel17/18; purepoolfunctiondeclared/implementedonlyby17beforeanycallerusesit. ConstructionownerbecomesClientbase; registeredrefs lastdropafterdetach/accounting; protectedlastregistrationclockwitness andprestarton_donefallback.",
+      "evidence": "network-state/schema/receipt.json SHA3b106996a809ab2af02b4a2e859f2731690ef0d64851d4da037ef9f5790c9fb0;4pairedcells51kernel+27facade,5newpureconfig/layoutaggregates,15malformed/3sizeprofiles; noStateconstructor/nativeclaim"
     },
     {
       "id": "101-15-network-state-verify",
@@ -210,9 +213,10 @@
       ],
       "round": 16,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-15-network-state-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-15-network-state-thread",
-      "proof_scope": "State bounds, explicit DNS nil/empty and partial-registration ownership contract; no transport success."
+      "proof_scope": "State bounds, explicit DNS nil/empty and partial-registration ownership contract; no transport success.",
+      "evidence": "network-state/schema/receipt.json SHA3b106996a809ab2af02b4a2e859f2731690ef0d64851d4da037ef9f5790c9fb0;4pairedcells51kernel+27facade,5newpureconfig/layoutaggregates,15malformed/3sizeprofiles; noStateconstructor/nativeclaim"
     },
     {
       "id": "101-16-bootstrap-api",
