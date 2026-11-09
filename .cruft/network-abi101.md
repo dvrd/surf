@@ -228,3 +228,34 @@ refs/physical grants/taskgroups/on_done/clock witnesses require task16/17/18/19
 real implementation and native gates; declarations/scalar flags are not evidence.
 Full101 remains open through complete redirect/requeue and phase4 failure/race/
 identity/public-native evidence. Existing blocking/curl APIs stay untouched.
+
+
+## Task16 common callback retirement amendment
+
+The explicit second ABI-document owner is task16 (four files total). Implement
+`network_task_done(state:^Client_State,actor_index:int,owner_drained:bool)` in
+runtime_ownership.odin, shared by task17/18 callbacks and public prestart group
+ownership return. Index0 is coordinator,1..N are sessions. Normal coordinator
+latches coordinator.done before Done; normal actors latch owner_drained before
+Done. False is permitted ONLY for caller-certified never-started/no-I/O cleanup,
+including Runtime.destroy before start and manual retire_group_unstarted return.
+Do not read scheduler-owned Task fields to infer that fact or call Task/TLS/
+adapter APIs in on_done.
+
+The common helper detaches Signals outside State.mu, guards duplicate retirement,
+and performs one guarded queued no-I/O cancellation/finalization before removing
+the final Runtime witness. All physical disposals are outside both mutexes; fresh
+clock capture is protected by the existing witness. Last callback nulls runtime
+under State.mu; releasing its registration reference is the FINAL State access.
+No duplicated coordinator/actor lifetime algorithm or new owner-retirement stubs.
+
+Task17 must provide network_queue_committed_locked and network_queue_changed_locked
+under State.mu for task19. Keep commit and Awaiting_DNS_IDs stage repair atomic
+against coordinator dispatch, using State.mu then Kernel.mu. A late bounded-scan
+repair alone is insufficient. Queue changes preserve persistent cursor, refresh
+remaining-capacity work and earliest-deadline scratch; do not repeatedly restart
+cursor0 and starve cells behind sustained producers. Idle unpark may expose the
+SAME Awaiting-DNS FIFO head only to a healthy same-origin Idle session; Free/new
+session dispatch still requires prepared addresses or fresh reserved IDs. Shared
+assignment_take accepts IDs0 for actual Busy/reuse assignments, but Connecting
+requires addresses or a fresh block. Original request/cutoff/generation stay fixed.

@@ -226,7 +226,8 @@
       "files": [
         "async/bootstrap.odin",
         "async/dns_bank.odin",
-        "async/runtime_ownership.odin"
+        "async/runtime_ownership.odin",
+        ".cruft/network-abi101.md"
       ],
       "depends_on": [
         "101-15-network-state-verify",
@@ -236,7 +237,7 @@
       "agent": true,
       "status": "pending",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Real prepare/dispose State API, stable Resources placement, finite resolver/entropy/bank, no task registration or fake Client_init. AllSignals preparedbeforeatomicgroupregistration; noPendingfailureowner."
+      "proof_scope": "Real prepare/dispose State API, stable Resources placement, finite resolver/entropy/bank, no task registration or fake Client_init. AllSignals preparedbeforeatomicgroupregistration; noPendingfailureowner. Explicit second ABI-doc owner freezes common network_task_done for17/18, with guarded no-I/O unstarted completion before final runtime-witness/ref drop; no future module calls."
     },
     {
       "id": "101-16-bootstrap-verify",
