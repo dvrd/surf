@@ -510,3 +510,14 @@ blocked and add a reviewed owning prerequisite/phase refinement before new SDK
 seams. Do not silently weaken full101 persistence or accept a fresh-connection-only
 fallback as completion. This explicit unresolved gate is not a reason to delay
 the three independent foundation streams enabled by the reviewed plan.
+
+
+## Reviewed exchange engine schema amendment
+
+Task14 is the explicit second types.odin owner, with five total files. Add only
+Exchange._busy to reject reentrant public calls from allocator callbacks while
+state is partially transitioned. No callback/allocator may publish an unfinished
+owner. After physical allocations/frees and HTTP completion, return Progress and
+require another caller-supplied fresh clock sample before publishing success;
+the actor separately rechecks runtime epoch/deadline and kernel completion.
+The generic engine cannot invent its own monotonic clock or extend Budget.

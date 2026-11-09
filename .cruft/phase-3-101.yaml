@@ -138,7 +138,8 @@
         "async/exchange/exchange.odin",
         "async/exchange/write.odin",
         "async/exchange/read.odin",
-        "async/exchange/ownership.odin"
+        "async/exchange/ownership.odin",
+        "async/exchange/types.odin"
       ],
       "depends_on": [
         "101-13-exchange-schema-verify"
@@ -147,7 +148,7 @@
       "agent": true,
       "status": "pending",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Keepalive encoder, existing head/chunk parser, whole16KiB plaintext reads, copied headers/body, accepted-op drain and fresh cutoff."
+      "proof_scope": "Keepalive encoder, existing head/chunk parser, whole16KiB plaintext reads, copied headers/body, accepted-op drain and fresh cutoff. Explicit second schema owner adds _busy only, rejecting allocator-reentrant public mutation; 5 files total. Physical allocation/free requires next fresh-clock Drive barrier before success."
     },
     {
       "id": "101-14-exchange-verify",
