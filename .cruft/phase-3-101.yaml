@@ -275,9 +275,10 @@
       ],
       "round": 19,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Actual metadata-only coordinator and network queue integration on frozen bootstrap + pure pool policy; separate timer/bounded persistent request/DNS scans, retained signal snapshots, safe queued completion and active-owner cancellation. No I/O. Pure pool/queue second-owner changes are split into phase3a to run in parallel with bootstrap. Narrow explicit SECOND runtime_ownership owner fixes independently reproduced queued DNS block/awaiting metadata not burned on unstarted common cancellation; preserve State\u2192Kernel lock order and counters before physical frees."
+      "proof_scope": "Actual metadata-only coordinator and network queue integration on frozen bootstrap + pure pool policy; separate timer/bounded persistent request/DNS scans, retained signal snapshots, safe queued completion and active-owner cancellation. No I/O. Pure pool/queue second-owner changes are split into phase3a to run in parallel with bootstrap. Narrow explicit SECOND runtime_ownership owner fixes independently reproduced queued DNS block/awaiting metadata not burned on unstarted common cancellation; preserve State\u2192Kernel lock order and counters before physical frees.",
+      "evidence": "Shared runtime1718/unit-final/receipt.json SHA406a01ea366039b49915f885e8ee4f01103a35bb0514babdfa1a166b552e3594;4cells82async+27facade perASanTSan;10independent coordinator tests including DNS6draw prestart burn red-green, work1 fairness/queued expiry/idle/lifetime/atomicDNScommit. Native Actor proof separate; no public Client claim."
     },
     {
       "id": "101-17-coordinator-verify",
@@ -292,9 +293,10 @@
       ],
       "round": 20,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-17-coordinator-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-17-coordinator-verify-thread",
-      "proof_scope": "Actual runtime coordinator with controlled metadata actors, work1/bankempty/parked task expiry; no native Surf network claim."
+      "proof_scope": "Actual runtime coordinator with controlled metadata actors, work1/bankempty/parked task expiry; no native Surf network claim.",
+      "evidence": "Shared runtime1718/unit-final/receipt.json SHA406a01ea366039b49915f885e8ee4f01103a35bb0514babdfa1a166b552e3594;4cells82async+27facade perASanTSan;10independent coordinator tests including DNS6draw prestart burn red-green, work1 fairness/queued expiry/idle/lifetime/atomicDNScommit. Native Actor proof separate; no public Client claim."
     },
     {
       "id": "101-18-session-api",

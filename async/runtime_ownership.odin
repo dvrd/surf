@@ -80,11 +80,14 @@ network_assignment_take :: proc(actor:^Session_Actor)->(Session_Assignment,Clien
 network_unstarted_cancel :: proc(s:^Client_State) {
  assert(kernel_close(&s.kernel).kind==.None)
  for index in 0..<len(s.kernel.requests) {
+  sync.lock(&s.mu)
   sync.lock(&s.kernel.mu)
   request:=&s.kernel.requests[index]
   queued:=request.state==.Queued
   handle:=Request_Handle{owner_id=s.kernel.owner_id,slot=u32(index+1),generation=request.generation}
+  if queued {network_queue_forget_locked(s,handle)}
   sync.unlock(&s.kernel.mu)
+  sync.unlock(&s.mu)
   if !queued {continue}
   response:surf.Response
   disposal,error:=kernel_begin_complete(&s.kernel,handle,&response,{kind=.IO_Failed,transport={kind=.Cancelled},phase=.Cancellation,write_effect=.Not_Sent})
