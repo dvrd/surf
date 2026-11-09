@@ -1,7 +1,7 @@
 {
   "issue": "OKAMI-101",
   "phase": 2,
-  "status": "Schema and identity/resources verified; admission/completion and pool model next",
+  "status": "Pure kernel API/model pairs verified; physical-copy kernel consumer and network-phase freeze remain",
   "scope": "Bounded owner/admission/pool kernel only; real networking and full public API in following frozen phase",
   "tasks": [
     {
@@ -155,7 +155,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Mutex metadata only; Preparing close/deadline rollback with State keepalive; one intrusive completion node/slot removed by poll OR direct take/release before generation reuse.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/{admission08/receipt.json,pool09/owner/receipt.json};46wholepackageperASanTSan;96single-slotreuse,4x64concurrentunpolledtakes,latecleanupsecondDtor/FIFO/work1dirtyidle/physicalretirement;actualpuremodelnotnetwork"
     },
     {
       "id": "101-09-pool-api",
@@ -175,7 +176,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Explicit serialized second schema owner: separate bounded dispatch/idle cursors and Returning session guard, charged allocated-capacity scan (including Free cells), Pending versus unchanged-sweep quiescence; no active-density efficiency claim. Fixed model/capacity/fairness only; no sockets/timers.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/{admission08/receipt.json,pool09/owner/receipt.json};46wholepackageperASanTSan;96single-slotreuse,4x64concurrentunpolledtakes,latecleanupsecondDtor/FIFO/work1dirtyidle/physicalretirement;actualpuremodelnotnetwork"
     },
     {
       "id": "101-08-admission-verify",
@@ -194,7 +196,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-08-admission-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-08-admission-verify-thread",
       "proof_scope": "Concurrent producers/consumers, >capacity complete\u2192take/release without poll, poll/take races, close during Preparing, stale aliases, retained completions, disposal outside lock.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/{admission08/receipt.json,pool09/owner/receipt.json};46wholepackageperASanTSan;96single-slotreuse,4x64concurrentunpolledtakes,latecleanupsecondDtor/FIFO/work1dirtyidle/physicalretirement;actualpuremodelnotnetwork"
     },
     {
       "id": "101-09-pool-verify",
@@ -212,7 +215,8 @@
       "agent": true,
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-09-pool-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-09-pool-verify-thread",
       "proof_scope": "Independent state model, all caps/exact/zero, connecting counts, unrelated origin progress and idle/retired slot selection.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "surf101/evidence/{admission08/receipt.json,pool09/owner/receipt.json};46wholepackageperASanTSan;96single-slotreuse,4x64concurrentunpolledtakes,latecleanupsecondDtor/FIFO/work1dirtyidle/physicalretirement;actualpuremodelnotnetwork"
     },
     {
       "id": "101-10-kernel-review",

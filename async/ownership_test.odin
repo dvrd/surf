@@ -284,7 +284,7 @@ ownership_kernel_stable_cells_and_origin_physical_retirement :: proc(t:^testing.
  assert(profile_init(&profile,ownership_config(),a).kind==.None)
  assert(resources_init(&resources,{},a).kind==.None)
  assert(kernel_init(&kernel,&profile,&resources).kind==.None)
- testing.expect(t,kernel.self==&kernel && kernel.owner_id==profile.owner_id && kernel.references==1)
+ testing.expect(t,kernel.self==&kernel && kernel.owner_id!=0 && kernel.references==1)
  testing.expect(t,kernel.request_free_count==2 && kernel.origin_free_count==2 && kernel.session_free_count==2)
  for slot in kernel.requests {testing.expect(t,slot.state==.Free && slot.generation==1)}
  for slot in kernel.origins {testing.expect(t,slot.state==.Free && slot.generation==1)}

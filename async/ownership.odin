@@ -7,6 +7,9 @@ import "core:mem"
 import "core:sync"
 import scopes "core:sync/budget"
 
+@(private) kernel_identity_mu: sync.Mutex
+@(private) kernel_identity_serial: u64
+
 request_clone :: proc(request:http.Request,allocator:mem.Allocator)->(Request_Owner,Client_Error) {
  header:[http.MAX_HEADER_SIZE]u8
  _,error:=h1.request_encode_profile(header[:],request,.Keep_Alive)
@@ -55,7 +58,7 @@ kernel_init :: proc(k:^Kernel,profile:^Profile,resources:^Kernel_Resources)->Cli
  if normalized.capacities!=profile.config.capacities || normalized.request_timeout!=profile.config.request_timeout ||
     normalized.response_body_limit!=profile.config.response_body_limit || normalized.idle_timeout!=profile.config.idle_timeout ||
     normalized.max_age!=profile.config.max_age {return {kind=.Invalid_Config}}
- temporary:=Kernel{owner_id=profile.owner_id,config=profile.config,resources=resources,profile=profile,
+ temporary:=Kernel{config=profile.config,resources=resources,profile=profile,
   references=1,allocator=resources.allocator}
  success:=false
  defer if !success {kernel_free_arrays(&temporary)}
@@ -79,6 +82,11 @@ kernel_init :: proc(k:^Kernel,profile:^Profile,resources:^Kernel_Resources)->Cli
  temporary.origin_free_count=len(temporary.origins)
  temporary.session_free_count=len(temporary.sessions)
  temporary.counters.capacities=capacities
+ // A fresh kernel domain prevents stale handles from aliasing another Kernel,
+ // including later reuse of the same immutable Profile and slot generations.
+ identity,available:=profile_identity_next(&kernel_identity_serial,&kernel_identity_mu)
+ if !available {return {kind=.Capacity}}
+ temporary.owner_id=identity
  temporary.self=k
  k^=temporary
  success=true
