@@ -20,9 +20,10 @@
       ],
       "round": 25,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Original Request_Handle plus Empty/Preparing/Ready owner phase before callbacks, cloned target/origin, next hop count, remaining draws and previous status; no State gate opening or runtime claim."
+      "proof_scope": "Original Request_Handle plus Empty/Preparing/Ready owner phase before callbacks, cloned target/origin, next hop count, remaining draws and previous status; no State gate opening or runtime claim.",
+      "evidence": "Root strict matched-core packagecheck0, newhandoffsourceSHA1aa1f851d1fd4d0c2cf2d7e4ee353a2dd65cc1558ea987f449d13e04a1f503ed; stableoriginalhandle/ownedtarget/budget/status phaseABI only, no actor gate/native claim."
     },
     {
       "id": "101-24-redirect-ledger",
