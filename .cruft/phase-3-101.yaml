@@ -360,9 +360,10 @@
       ],
       "round": 21,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Actual Client API, originalcutoff beforeclone, constructing gate/registeredrefs/runningRT partialabort, finiteproducer and result ownership. Explicit max_redirects>0 gate until phase4. AtomicpreparedTaskgroup+prestartclose retirement; no failed-init Pending owner. Controller-serializedRuntime start/join/destroy; shutdownproducer-race supported; STARTINGretire rejection remainsPending/retry-safe afterThreadCreationFailed."
+      "proof_scope": "Actual Client API, originalcutoff beforeclone, constructing gate/registeredrefs/runningRT partialabort, finiteproducer and result ownership. Explicit max_redirects>0 gate until phase4. AtomicpreparedTaskgroup+prestartclose retirement; no failed-init Pending owner. Controller-serializedRuntime start/join/destroy; shutdownproducer-race supported; STARTINGretire rejection remainsPending/retry-safe afterThreadCreationFailed.",
+      "evidence": "client20/final/receipt.json SHAc9e0ee84aabedac8cfcccfcabcc0cf00892134c61a46965f7843d6fc96b92920;12nativecells+6publicunits perASanTSan; client1920/unit-final SHAdf55ce52e9cf7b5a8924b290b72d08a968f0ea80c92a39b7d4b9f36a8adaa8e5;88async+27facade perSan; actualinitreentry red->green independentreview. Redirects still gated."
     },
     {
       "id": "101-20-client-smoke",
