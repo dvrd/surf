@@ -106,9 +106,10 @@
       ],
       "round": 13,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Concrete original-address operations/buffers/result ABI, config validation; no driver stubs."
+      "proof_scope": "Concrete original-address operations/buffers/result ABI, config validation; no driver stubs.",
+      "evidence": "surf101/evidence/exchange-schema/receipt.json SHAda90569257c09b98cc74eaf6bc5d5d8df94b580899515cde9ca7c31932906822;4 pure boundary aggregates each ASan/TSan, full source maps unchanged; no engine/IO/network"
     },
     {
       "id": "101-13-exchange-schema-verify",
@@ -123,9 +124,10 @@
       ],
       "round": 14,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-13-exchange-schema-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-13-exchange-schema-thread",
-      "proof_scope": "Zero/exact/hardlimits/alias types; no request success claim."
+      "proof_scope": "Zero/exact/hardlimits/alias types; no request success claim.",
+      "evidence": "surf101/evidence/exchange-schema/receipt.json SHAda90569257c09b98cc74eaf6bc5d5d8df94b580899515cde9ca7c31932906822;4 pure boundary aggregates each ASan/TSan, full source maps unchanged; no engine/IO/network"
     },
     {
       "id": "101-14-exchange-api",
