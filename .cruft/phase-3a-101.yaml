@@ -38,9 +38,10 @@
       ],
       "round": 14,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_CORE/core/crypto/tls\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Owner-thread noallocation/noIO/nochanges; opaque enum includes all pending protocol/executor/raw/application state. Ready alone does not certify native receive queue."
+      "proof_scope": "Owner-thread noallocation/noIO/nochanges; opaque enum includes all pending protocol/executor/raw/application state. Ready alone does not certify native receive queue.",
+      "evidence": "odin candidate339c35be1 canonical515db94f0; tls-idle/receipt.json SHA370dfed368104ca69830f53e4cd34b9824a629068c82b18797a118593ecccac4;94wholepackageperASanTSan including5newpureclassifieraggregates"
     },
     {
       "id": "101-14-tls-idle-verify",
@@ -55,9 +56,10 @@
       ],
       "round": 15,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_CORE/core/crypto/tls\" -sanitize:address -out:/tmp/101-idle-tls-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_CORE/core/crypto/tls\" -sanitize:thread -out:/tmp/101-idle-tls-thread",
-      "proof_scope": "Actual Ready/Busy/Buffered/Closed/Invalid state vectors, rejection of partial record/plaintext/posthandshake/keyupdate and mutation/allocator guards. Actual TLS wire proof remains exchange idle-policy gate."
+      "proof_scope": "Actual Ready/Busy/Buffered/Closed/Invalid state vectors, rejection of partial record/plaintext/posthandshake/keyupdate and mutation/allocator guards. Actual TLS wire proof remains exchange idle-policy gate.",
+      "evidence": "odin candidate339c35be1 canonical515db94f0; tls-idle/receipt.json SHA370dfed368104ca69830f53e4cd34b9824a629068c82b18797a118593ecccac4;94wholepackageperASanTSan including5newpureclassifieraggregates"
     },
     {
       "id": "101-14-stream-probe-api",

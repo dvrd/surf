@@ -34,9 +34,10 @@
       ],
       "round": 13,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "All-or-none noalloc registration using extracted register_locked; prestart Waiting/Queued retirement no on_done; prepared-unregistered Signal contract preserves old API."
+      "proof_scope": "All-or-none noalloc registration using extracted register_locked; prestart Waiting/Queued retirement no on_done; prepared-unregistered Signal contract preserves old API.",
+      "evidence": "async candidatec17688d canonicale55886b; task-group/receipt.json SHA770bdc50eada7cc8f7dd2bbaf9fdec76d185b5edda3f37a813fafac2aaf9e479;8actualpairedcells,26root/47external/3signal/2signalexternalperSan"
     },
     {
       "id": "101-12-task-group-verify",
@@ -52,9 +53,10 @@
       ],
       "round": 14,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-12-taskgroup-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-12-taskgroup-thread && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/signal\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-12-groupsignal-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/signal\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-12-groupsignal-thread",
-      "proof_scope": "Actual prestart/running/shutdown races, exact owner/no-callback counts, rejected group rollback, unrelated ready queue/attached IO, preparedSignal detach/wake and badgrant cleanup where applicable. PrestartRuntime.destroy invokeson_donewithouton_cancel; threadcreationfailedstart/retry; noCurrentTaskTLScallsfromon_done."
+      "proof_scope": "Actual prestart/running/shutdown races, exact owner/no-callback counts, rejected group rollback, unrelated ready queue/attached IO, preparedSignal detach/wake and badgrant cleanup where applicable. PrestartRuntime.destroy invokeson_donewithouton_cancel; threadcreationfailedstart/retry; noCurrentTaskTLScallsfromon_done.",
+      "evidence": "async candidatec17688d canonicale55886b; task-group/receipt.json SHA770bdc50eada7cc8f7dd2bbaf9fdec76d185b5edda3f37a813fafac2aaf9e479;8actualpairedcells,26root/47external/3signal/2signalexternalperSan"
     },
     {
       "id": "101-12-resolver-api",
