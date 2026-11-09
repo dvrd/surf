@@ -307,7 +307,8 @@
       ],
       "depends_on": [
         "101-16-bootstrap-verify",
-        "101-14-exchange-verify"
+        "101-14-exchange-verify",
+        "101-16-transport-probe-verify"
       ],
       "round": 19,
       "agent": true,
