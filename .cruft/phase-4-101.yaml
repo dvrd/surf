@@ -94,9 +94,10 @@
       ],
       "round": 27,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/redirect_foundations101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-redirect-foundations.json",
-      "proof_scope": "Actual ledger transitions, exact counters/refs/leases/origins, stale/foreign/reject preservation, accepted failures and callback disposal. Own shared paired focused gate for all three foundation test streams."
+      "proof_scope": "Actual ledger transitions, exact counters/refs/leases/origins, stale/foreign/reject preservation, accepted failures and callback disposal. Own shared paired focused gate for all three foundation test streams.",
+      "evidence": "redirect-foundations/final/receipt.json SHA3570ceb7b1b604a1c6207e4c2692fda67c5c1ffeae8caad4ea02fee8367fb8e1; shared18perASanTSan (ledger6/prepare5/queue7), source-bound physicalcopy160/core2675/binaries; puremodel/realownedmemory fixtures, nativecount0. Prepare24policy+3boundary,45malformed+3validinteriorgrants,3callbackreentry/clearedheapheader/2alias/2typedbudget. Ledger/queue samehandle+lease+cutoff+finite32IDs."
     },
     {
       "id": "101-25-redirect-prepare-verify",
@@ -111,9 +112,10 @@
       ],
       "round": 27,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/redirect_foundations101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-redirect-foundations.json",
-      "proof_scope": "Literal Root method/origin/downgrade/relative/limit policy, owning consumed Response, full malformed allocation grants and every new allocation failure, reentry/exactfree; shares ONE foundation gate."
+      "proof_scope": "Literal Root method/origin/downgrade/relative/limit policy, owning consumed Response, full malformed allocation grants and every new allocation failure, reentry/exactfree; shares ONE foundation gate.",
+      "evidence": "redirect-foundations/final/receipt.json SHA3570ceb7b1b604a1c6207e4c2692fda67c5c1ffeae8caad4ea02fee8367fb8e1; shared18perASanTSan (ledger6/prepare5/queue7), source-bound physicalcopy160/core2675/binaries; puremodel/realownedmemory fixtures, nativecount0. Prepare24policy+3boundary,45malformed+3validinteriorgrants,3callbackreentry/clearedheapheader/2alias/2typedbudget. Ledger/queue samehandle+lease+cutoff+finite32IDs."
     },
     {
       "id": "101-26-redirect-queue-verify",
@@ -128,9 +130,10 @@
       ],
       "round": 27,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/redirect_foundations101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-redirect-foundations.json",
-      "proof_scope": "Boundary0/1/15/16/17/32, ring exhaustion/refill vs original budget, no draw reset across hops, atomic rejection/ownership, numeric/hosts/Idle eligibility; shares ONE foundation gate."
+      "proof_scope": "Boundary0/1/15/16/17/32, ring exhaustion/refill vs original budget, no draw reset across hops, atomic rejection/ownership, numeric/hosts/Idle eligibility; shares ONE foundation gate.",
+      "evidence": "redirect-foundations/final/receipt.json SHA3570ceb7b1b604a1c6207e4c2692fda67c5c1ffeae8caad4ea02fee8367fb8e1; shared18perASanTSan (ledger6/prepare5/queue7), source-bound physicalcopy160/core2675/binaries; puremodel/realownedmemory fixtures, nativecount0. Prepare24policy+3boundary,45malformed+3validinteriorgrants,3callbackreentry/clearedheapheader/2alias/2typedbudget. Ledger/queue samehandle+lease+cutoff+finite32IDs."
     },
     {
       "id": "101-27-redirect-actor",
