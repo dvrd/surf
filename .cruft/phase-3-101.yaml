@@ -381,9 +381,10 @@
       ],
       "round": 22,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-20-client-smoke-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-20-client-smoke-thread && python3 \"$WEBTOOLS_SHARED/surf/tests/client101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-20-client.json",
-      "proof_scope": "Actual public requests/connectionIDs/copies/framing/DNS TLS body stalls on1worker, queueddeadline/cancel/results/FD scopecleanup. No fake/private completion."
+      "proof_scope": "Actual public requests/connectionIDs/copies/framing/DNS TLS body stalls on1worker, queueddeadline/cancel/results/FD scopecleanup. No fake/private completion.",
+      "evidence": "client20/final/receipt.json SHAc9e0ee84aabedac8cfcccfcabcc0cf00892134c61a46965f7843d6fc96b92920;12uniqueTCP/TLSnativecells+6publicunits ASanTSan;153physicalcopy/std2675/5binaries/31logguards; sameconnection/copy/lateResponse/oneworkerheldprogress/DNS0terminalization; allheapScopeFD0. Fullacceptance phase4 remains."
     },
     {
       "id": "101-21-native-consumers",
