@@ -1,6 +1,6 @@
 {
   "issue": "OKAMI-101",
-  "status": "Phase1 prerequisites planned; full async Surf and pool not implemented",
+  "status": "All phase1 prerequisites/design verified; phase2 kernel schema gate selected",
   "scope": "All five original criteria in spec101.md unchanged; phase1 only provides reusable async budgets and HTTP1 persistence metadata.",
   "repositories": {
     "surf": "/Users/kakurega/dev/oss/Odin/shared/.webtools-worktrees/surf101/shared/surf",
@@ -89,7 +89,8 @@
       "layer": "design",
       "files": [
         ".cruft/session101.md",
-        ".cruft/phase-2-101.yaml"
+        ".cruft/phase-2-101.yaml",
+        ".cruft/acceptance101.md"
       ],
       "depends_on": [
         "101-01-budget-verify",
@@ -99,7 +100,8 @@
       "agent": true,
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/.cruft/validate101.py\"",
       "proof_scope": "Freeze public async API/session ownership/pool keys/capacities/queues/redirect/response lifetime and full remaining tasks before driver edits.",
-      "status": "pending"
+      "status": "verified",
+      "evidence": "session101.md +phase-2-101.yaml;independentTLSretirement/rootreview+completion/Preparing/quiescence/sourceprivateDNSvisibility reviews;no networking implemented"
     },
     {
       "id": "101-04-consumer-foundations",
