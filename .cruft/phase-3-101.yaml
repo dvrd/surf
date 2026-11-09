@@ -264,18 +264,17 @@
       "layer": "API",
       "files": [
         "async/coordinator.odin",
-        "async/network_queue.odin",
-        "async/pool.odin",
-        "async/queue.odin"
+        "async/network_queue.odin"
       ],
       "depends_on": [
-        "101-16-bootstrap-verify"
+        "101-16-bootstrap-verify",
+        "101-17-pool-policy-verify"
       ],
       "round": 19,
       "agent": true,
       "status": "pending",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Separate queue/idle timer, pool dirtyscan cursors, finite actor assignment/signal snapshots, cancel/on_done drain; no I/O. Real DNSwait-only admission/dispatch eligibility integration as SECOND pool/queue owner; no physicalslot monopoly while bankempty. Preserveoldpool_reservecallable via additivepool_reserve_policy; actualsharedpureselectionhelper (no networkdependency) frozenbeforeparallelwrites fornewphase4accepted-hop requeue."
+      "proof_scope": "Actual metadata-only coordinator and network queue integration on frozen bootstrap + pure pool policy; separate timer/bounded persistent request/DNS scans, retained signal snapshots, safe queued completion and active-owner cancellation. No I/O. Pure pool/queue second-owner changes are split into phase3a to run in parallel with bootstrap."
     },
     {
       "id": "101-17-coordinator-verify",

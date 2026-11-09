@@ -133,6 +133,41 @@
       "status": "pending",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/connection\" -sanitize:address -out:/tmp/101-16-transport-probe-root-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/connection/tests\" -sanitize:address -out:/tmp/101-16-transport-probe-public-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/connection\" -sanitize:thread -out:/tmp/101-16-transport-probe-root-thread && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/async/connection/tests\" -sanitize:thread -out:/tmp/101-16-transport-probe-public-thread",
       "proof_scope": "Real owner-loop Empty/Data and subsequent adapter read proves no consumption; wrongowner/nil/closed transport rejection, unchanged adapter bytes/callbacks, closed quiescence; paired existing adapter regressions. No new TLS wire claim."
+    },
+    {
+      "id": "101-17-pool-policy-api",
+      "title": "Extract pure pool selection and DNS eligibility policy",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/pool.odin",
+        "async/queue.odin"
+      ],
+      "depends_on": [
+        "101-15-network-state-verify"
+      ],
+      "round": 17,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Explicit SECOND pool/queue source owner. Real pure pool_select_locked and separate pool_reserve_policy preserve old exact callable, full origin/caps/free-stack policy, FIFO and AwaitingIDs eligibility/Idle head unpark; no network imports or allocation."
+    },
+    {
+      "id": "101-17-pool-policy-verify",
+      "title": "Independent selector atomicity and DNS-aware FIFO model proof",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/pool_policy_test.odin"
+      ],
+      "depends_on": [
+        "101-17-pool-policy-api"
+      ],
+      "round": 18,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-17-policy-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-17-policy-thread",
+      "proof_scope": "Exact old proc type, pure selection leaves full metadata/owners unchanged, policy false forbids Free but permits eligible Idle, AwaitingIDs FIFO head only Idle dispatch, work1 bounds/other-origin progress/caps/rejections. No coordinator or native Client claim."
     }
   ],
   "max_tasks_per_phase": 20,
