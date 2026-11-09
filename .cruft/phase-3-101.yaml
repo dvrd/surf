@@ -316,10 +316,11 @@
       ],
       "round": 19,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
       "proof_scope": "OneTask/session, preparedID DNS_Connect, raw/TLS adapter+request cap, real exchange, fullclose callback drain and idle eligibility.",
-      "implementation_gate": "BLOCKED until101-14 exchange verification includes an approved public-seam TLS idle/checkout policy. Unresolved policy does not block independent prerequisite streams."
+      "implementation_gate": "BLOCKED until101-14 exchange verification includes an approved public-seam TLS idle/checkout policy. Unresolved policy does not block independent prerequisite streams.",
+      "evidence": "session-actor/final/receipt.json SHA5b844c50f02525ade7c22c45f8853660ad8279a0d383cefbe30f3925b1808f61;48nativecells TCP/TLS12modes perASanTSan exactsources/copiedguards; unassistedpin across2workerphysicalgenerations, lifetimebodycontext/reuseIDburn/noReplay/cancel/DNSTLSbodydeadlines; sharedruntime1718/unit-final82async+27facade perSan. Fixturecontroller not public Client."
     },
     {
       "id": "101-18-session-verify",
@@ -337,9 +338,10 @@
       ],
       "round": 20,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:address -out:/tmp/101-18-session-verify-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -sanitize:thread -out:/tmp/101-18-session-verify-thread && python3 \"$WEBTOOLS_SHARED/surf/tests/session_actor101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-18-session.json",
-      "proof_scope": "Owned DNS/TCP/TLS+HTTP exchanges via real actor, sameTLS A\u2192B cutoff, cancel/setupclose/KeyUpdate/surplus/retirement. Healthyreuse never calls closed-only quiescent; sameTask successivephysicalgen reset and latecallbacks mandatory. Owned native Go peer supplies DNS/delay/connection-ID schedules and successive physical generation observations; four test files total, no new runtime schema field."
+      "proof_scope": "Owned DNS/TCP/TLS+HTTP exchanges via real actor, sameTLS A\u2192B cutoff, cancel/setupclose/KeyUpdate/surplus/retirement. Healthyreuse never calls closed-only quiescent; sameTask successivephysicalgen reset and latecallbacks mandatory. Owned native Go peer supplies DNS/delay/connection-ID schedules and successive physical generation observations; four test files total, no new runtime schema field.",
+      "evidence": "session-actor/final/receipt.json SHA5b844c50f02525ade7c22c45f8853660ad8279a0d383cefbe30f3925b1808f61;48nativecells TCP/TLS12modes perASanTSan exactsources/copiedguards; unassistedpin across2workerphysicalgenerations, lifetimebodycontext/reuseIDburn/noReplay/cancel/DNSTLSbodydeadlines; sharedruntime1718/unit-final82async+27facade perSan. Fixturecontroller not public Client."
     },
     {
       "id": "101-19-client-api",
