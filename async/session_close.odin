@@ -31,7 +31,7 @@ session_mark_retiring :: proc(a:^Session_Actor) {
 }
 
 // Reset only a fully closed transport generation. Task, Signal, owner/index and
-// the cross-thread mailbox MUST survive: coordinator may already have queued
+// the cross-thread mailbox and redirect custody MUST survive: coordinator may already have queued
 // the next generation as soon as pool_retire made the model slot available.
 @(private)
 session_reset_io :: proc(a:^Session_Actor) {
@@ -79,6 +79,9 @@ session_close_step :: proc(a:^Session_Actor)->runtime_async.Resume_Result {
   }
   if !a.close_done || !adapter.quiescent(&a.executor) || !exchange_api.exchange_quiescent(&a.exchange) {return .Waiting}
  }
+ // Redirect begin happens only after actual old IO retirement, before normal
+ // terminalization and before model retirement needs its request detached.
+ if a.redirect.phase!=.Empty {redirect_closed_begin(a)}
  if a.request!=(Request_Handle{}) {
   response:surf.Response
   _=exchange_api.exchange_take(&a.exchange,&response)
@@ -99,6 +102,8 @@ session_close_step :: proc(a:^Session_Actor)->runtime_async.Resume_Result {
  }
  a.model={}
  session_notify_coordinator(a)
+ // No Waiting/Idle/Done path may strand an accepted Returning/Preparing hop.
+ if a.redirect.phase!=.Empty {return redirect_closed_resolve(a)}
  if session_stopping(a) {a.owner_drained=true;a.phase=.Done;return .Done}
  a.phase=.Idle
  return .Waiting

@@ -57,7 +57,7 @@ session_runtime_error :: proc(error:runtime_async.Error,phase:surf.HTTP_Phase)->
 }
 @(private)
 session_error :: proc(a:^Session_Actor,error:surf.HTTP_Error) {
- if a.error.kind==.None {a.error=error}
+ if a.error.kind==.None {a.error=redirect_error_context(a,error)}
  a.phase=.Retiring
 }
 @(private)
@@ -201,6 +201,7 @@ session_exchange_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runt
   surf.response_destroy(&response)
   session_error(a,failure);return .Yield
  }
+ if redirect_response(a,&response) {return .Yield}
  if error:=network_assignment_finish(a,&response,{});error.kind!=.None {
   surf.response_destroy(&response);session_error(a,{kind=.Invalid_Config,phase=.Configuration});return .Yield
  }

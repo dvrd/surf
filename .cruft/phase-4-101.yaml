@@ -154,9 +154,10 @@
       ],
       "round": 28,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Second State/session/close owners; embed stable handoff/hop metadata and open config gate atomically with driver. Prepare->close/drain->ledgerbegin/oldfree/modelretire->freshready->budgetclaim/commit same handle. Total32/originalcutoff, no intermediate completion/replay, all close/cancel/lifetime failure paths drain; preserve Unknown later-write effect."
+      "proof_scope": "Second State/session/close owners; embed stable handoff/hop metadata and open config gate atomically with driver. Prepare->close/drain->ledgerbegin/oldfree/modelretire->freshready->budgetclaim/commit same handle. Total32/originalcutoff, no intermediate completion/replay, all close/cancel/lifetime failure paths drain; preserve Unknown later-write effect.",
+      "evidence": "redirect-actor/public-final/receipt.json SHA64b1ef1b42fbbcf9a8a65947cde27d761e9e15fa30c4bc36491126c5c8f57390;122native TCP/TLS cells ASanTSan +2selectedunits perSan, fivecurrentActorfiles exactsource/copiedguards. Actualacceptedhop/samehandle/lease/cutoff/DNS32/clientdrivenclose. Publicstageobservability investigation and remaining fullacceptance separate/open."
     },
     {
       "id": "101-28-redirect-native",

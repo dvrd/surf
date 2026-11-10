@@ -39,6 +39,8 @@ Network_Config :: struct {
 DNS_ID_Block :: struct {values:[DNS_IDS_PER_QUERY]u16, count:int}
 Request_Network :: struct {
  generation: u64,
+ // Original accepted-request history survives same-handle redirect requeue.
+ redirects,last_status:int,
  ids: DNS_ID_Block,
  query_budget_left: int,
  needs_dns, awaiting_ids: bool,
@@ -104,6 +106,8 @@ Session_Actor :: struct {
  prepared_addresses: [DNS_RESULT_CAPACITY]net.Endpoint,
  prepared_address_count, prepared_address_at: int,
  error: surf.HTTP_Error,
+ // Independent of the next-generation mailbox and explicit IO reset fields.
+ redirect: Redirect_Handoff,
  secure, executor_initialized, transport_initialized, tls_initialized: bool,
  handshake_started, handshake_done, close_started, close_done: bool,
  owner_drained: bool,
@@ -171,9 +175,8 @@ network_config_normalize :: proc(input:Normalized_Config)->(Network_Config,Clien
     normalized.idle_timeout!=input.idle_timeout || normalized.max_age!=input.max_age {
   return {},{kind=.Invalid_Config}
  }
- // Temporary honest feature gate: phase4 must remove it only with actual
- // accepted-hop requeue/redirect behavior under the original total deadline.
- if input.http.max_redirects!=0 {return {},{kind=.Invalid_Config,http={kind=.Invalid_Config}}}
+ // Root config validation bounds redirects0..5. The accepted-hop actor keeps
+ // their original request handle, admission lease and total deadline.
  if servers!=nil && len(servers)==0 {return {},{kind=.Invalid_Config}}
  for server in servers {if server.address==nil {return {},{kind=.Invalid_Config}}}
  mode:=DNS_Preparation.Numeric_Only
