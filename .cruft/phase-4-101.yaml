@@ -233,9 +233,10 @@
       ],
       "round": 29,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/pool101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-public-pool.json",
-      "proof_scope": "Literal GET/HEAD/POST, framing/interims/chunk/trailer/EOF/truncation/malformed/surplus; host sameIP/port/scheme, separateClienttrust/ALPN isolation, realidle/maxage/stale/KU connection IDs, no ambiguous replay. Reference unchanged primitive oracle without claiming public proof."
+      "proof_scope": "Literal GET/HEAD/POST, framing/interims/chunk/trailer/EOF/truncation/malformed/surplus; host sameIP/port/scheme, separateClienttrust/ALPN isolation, realidle/maxage/stale/KU connection IDs, no ambiguous replay. Reference unchanged primitive oracle without claiming public proof.",
+      "evidence": "pool29/final/receipt.json SHAbf09797f858e9057f3c31750acdaacd81b908ca7a829f84317088a290fd20d18;56publicTCP/TLScells ASanTSan,19framingvectors+identity/trustALPN/idlemaxage/stale/KU, peerIDs/auth/wire andheapScopeFD0, currentpublisher/source/copy166/core2675/binariesguards."
     },
     {
       "id": "101-30-public-cancel",
