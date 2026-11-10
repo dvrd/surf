@@ -135,3 +135,24 @@ Root's legacy vendor curl import is not a claim that all Surf imports omit it.
 Darwin evidence does not certify Linux. Only after independent acceptance review
 may spec101 checkboxes and Linear become Done. Update continuation first, then
 move to the next ready issue. Never push; preserve all worktrees and Mesa.
+
+
+## Verified stage-observability amendment
+
+A real public held-phase probe observed eight Connecting samples during each of
+TCP partial body, authenticated TLS partial body, and held TLS ClientHello.
+The existing actor changed only its internal phase; the Kernel public stage
+never received Handshaking/Reading updates. This is an API reporting bug, not
+a failed redirect wire proof. Exact copied source/wire/log evidence remains
+under the Task30 stage probe.
+
+Add two separately owned tasks (phase4 now18): read-only exchange_phase in a
+new file using existing Exchange_Phase, then independent callback-boundary tests.
+No new enum/schema/private-field access or transport-health inference. Within
+the SAME Task27 session source ownership, publish at endofresume after adapter
+drive, with State->Kernel generation/association checks and Active ONLY. Map
+actual actor TLS state and committed exchange Writing/Reading/Draining phases;
+skip Idle/invalid and all nonActive cells so Redirecting/terminal tickets remain
+untouched. Preserve original callback/physical teardown order. Root/current
+source final matrices must include this correction; old122wire results remain
+accurate historical evidence.

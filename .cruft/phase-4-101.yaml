@@ -136,6 +136,40 @@
       "evidence": "redirect-foundations/final/receipt.json SHA3570ceb7b1b604a1c6207e4c2692fda67c5c1ffeae8caad4ea02fee8367fb8e1; shared18perASanTSan (ledger6/prepare5/queue7), source-bound physicalcopy160/core2675/binaries; puremodel/realownedmemory fixtures, nativecount0. Prepare24policy+3boundary,45malformed+3validinteriorgrants,3callbackreentry/clearedheapheader/2alias/2typedbudget. Ledger/queue samehandle+lease+cutoff+finite32IDs."
     },
     {
+      "id": "101-27-exchange-phase-api",
+      "title": "Expose committed exchange phase without private field access",
+      "repository": "surf",
+      "layer": "API",
+      "files": [
+        "async/exchange/phase.odin"
+      ],
+      "depends_on": [
+        "101-14-exchange-verify"
+      ],
+      "round": 26,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
+      "proof_scope": "Read-only original-address owner-thread exchange_phase(^Exchange)->(Exchange_Phase,bool), existing enum only; reject nil/zero/copied/busy withoutmutation, noIO/alloc/clock/health claim. Actual new publicstage probe showed Connecting during TLS/body."
+    },
+    {
+      "id": "101-27-exchange-phase-verify",
+      "title": "Independently verify committed phase getter and write-read boundary",
+      "repository": "surf",
+      "layer": "tests",
+      "files": [
+        "async/exchange/phase_test.odin"
+      ],
+      "depends_on": [
+        "101-27-exchange-phase-api"
+      ],
+      "round": 27,
+      "agent": true,
+      "status": "pending",
+      "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -define:ODIN_TEST_THREADS=1 -sanitize:address -out:/tmp/101-exchange-phase-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -define:ODIN_TEST_THREADS=1 -sanitize:thread -out:/tmp/101-exchange-phase-thread",
+      "proof_scope": "Real public Exchange operations/callbacks prove Writing until lastwrite callback consumed, thenReading phases; nil/zero/copied/busy preservewholeownerbytes. Separate actualpublicheldTLS/body probe validatesactorpublication afterTask27 integration."
+    },
+    {
       "id": "101-27-redirect-actor",
       "title": "Compose accepted redirects with persistent physical owner",
       "repository": "surf",
@@ -150,14 +184,15 @@
       "depends_on": [
         "101-24-redirect-ledger-verify",
         "101-25-redirect-prepare-verify",
-        "101-26-redirect-queue-verify"
+        "101-26-redirect-queue-verify",
+        "101-27-exchange-phase-verify"
       ],
       "round": 28,
       "agent": true,
-      "status": "verified",
+      "status": "in_progress",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Second State/session/close owners; embed stable handoff/hop metadata and open config gate atomically with driver. Prepare->close/drain->ledgerbegin/oldfree/modelretire->freshready->budgetclaim/commit same handle. Total32/originalcutoff, no intermediate completion/replay, all close/cancel/lifetime failure paths drain; preserve Unknown later-write effect.",
-      "evidence": "redirect-actor/public-final/receipt.json SHA64b1ef1b42fbbcf9a8a65947cde27d761e9e15fa30c4bc36491126c5c8f57390;122native TCP/TLS cells ASanTSan +2selectedunits perSan, fivecurrentActorfiles exactsource/copiedguards. Actualacceptedhop/samehandle/lease/cutoff/DNS32/clientdrivenclose. Publicstageobservability investigation and remaining fullacceptance separate/open."
+      "proof_scope": "Second State/session/close owners; embed stable handoff/hop metadata and open config gate atomically with driver. Prepare->close/drain->ledgerbegin/oldfree/modelretire->freshready->budgetclaim/commit same handle. Total32/originalcutoff, no intermediate completion/replay, all close/cancel/lifetime failure paths drain; preserve Unknown later-write effect. Within SAME existing five-file actor source ownership, publish gen-matched Active stage at endofresume afteradapterdrive using public exchange_phase; Handshaking/Connecting/Writing/Reading/Retiring, never overwrite Returning/Preparing Redirecting or Completed.",
+      "evidence": "redirect-actor/public-final/receipt.json SHA64b1ef1b42fbbcf9a8a65947cde27d761e9e15fa30c4bc36491126c5c8f57390;122native TCP/TLS cells ASanTSan +2selectedunits perSan, fivecurrentActorfiles exactsource/copiedguards. Actualacceptedhop/samehandle/lease/cutoff/DNS32/clientdrivenclose. Publicstageobservability investigation and remaining fullacceptance separate/open. Actualpreexistingpublicstage red nowrequires phasegetter prerequisite+sameowner correction beforefinal sourcefreeze; prior122proofremains historical exactsource."
     },
     {
       "id": "101-28-redirect-native",
