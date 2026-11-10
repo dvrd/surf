@@ -2,6 +2,7 @@ package surf
 
 
 import http "../http"
+import "core:compress"
 import http1 "../http/v1"
 import tls_api "core:crypto/tls"
 import trans "core:net"
@@ -33,6 +34,7 @@ HTTP_Error :: struct {
 	// Exact scope admission cause; allocator-enforced byte failures retain the
 	// standard Allocation_Failed kind without guessing a concurrent cause.
 	budget: resources.Error,
+ decoding: compress.Decode_Error,
 }
 
 Config :: struct {

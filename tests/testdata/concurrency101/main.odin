@@ -79,7 +79,14 @@ take :: proc(s:^State,h:client.Request_Handle,id:int) {
  if error.kind==.Pending || error.kind==.Invalid_Handle {return}
  assert(error.kind==.Request_Error && s.shutdown)
  released:=client.client_release(&s.client,h)
- if released.kind==.None {finish(s,id,&response,error.http)} else {assert(released.kind==.Invalid_Handle)}
+ if released.kind==.None {finish(s,id,&response,error.http)} else {
+  // Another consumer can own Returning while physical disposal is in flight.
+  // Only the successful release records completion; the loser owns nothing.
+  if released.kind!=.Pending && released.kind!=.Invalid_Handle {
+   fmt.eprintf("Unexpected racing release kind=%v\n",released.kind)
+  }
+  assert(released.kind==.Pending || released.kind==.Invalid_Handle)
+ }
 }
 consume :: proc(c:^Consumer) {
  s:=c.state;started:=time.tick_now()
@@ -129,6 +136,12 @@ main :: proc() {
  for &c,i in consumers {consumer_threads[i]=thread.create_and_start_with_poly_data(&c,consume);assert(consumer_threads[i]!=nil)}
  if !s.shutdown {for worker in producer_threads {thread.join(worker);thread.destroy(worker)}}
  for worker in consumer_threads {thread.join(worker);thread.destroy(worker)}
+ // Every losing race must resolve to exactly one completed, retired owner.
+ for item in s.records {
+  if !item.accepted {continue}
+  assert(item.done)
+  assert(client.client_release(&s.client,item.handle).kind==.Invalid_Handle)
+ }
  accepted:=intrinsics.atomic_load(&s.accepted);finished:=intrinsics.atomic_load(&s.finished)
  assert(accepted==finished && (s.shutdown && accepted>0 && accepted<=8 || !s.shutdown && accepted==64))
  _,phantom:=client.client_poll(&s.client);assert(!phantom)

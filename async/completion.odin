@@ -1,6 +1,7 @@
 package surf_async
 
 import surf ".."
+import stream_api "stream"
 import runtime_async "../../async"
 import "core:mem"
 import scopes "core:sync/budget"
@@ -37,6 +38,9 @@ kernel_begin_complete :: proc(k:^Kernel,h:Request_Handle,response:^surf.Response
  if k.references<1 || k.references==max(int) || k.returning==max(int) {return {},{kind=.Invalid_State}}
  if cause:=admission_detach_claim_locked(k,h,r);cause.kind!=.None {return {},cause}
  result:=Request_Disposal{request=h,returning_to=.Completed,input=r.input,lease=r.lease}
+ if error.kind!=.None && r.stream!=nil {
+  assert(stream_api.retain(r.stream));result.stream_finish=r.stream;result.stream_error=error
+ }
  // A primary failure stays authoritative. Even an accidentally supplied owned
  // Response on that path must be detached and physically released, not hidden.
  if error.kind==.None {r.response=response^} else {result.response=response^;r.response={}}
@@ -68,6 +72,7 @@ kernel_cleanup_finish :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadl
    error:=completion_late_failure(k,r,now)
    if error.kind!=.None {
     disposal:=Request_Disposal{request=h,returning_to=.Completed,response=r.response}
+    if r.stream!=nil {assert(stream_api.retain(r.stream));disposal.stream_finish=r.stream;disposal.stream_error=error}
     r.response={};r.error=error
     // Keep the same Returning reference and withhold publication until the
     // detached successful payload's final physical free has returned.
@@ -113,7 +118,8 @@ completion_detach_locked :: proc(k:^Kernel,h:Request_Handle,r:^Request_Slot)->(R
   origin:=admission_origin_locked(k,r.origin)
   if origin==nil || origin.requests<1 {return {},{kind=.Invalid_State}}
  }
- result:=Request_Disposal{request=h,returning_to=.Free,input=r.input,response=r.response,lease=r.lease}
+ result:=Request_Disposal{request=h,returning_to=.Free,input=r.input,response=r.response,lease=r.lease,stream=r.stream}
+ r.stream=nil
  if r.origin.slot!=0 {
   disposal,error:=kernel_origin_release_locked(k,r.origin,.Request)
   if error.kind!=.None {return {},error}
@@ -143,6 +149,7 @@ kernel_take :: proc(k:^Kernel,h:Request_Handle,destination:^surf.Response)->Clie
  sync.lock(&k.mu)
  r:=admission_request_locked(k,h)
  if r==nil {sync.unlock(&k.mu);return {kind=.Invalid_Handle}}
+ if r.stream!=nil {sync.unlock(&k.mu);return {kind=.Invalid_State}}
  if r.state!=.Completed {sync.unlock(&k.mu);return {kind=.Pending}}
  if !completion_empty(destination) {sync.unlock(&k.mu);return {kind=.Invalid_State}}
  if r.error.kind!=.None {error:=Client_Error{kind=.Request_Error,http=r.error};sync.unlock(&k.mu);return error}

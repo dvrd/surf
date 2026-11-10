@@ -261,3 +261,11 @@ python3 "$WEBTOOLS_SHARED/surf/tests/final101.py" \
   --service-shared-root "$WEBTOOLS_SERVICE_SHARED" \
   --report /tmp/webtools101-final/receipt.json
 ```
+
+## Owned streaming (OKAMI-104)
+
+Optional `Client_Config.streaming` enables bounded owned upload/response chunks
+on the same Client actors. See [STREAMING.md](STREAMING.md) for APIs, detached
+credits, late-owner destruction, gzip negotiation and limits. Matching Core must
+include `18bd5dad0` (decoder plus owned-length guards); HTTP must include
+`f557430`. Buffered defaults are unchanged.

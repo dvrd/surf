@@ -1,6 +1,7 @@
 package surf_async
 
 import surf ".."
+import stream_api "stream"
 import http "../../http"
 import scopes "core:sync/budget"
 import "core:time"
@@ -32,10 +33,16 @@ config_normalize :: proc(input:Client_Config) -> (Normalized_Config,Client_Error
  for endpoint in input.http.resolver.name_servers {
   if endpoint.port < 1 || endpoint.port > 65535 do return {}, {kind=.Invalid_Config}
  }
+ streaming:Maybe(Stream_Client_Limits)
+ if limits,enabled:=input.streaming.?;enabled {
+  normalized,valid:=stream_api.limits_normalize(limits,capacities.requests)
+  if !valid {return {},{kind=.Invalid_Config}}
+  streaming=normalized
+ }
  result := Normalized_Config{
   http=input.http, capacities=capacities, idle_timeout=input.idle_timeout,
   max_age=input.max_age, request_timeout=surf.effective_timeout(input.http),
-  response_body_limit=input.http.max_body_size, lifetime=lifetime,
+  response_body_limit=input.http.max_body_size, lifetime=lifetime, streaming=streaming,
  }
  if result.idle_timeout == 0 do result.idle_timeout = 30*time.Second
  if result.max_age == 0 do result.max_age = 5*time.Minute

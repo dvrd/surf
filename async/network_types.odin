@@ -1,6 +1,7 @@
 package surf_async
 
 import surf ".."
+import stream_api "stream"
 import http "../../http"
 import runtime_async "../../async"
 import adapter "../../async/connection"
@@ -94,6 +95,7 @@ Session_Actor :: struct {
  handshake: tls_api.Async_Handshake_Operation,
  close: net.Async_Operation,
  exchange: exchange_api.Exchange,
+ stream_exchange: ^exchange_api.Stream_Exchange,
  query: runtime_async.DNS_Query,
  dial: runtime_async.DNS_Connect,
  ids: DNS_ID_Block,
@@ -119,6 +121,7 @@ Client_State :: struct {
  mu: sync.Mutex,
  phase: State_Phase,
  config: Network_Config,
+ stream_bank: ^stream_api.Bank,
  backing: State_Backing,
  resources: Kernel_Resources,
  profile: Profile,
@@ -169,7 +172,7 @@ network_config_normalize :: proc(input:Normalized_Config)->(Network_Config,Clien
  if len(input.http.tls.server_name)<0 || len(input.http.tls.server_name)>0 && raw_data(input.http.tls.server_name)==nil ||
     len(input.http.tls.root_cas)<0 || len(input.http.tls.root_cas)>0 && raw_data(input.http.tls.root_cas)==nil {return {},{kind=.Invalid_Config}}
  normalized,error:=config_normalize({http=input.http,capacities=input.capacities,
-  idle_timeout=input.idle_timeout,max_age=input.max_age,lifetime=input.lifetime})
+  idle_timeout=input.idle_timeout,max_age=input.max_age,lifetime=input.lifetime,streaming=input.streaming})
  if error.kind!=.None {return {},error}
  if normalized.request_timeout!=input.request_timeout || normalized.response_body_limit!=input.response_body_limit ||
     normalized.idle_timeout!=input.idle_timeout || normalized.max_age!=input.max_age {

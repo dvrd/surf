@@ -82,7 +82,7 @@ exchange_body_step :: proc(x:^Exchange)->Exchange_Step {
  if x._head.framing==.Chunked {
   body:=x._response.body_storage
   storage:[]u8
-  if cap(body)>0 {storage=(cast([^]u8)raw_data(body))[:cap(body)]}
+  if cap(body)>0 {storage=raw_data(body)[:cap(body)]}
   consumed,written,done,error:=h1.chunk_decoder_feed(&x._chunk,source,storage[len(body):])
   raw:=cast(^mem.Raw_Dynamic_Array)&x._response.body_storage
   raw.len+=written;x._read_at+=consumed

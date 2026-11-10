@@ -79,6 +79,7 @@ func main() {
 	var mu sync.Mutex
 	var acceptors, handlers sync.WaitGroup
 	var rows []event
+	var warmups []event
 	var names []string
 	nextID := 0
 	go func() {
@@ -157,9 +158,29 @@ func main() {
 					}
 				}
 				var captured bytes.Buffer
-				r, e := http.ReadRequest(bufio.NewReader(io.TeeReader(stream, &captured)))
+				reader := bufio.NewReader(io.TeeReader(stream, &captured))
+				r, e := http.ReadRequest(reader)
 				if e != nil {
 					return
+				}
+				if *encrypted && *mode == "cutoff" && r.URL.Path == "/warmup" {
+					body, e := io.ReadAll(io.LimitReader(r.Body, 1))
+					must(e)
+					must(r.Body.Close())
+					if r.Method != "GET" || len(body) != 0 {
+						panic("invalid warmup")
+					}
+					wire := "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
+					n, e := io.WriteString(stream, wire)
+					must(e)
+					mu.Lock()
+					warmups = append(warmups, event{ID: id, Order: len(warmups) + 1, Method: r.Method, Host: r.Host, Path: r.URL.RequestURI(), ALPN: alpn, TLS: version, Bytes: n, RequestBytes: captured.Len(), Headers: r.Header.Clone(), Status: 200})
+					mu.Unlock()
+					captured.Reset()
+					r, e = http.ReadRequest(reader)
+					if e != nil {
+						return
+					}
 				}
 				body, e := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 				must(e)
@@ -293,7 +314,7 @@ func main() {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	out, e := json.Marshal(map[string]any{"mode": *mode, "tls": *encrypted, "events": rows, "dns_names": names})
+	out, e := json.Marshal(map[string]any{"mode": *mode, "tls": *encrypted, "events": rows, "dns_names": names, "warmups": warmups})
 	must(e)
 	fmt.Println(string(out))
 }

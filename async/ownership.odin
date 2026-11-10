@@ -1,6 +1,7 @@
 package surf_async
 
 import surf ".."
+import stream_api "stream"
 import http "../../http"
 import h1 "../../http/v1"
 import "core:mem"
@@ -53,7 +54,7 @@ kernel_init :: proc(k:^Kernel,profile:^Profile,resources:^Kernel_Resources)->Cli
     resources==nil || resources.self!=resources {return {kind=.Invalid_Config}}
  if k.self!=nil {return {kind=.Invalid_State}}
  normalized,error:=config_normalize({http=profile.config.http,capacities=profile.config.capacities,
-  idle_timeout=profile.config.idle_timeout,max_age=profile.config.max_age,lifetime=profile.config.lifetime})
+  idle_timeout=profile.config.idle_timeout,max_age=profile.config.max_age,lifetime=profile.config.lifetime,streaming=profile.config.streaming})
  if error.kind!=.None do return error
  if normalized.capacities!=profile.config.capacities || normalized.request_timeout!=profile.config.request_timeout ||
     normalized.response_body_limit!=profile.config.response_body_limit || normalized.idle_timeout!=profile.config.idle_timeout ||
@@ -126,6 +127,8 @@ origin_disposal_destroy :: proc(disposal:^Origin_Disposal) {
 request_disposal_destroy :: proc(disposal:^Request_Disposal) {
  if disposal==nil do return
  old:=disposal^;disposal^={}
+ if old.stream_finish!=nil {stream_api.complete(old.stream_finish,old.stream_error);stream_api.release(old.stream_finish)}
+ stream_api.release_request(old.stream)
  request_owner_destroy(&old.input)
  surf.response_destroy(&old.response)
  scopes.release(&old.lease)

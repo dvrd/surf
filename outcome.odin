@@ -17,6 +17,7 @@ HTTP_Phase :: enum {
 	Deadline,
 	Cancellation,
 	Admission,
+ Decode,
 }
 
 // Unknown is deliberately the zero value: a zero/named legacy aggregate must

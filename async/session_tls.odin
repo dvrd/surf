@@ -80,6 +80,12 @@ session_begin_exchange :: proc(a:^Session_Actor,fresh:bool)->runtime_async.Resum
  stream:=adapter.stream(&a.transport)
  if a.secure {stream=tls_api.async_connection(&a.tls)}
  budget:=exchange_api.Budget{at=a.cutoff.at,wall=adapter.wall_budget(&a.executor)}
+ if cell:=session_stream_channel(a);cell!=nil {
+  if error:=session_stream_begin(a,cell,stream,request,budget);error.kind!=.None {
+   session_error(a,error);return .Yield
+  }
+  a.phase=.Exchanging;return .Yield
+ }
  if error:=exchange_api.exchange_begin(&a.exchange,stream,request,budget,{data=a,wake=session_notify});error.kind!=.None {
   session_error(a,error);return .Yield
  }

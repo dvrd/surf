@@ -47,12 +47,41 @@ main :: proc(){
  config:=client.Client_Config{http={allow_http=true,timeout=2*time.Second,max_redirects=5,scope=scope},capacities=client.Capacities{requests=1,origins=1,connections=1,connections_per_origin=1,waiters_per_origin=0,dns_ids=0,work_per_resume=1}}
  if mode=="disabled" {config.http.max_redirects=0}
  if mode=="bodycap" {config.http.max_body_size=64}
- if mode=="cutoff" {config.http.timeout=200*time.Millisecond}
+ if mode=="cutoff" && !encrypted {config.http.timeout=200*time.Millisecond}
  protocols:=[1]string{"http/1.1"}
  if encrypted {config.http.tls.root_cas=roots.roots[:roots.count];config.http.tls.alpn_protocols=protocols[:]}
  dns_servers:[1]net.Endpoint
  if mode=="dns32" {bytes,e:=os.read_entire_file(fmt.tprintf("%s/dns.endpoint",dir),allocator);assert(e==nil);dns_servers[0],ok=net.parse_endpoint(string(bytes));assert(ok);delete(bytes,allocator);config.http.resolver.name_servers=dns_servers[:];caps:=config.capacities.(client.Capacities);caps.dns_ids=64;config.capacities=caps}
  assert(client.client_init(&c,&runtime,config,allocator).kind==.None)
+ warmup_case:=encrypted&&mode=="cutoff"
+ warmup_done:=false
+ if warmup_case {
+  // Establish only the first origin before selecting the timed request's
+  // immutable caller cutoff. All later-hop TLS setup still consumes200ms.
+  assert(runtime_async.start(&runtime).kind==.None)
+  warmup_url:=fmt.tprintf("https://127.0.0.1:%d/warmup",endpoint.port)
+  warmup_handle,warmup_error:=client.client_submit(&c,{url=warmup_url})
+  assert(warmup_error.kind==.None)
+  warmup_started:=time.tick_now()
+  for {
+   result,available:=client.client_poll(&c)
+   if available {
+    assert(result.request==warmup_handle&&result.error.kind==.None)
+    warmup_response:surf.Response
+    assert(client.client_take(&c,warmup_handle,&warmup_response).kind==.None)
+    assert(warmup_response.status==200&&len(warmup_response.body)==0)
+    surf.response_destroy(&warmup_response)
+    break
+   }
+   assert(time.tick_since(warmup_started)<8*time.Second);thread.yield()
+  }
+  for {
+   stats,valid:=client.client_stats(&c);assert(valid)
+   if stats.idle_connections==1 {break}
+   assert(time.tick_since(warmup_started)<8*time.Second);thread.yield()
+  }
+  warmup_done=true
+ }
  scheme:="https" if encrypted else "http";host:="one.redirect.test" if mode=="dns32" else "127.0.0.1"
  path:="/dir/start" if mode=="relative" else "/start"
  url:=fmt.tprintf("%s://%s:%d%s",scheme,host,endpoint.port,path)
@@ -66,9 +95,11 @@ main :: proc(){
  payload:=[10]u8{'p','r','o','o','f','-','b','o','d','y'}
  body:[]u8
  if method==.POST {body=payload[:]}
- handle,error:=client.client_submit(&c,{method=method,url=url,headers=fields[:],body=body});assert(error.kind==.None)
+ cutoff:runtime_async.Deadline
+ if warmup_case {cutoff=runtime_async.deadline_after(&runtime,200*time.Millisecond)}
+ handle,error:=client.client_submit(&c,{method=method,url=url,headers=fields[:],body=body},cutoff);assert(error.kind==.None)
  probe.handle=handle;probe.armed=mode=="handoff-cancel"||mode=="handoff-close"
- started:=time.tick_now();assert(runtime_async.start(&runtime).kind==.None)
+ started:=time.tick_now();if !warmup_case {assert(runtime_async.start(&runtime).kind==.None)}
  if mode=="cancel"||mode=="close" {
   for !os.exists(fmt.tprintf("%s/target-held",dir)) {assert(time.tick_since(started)<5*time.Second);thread.yield()}
   if mode=="cancel" {assert(client.client_cancel(&c,handle).kind==.None)}else{closed:=client.client_close(&c);assert(closed.kind==.None||closed.kind==.Pending)}
@@ -87,7 +118,16 @@ main :: proc(){
   case "loop","hopcap":assert(completion.error.kind==.Redirect_Limit&&completion.error.status==302)
   case "bodycap":assert(completion.error.kind==.Body_Oversized&&completion.error.status==302)
   case "downgrade":assert(completion.error.kind==.Insecure_URL&&completion.error.status==302)
-  case "cutoff":assert(completion.error.kind==.Deadline_Failed&&elapsed<350*time.Millisecond)
+  case "cutoff":
+   valid_cutoff:=completion.error.kind==.Deadline_Failed&&completion.error.phase==.Deadline&&
+    completion.error.status==302&&(completion.error.write_effect==.Unknown||completion.error.write_effect==.Response_Received)&&
+    elapsed<350*time.Millisecond
+   if !valid_cutoff {
+    fmt.eprintf("Cutoff context kind=%v phase=%v status=%d effect=%v elapsed_ms=%d transport=%v\n",
+     completion.error.kind,completion.error.phase,completion.error.status,completion.error.write_effect,
+     i64(elapsed/time.Millisecond),completion.error.transport.kind)
+   }
+   assert(valid_cutoff)
   case "dns32":assert(completion.error.kind==.Dial_Failed&&completion.error.phase==.DNS&&completion.error.status==302)
   case "handoff-cancel","cancel":assert(completion.error.transport.kind==.Cancelled&&completion.error.phase==.Cancellation)
   case "handoff-close","close":assert(completion.error.kind!=.None)
@@ -113,5 +153,5 @@ main :: proc(){
  assert(track.current_memory_allocated==0&&len(track.allocation_map)==0&&len(track.bad_free_array)==0);mem.tracking_allocator_destroy(&track)
  assert(os.write_entire_file(fmt.tprintf("%s/done",dir),"done")==nil)
  fmt.print("{")
- fmt.printf("\"completed\":1,\"same_handle\":true,\"terminal_once\":true,\"workers\":1,\"cap_one\":true,\"heap_zero\":true,\"scope_zero\":true,\"fd_zero\":true,\"dns_ids_remaining\":%d,\"status\":%d,\"response_status\":%d,\"error\":\"%v\",\"phase\":\"%v\",\"write_effect\":\"%v\",\"handoff_callback\":%v,\"elapsed_ms\":%d}\n",stats.dns_ids,completion.error.status,response_status,completion.error.kind,completion.error.phase,completion.error.write_effect,probe.fired,i64(elapsed/time.Millisecond))
+ fmt.printf("\"completed\":1,\"same_handle\":true,\"terminal_once\":true,\"workers\":1,\"cap_one\":true,\"heap_zero\":true,\"scope_zero\":true,\"fd_zero\":true,\"dns_ids_remaining\":%d,\"status\":%d,\"response_status\":%d,\"error\":\"%v\",\"phase\":\"%v\",\"write_effect\":\"%v\",\"handoff_callback\":%v,\"warmup\":%v,\"elapsed_ms\":%d}\n",stats.dns_ids,completion.error.status,response_status,completion.error.kind,completion.error.phase,completion.error.write_effect,probe.fired,warmup_done,i64(elapsed/time.Millisecond))
 }

@@ -55,7 +55,7 @@ profile_init :: proc(p:^Profile,config:Normalized_Config,allocator:mem.Allocator
  if p==nil || p.self!=nil || p.owner_id!=0 || raw_data(p.storage)!=nil {return {kind=.Invalid_State}}
  p^={}
  normalized,error:=config_normalize({http=config.http,capacities=config.capacities,
-  idle_timeout=config.idle_timeout,max_age=config.max_age,lifetime=config.lifetime})
+  idle_timeout=config.idle_timeout,max_age=config.max_age,lifetime=config.lifetime,streaming=config.streaming})
  if error.kind!=.None {return error}
  if allocator.procedure==nil || normalized.request_timeout!=config.request_timeout ||
     normalized.response_body_limit!=config.response_body_limit {return {kind=.Invalid_Config}}

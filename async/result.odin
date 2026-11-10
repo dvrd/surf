@@ -1,6 +1,7 @@
 package surf_async
 
 import surf ".."
+import stream_api "stream"
 import runtime_async "../../async"
 import signal "../../async/signal"
 import scopes "core:sync/budget"
@@ -64,6 +65,7 @@ client_stats :: proc(c:^Client)->(Client_Stats,bool) {
  s,error:=client_enter(c);if error.kind!=.None {return {},false};defer client_leave(s)
  sync.lock(&s.mu);sync.lock(&s.kernel.mu)
  stats:=s.kernel.counters
+ stats.streaming=stream_api.bank_stats(s.stream_bank)
  stats.capacities=s.config.config.capacities;stats.tasks=s.registered_tasks
  stats.dns_ids=s.dns_count;stats.signal_cells=s.signal_cells
  for metadata in s.requests {if metadata.awaiting_ids {stats.dns_waiters+=1}}

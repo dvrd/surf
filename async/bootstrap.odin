@@ -1,6 +1,7 @@
 package surf_async
 
 import runtime_async "../../async"
+import stream_api "stream"
 import signal "../../async/signal"
 import exchange_api "exchange"
 import charged "core:mem/budget"
@@ -80,6 +81,11 @@ network_prepare :: proc(runtime:^runtime_async.Runtime,config:Normalized_Config,
  // Only owned Profile views survive preparation; original resolver intent was
  // already captured by options before Profile canonicalized empty slices.
  s.config.config=s.profile.config
+ if limits,enabled:=config.streaming.?;enabled {
+  bank,error:=stream_api.bank_create(limits,s.resources.allocator)
+  if error.kind!=.None {return nil,stream_client_error(error)}
+  s.stream_bank=bank
+ }
  error=kernel_init(&s.kernel,&s.profile,&s.resources)
  if error.kind!=.None {return nil,error}
  s.actors,error=kernel_array(Session_Actor,config.capacities.connections,s.resources.allocator)
@@ -136,6 +142,7 @@ network_cleanup_storage :: proc(s:^Client_State) {
   signal.detach(actor.wake);signal.release(&actor.wake)
   if actor.exchange._self==&actor.exchange {assert(exchange_api.exchange_destroy(&actor.exchange).kind==.None)}
  }
+ stream_api.bank_close(&s.stream_bank)
  net.resolver_snapshot_destroy(&s.resolver)
  profile_destroy(&s.profile)
  allocator:=s.resources.allocator

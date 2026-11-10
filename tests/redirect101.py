@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Strict paired physical-copy public Client redirect protocol/lifetime gate."""
+"""Strict paired physical-copy public Client redirect protocol/lifetime gate.
+
+TLS cutoff first validates a separate GET/200/CL0 warmup on the same physical
+first-origin connection. Its logical redirect request then gets an explicit
+200 ms caller deadline; every later-hop TLS setup shares that original cutoff.
+Warmup traffic is verified separately and never counted as a redirect hop.
+"""
 import argparse
 import hashlib
 import importlib.util
@@ -47,13 +53,32 @@ def required_modes(encrypted):
 def verify_peer(mode, encrypted, native, peer, label):
     require(peer['mode']==mode and peer['tls']==encrypted, label+' peer case mismatch')
     rows=peer['events']
+    warmups=peer.get('warmups') or []
+    warmup=encrypted and mode=='cutoff'
+    require(native.get('warmup') is warmup, label+' warmup witness')
+    if warmup:
+        require(len(warmups)==1 and bool(rows), label+' first-origin warmup missing/duplicate')
+        w=warmups[0]
+        require(w['method']=='GET' and w['path']=='/warmup' and w['body']=='' and
+                w['response_status']==200 and w['response_bytes']>0 and w['request_bytes']>0 and
+                w['alpn']=='http/1.1' and w['negotiated_tls']==0x304 and
+                w['connection_id']==rows[0]['connection_id'], label+' warmup not validated/reused')
+    else:
+        require(not warmups, label+' unexpected warmup')
     expected=2
     if mode in ('disabled','bodycap','downgrade','cross-auth','cross-cookie','cross-custom','handoff-cancel','handoff-close') or mode in ('post301','post302','post303','head301','head302','head303'):
         expected=1
     if mode in ('loop','hopcap'): expected=6
     if mode=='cutoff':
         expected=len(rows)
-        require(2<=expected<=3, label+' original cutoff must interrupt the multi-hop chain')
+        # TLS setup on a later hop consumes the same original total budget;
+        # reaching a second HTTP request is not a throughput requirement.
+        require(1<=expected<=3, label+' original cutoff must interrupt the multi-hop chain')
+        require(native['error']=='Deadline_Failed' and native['phase']=='Deadline' and
+                native['status']==302 and native['write_effect'] in ('Unknown','Response_Received') and
+                native['elapsed_ms']<350, label+' original total cutoff/context')
+        require(rows[0]['response_status']==302 and rows[0]['response_bytes']>0 and
+                rows[0]['old_stream_closed'] is True, label+' validated redirect was not retired')
     require(len(rows)==expected, label+' wire count: '+str(len(rows))+' expected '+str(expected))
     require([r['order'] for r in rows]==list(range(1,expected+1)), label+' request ordering')
     require(len({r['connection_id'] for r in rows})==expected, label+' redirect reused physical connection')

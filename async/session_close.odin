@@ -35,6 +35,7 @@ session_mark_retiring :: proc(a:^Session_Actor) {
 // the next generation as soon as pool_retire made the model slot available.
 @(private)
 session_reset_io :: proc(a:^Session_Actor) {
+ session_stream_dispose(a)
  assert(exchange_api.exchange_reset(&a.exchange).kind==.None)
  network_dns_burn(a.owner,&a.ids)
  a.executor={};a.transport={};a.tls={};a.handshake={};a.close={};a.query={};a.dial={}
@@ -72,19 +73,20 @@ session_close_step :: proc(a:^Session_Actor)->runtime_async.Resume_Result {
   if a.error.kind!=.None || session_stopping(a) {adapter.abort(&a.executor)}
   // Engine cancellation must also observe every app callback emitted by TLS
   // shutdown; a raw close alone is not permission to discard accepted buffers.
-  if !exchange_api.exchange_quiescent(&a.exchange) {
+  if !session_engine_quiescent(a) {
    now,_:=network_clock(a.owner)
-   result:=exchange_api.exchange_drive(&a.exchange,now.at,true,a.owner.config.config.capacities.work_per_resume)
+   result:=session_engine_drive(a,now.at,true)
    if a.error.kind==.None && result.error.kind!=.None {a.error=result.error}
+   if result.status==.Progress {return .Yield}
   }
-  if !a.close_done || !adapter.quiescent(&a.executor) || !exchange_api.exchange_quiescent(&a.exchange) {return .Waiting}
+  if !a.close_done || !adapter.quiescent(&a.executor) || !session_engine_quiescent(a) {return .Waiting}
  }
  // Redirect begin happens only after actual old IO retirement, before normal
  // terminalization and before model retirement needs its request detached.
  if a.redirect.phase!=.Empty {redirect_closed_begin(a)}
  if a.request!=(Request_Handle{}) {
   response:surf.Response
-  _=exchange_api.exchange_take(&a.exchange,&response)
+  if a.stream_exchange==nil {_=exchange_api.exchange_take(&a.exchange,&response)} else {response.status=a.stream_exchange.status}
   failure:=a.error
   if failure.kind==.None {failure={kind=.IO_Failed,transport={kind=.Cancelled},phase=.Cancellation,write_effect=.Not_Sent}}
   if response.status>0 {failure.status=response.status;failure.write_effect=.Response_Received}

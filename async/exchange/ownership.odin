@@ -79,7 +79,7 @@ exchange_grow_body :: proc(x:^Exchange,needed:int)->(bool,surf.HTTP_Error) {
  copy(storage,body[:])
  replacement:=transmute([dynamic]u8)mem.Raw_Dynamic_Array{data=raw_data(storage),len=len(body),cap=len(storage),allocator=x._allocator}
  x._response.body_storage=replacement
- if raw_data(body)!=nil {exchange_free((cast([^]u8)raw_data(body))[:cap(body)],1,body.allocator)}
+ if raw_data(body)!=nil {exchange_free(raw_data(body)[:cap(body)],1,body.allocator)}
  return true,{}
 }
 @(private)

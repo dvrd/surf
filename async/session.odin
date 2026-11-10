@@ -175,6 +175,7 @@ session_assign :: proc(a:^Session_Actor)->runtime_async.Resume_Result {
 
 @(private)
 session_exchange_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runtime_async.Resume_Result {
+ if a.stream_exchange!=nil {return session_stream_step(a,now)}
  // The selected absolute cutoff has priority once expired. Let the Engine
  // classify Deadline with its received status and write-effect context.
  cancelled:=(session_cancelled(a) || runtime_async.cancelled(&a.task)) && now.at<a.cutoff.at
@@ -206,7 +207,12 @@ session_exchange_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runt
   surf.response_destroy(&response);session_error(a,{kind=.Invalid_Config,phase=.Configuration});return .Yield
  }
  if reset:=exchange_api.exchange_reset(&a.exchange);reset.kind!=.None {session_error(a,reset);return .Yield}
- reusable:=result.reuse_eligible && !session_stopping(a) && !session_cancelled(a)
+ return session_finish_reuse(a,result.reuse_eligible)
+}
+
+@(private)
+session_finish_reuse :: proc(a:^Session_Actor,eligible:bool)->runtime_async.Resume_Result {
+ reusable:=eligible && !session_stopping(a) && !session_cancelled(a)
  if reusable && a.secure {reusable=tls_api.async_idle_state(&a.tls)==.Ready}
  if reusable {reusable=adapter.set_request_budget(&a.executor,a.cutoff).kind==.None}
  if reusable {
@@ -243,6 +249,7 @@ session_publish_stage :: proc(a:^Session_Actor) {
  case .Handshaking:stage=.Handshaking
  case .Exchanging:
   phase,valid:=exchange_api.exchange_phase(&a.exchange)
+  if a.stream_exchange!=nil {phase,valid=exchange_api.exchange_phase(&a.stream_exchange.base)}
   if !valid {return}
   switch phase {
   case .Writing_Head,.Writing_Body:stage=.Writing

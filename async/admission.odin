@@ -206,7 +206,8 @@ kernel_rollback :: proc(k:^Kernel,p:Preparing_Request)->(Request_Disposal,Client
  if r==nil {return {},{kind=.Invalid_Handle}}
  if r.state!=.Preparing || k.preparing<1 || k.references<=1 || k.references==max(int) {return {},{kind=.Invalid_State}}
  if error:=admission_detach_claim_locked(k,p.request,r);error.kind!=.None {return {},error}
- result:=Request_Disposal{request=p.request,returning_to=.Free,input=r.input,response=r.response,lease=r.lease}
+ result:=Request_Disposal{request=p.request,returning_to=.Free,input=r.input,response=r.response,lease=r.lease,stream=r.stream}
+ r.stream=nil
  if r.origin.slot!=0 {
   disposal,error:=kernel_origin_release_locked(k,r.origin,.Request);assert(error.kind==.None);result.origin=disposal
  }

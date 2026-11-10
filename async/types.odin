@@ -1,6 +1,7 @@
 package surf_async
 
 import surf ".."
+import stream_api "stream"
 import http "../../http"
 import runtime_async "../../async"
 import "core:mem"
@@ -32,6 +33,7 @@ Client_Config :: struct {
  capacities: Maybe(Capacities),
  idle_timeout, max_age: time.Duration,
  lifetime: runtime_async.Deadline,
+ streaming: Maybe(Stream_Client_Limits),
 }
 // Pure borrowed view: config_normalize neither clones nor retains any member.
 Normalized_Config :: struct {
@@ -39,6 +41,7 @@ Normalized_Config :: struct {
  capacities: Capacities,
  idle_timeout, max_age, request_timeout: time.Duration,
  response_body_limit: int,
+ streaming: Maybe(Stream_Client_Limits),
  lifetime: runtime_async.Deadline,
 }
 Client_Error_Kind :: enum {
@@ -64,6 +67,7 @@ Client_Stats :: struct {
  scope: scopes.Snapshot,
  // Signal control cells use the existing fixed heap ABI outside the scope.
  signal_cells: int,
+ streaming: Stream_Stats,
 }
 
 // All following types are internal kernel handoffs, not public network owners.
@@ -119,6 +123,7 @@ Request_Slot :: struct {
  origin, session: Cell_Handle,
  input: Request_Owner,
  response: surf.Response,
+ stream: ^stream_api.Channel,
  error: surf.HTTP_Error,
  lease: scopes.Lease,
  queue_previous, queue_next: u32,
@@ -185,6 +190,9 @@ Request_Disposal :: struct {
  returning_to: Request_State,
  input: Request_Owner,
  response: surf.Response,
+ stream: ^stream_api.Channel,
+ stream_finish: ^stream_api.Channel,
+ stream_error: surf.HTTP_Error,
  lease: scopes.Lease,
  origin: Origin_Disposal,
 }

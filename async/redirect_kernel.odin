@@ -1,6 +1,7 @@
 package surf_async
 
 import surf ".."
+import stream_api "stream"
 import runtime_async "../../async"
 import "core:sync"
 
@@ -85,6 +86,7 @@ kernel_redirect_fail :: proc(k:^Kernel,h:Request_Handle,primary:surf.HTTP_Error)
  if preparing && (k.preparing<1 || k.counters.preparing_requests<1 || k.returning==max(int) ||
     k.counters.returning_requests==max(int) || k.references==max(int)) {return {},{kind=.Invalid_State}}
  disposal:=Request_Disposal{request=h,returning_to=.Completed,input=r.input,lease=r.lease}
+ if r.stream!=nil {assert(stream_api.retain(r.stream));disposal.stream_finish=r.stream;disposal.stream_error=primary}
  if preparing {
   if error:=admission_detach_claim_locked(k,h,r);error.kind!=.None {return {},error}
   if r.origin.slot!=0 {
