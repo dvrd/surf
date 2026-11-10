@@ -156,3 +156,33 @@ skip Idle/invalid and all nonActive cells so Redirecting/terminal tickets remain
 untouched. Preserve original callback/physical teardown order. Root/current
 source final matrices must include this correction; old122wire results remain
 accurate historical evidence.
+
+## Owned TCP test scope and queued lifetime classification
+
+Actual Darwin listen-backlog saturation resets excess connections immediately;
+it does not provide a reproducible stalled SYN. A TLS-initialization allocator
+probe also found no allocation while public Connecting is observable. Preserve
+these failed fixture prototypes as platform/test evidence, not SDK failures.
+Do not change host routes, firewall or sysctls to manufacture a hold.
+
+Task30 explicitly separates68 public HTTP Client held-phase scenarios from12
+public Runtime accepted-Connecting-slot boundary scenarios. The latter hold a
+real task-owned Connecting_Socket before finish_connect while an independent
+public HTTP/TLS Client request completes on the SAME one-worker runtime. Actual
+peer TCP accept, no application bytes, on_done once and physical cleanup are
+observed. Six modes are release-success, owner cancel, explicit close_connect,
+Runtime shutdown, original cutoff followed by a later finish budget, and an
+already-expired shorter finish budget. The raw task/socket is outside Client
+connection/task caps. These prove native operation ownership, progress and
+absolute-cutoff boundaries, NOT a public HTTP Client stalled-SYN cancellation
+or its setup/lifetime policy. The12 original unavailable SYN scenarios are
+replaced explicitly in the required catalog, never silently skipped or renamed
+as equivalent public proof. Final documentation retains this Darwin limitation.
+
+Client lifetime is also a whole-client shutdown cap. Its expiry closes admission
+and retires persistent actors. Requests still Queued at that transition use
+close-style IO_Failed/Cancelled/Cancellation; a request's own total/setup expiry
+remains Deadline, and active IO retains known deadline/status context. This is
+the existing coordinator policy (no separate close-reason metadata), now made
+explicit after a real queued-lifetime observation. No late success is allowed
+under either classification. Catalog assertions must distinguish these cases.
