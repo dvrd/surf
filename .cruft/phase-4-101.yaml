@@ -318,9 +318,10 @@
       ],
       "round": 30,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Examples compile against actual API; fixed cloned bodies/directonly/Root redirect rules, origin/trust lifetime, response ownership, operational concurrency/controller serialization, DNS refill cryptographic source, nonpreemptible cancellation latency and Darwin-only evidence."
+      "proof_scope": "Examples compile against actual API; fixed cloned bodies/directonly/Root redirect rules, origin/trust lifetime, response ownership, operational concurrency/controller serialization, DNS refill cryptographic source, nonpreemptible cancellation latency and Darwin-only evidence.",
+      "evidence": "async/README.md SHA93685c63676e58812d04cef4ea66c9ef8ce755f0a3ade29df6d5e8dbfcd9d484;actualpublicexample strictcompiled,packagecheck0,rootreviewedownership/allocatorconcurrency/inheritedphysicalcharges/32reservedburneddraws/queuedlifeCancellation/controllerlifecycle/typedstage/currentDarwin68+12scope. Documentation only, finalreleasegatepending."
     },
     {
       "id": "101-34-final-gate",
