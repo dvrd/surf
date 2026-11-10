@@ -75,7 +75,7 @@ network_schema_dns_intent_is_original_borrowed_policy :: proc(t:^testing.T) {
 }
 
 @(test)
-network_schema_rejects_forged_normalization_and_unimplemented_redirect_policy :: proc(t:^testing.T) {
+network_schema_rejects_forged_normalization_and_invalid_redirect_policy :: proc(t:^testing.T) {
  for field in 0..<4 {
   for value in ([4]i64{0,-1,min(i64),max(i64)}) {
    input:=network_schema_base()
@@ -93,7 +93,12 @@ network_schema_rejects_forged_normalization_and_unimplemented_redirect_policy ::
  }
  input:=network_schema_base();input.request_timeout+=1;network_schema_reject(t,input)
  input=network_schema_base();input.response_body_limit+=1;network_schema_reject(t,input)
- for redirects in ([3]int{1,5,6}) {
+ for redirects in 0..=5 {
+  input=network_schema_base();input.http.max_redirects=redirects
+  result,error:=network_schema_normalize(input);testing.expect_value(t,error.kind,.None)
+  testing.expect_value(t,result.config.http.max_redirects,redirects)
+ }
+ for redirects in ([3]int{-1,6,max(int)}) {
   input=network_schema_base();input.http.max_redirects=redirects;network_schema_reject(t,input)
  }
  input=network_schema_base();input.http.tls.alpn_protocols=[]string{"h2"};network_schema_reject(t,input)

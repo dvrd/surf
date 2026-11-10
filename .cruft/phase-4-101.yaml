@@ -176,9 +176,10 @@
       ],
       "round": 29,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/redirect101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-redirect-native.json",
-      "proof_scope": "Second config test owner; allow redirect0..5, reject invalid. Public TCP/TLS statuses/methods/origins/relative/loop/body/hop caps, cap1, total chain cutoff and32DNSdraws, cancel/close accepted ticket, exactlyone completion; copied sources and peer bytes/events."
+      "proof_scope": "Second config test owner; allow redirect0..5, reject invalid. Public TCP/TLS statuses/methods/origins/relative/loop/body/hop caps, cap1, total chain cutoff and32DNSdraws, cancel/close accepted ticket, exactlyone completion; copied sources and peer bytes/events.",
+      "evidence": "redirect-actor/public-final/receipt.json SHA64b1ef1b42fbbcf9a8a65947cde27d761e9e15fa30c4bc36491126c5c8f57390;122unique native cells (TCP30/TLS31 eachSan),2units perASanTSan,251logguards. KeepaliveEOF oldstreamclosure/no replay, fullmethods/status/origin/downgrade/body/hop/cutoff/DNS32/causalhandoffcancelclose, terminalonce/heapScopeFD0. InitialfixtureTSanprobe race preserved separately; no SDKfinding."
     },
     {
       "id": "101-29-public-pool",
