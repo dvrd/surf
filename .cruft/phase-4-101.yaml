@@ -356,9 +356,10 @@
       ],
       "round": 32,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/.cruft/validate101.py\"",
-      "proof_scope": "Root+independent reviewer inspect actual receipts/current source and map allfive criteria; check spec only if verified. Commit owning repos, update/readback Linear+continuation, preserve worktrees/Mesa and neverpush. Otherwise keep criteria open and fix concrete gaps."
+      "proof_scope": "Root+independent reviewer inspect actual receipts/current source and map allfive criteria; check spec only if verified. Commit owning repos, update/readback Linear+continuation, preserve worktrees/Mesa and neverpush. Otherwise keep criteria open and fix concrete gaps.",
+      "evidence": "Independent five-criterion review .cruft/acceptance-final101.md; final receipt SHA256 051f3f2d4d7b0a7786b98251a79d9f24868d02bc15711525a055f076921b7c62; original five criterion texts unchanged."
     }
   ]
 }
