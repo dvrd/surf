@@ -227,6 +227,43 @@ session_exchange_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runt
 
 network_session_resume :: proc(data:rawptr)->runtime_async.Resume_Result {return session_resume(cast(^Session_Actor)data,false)}
 network_session_cancel :: proc(data:rawptr)->runtime_async.Resume_Result {return session_resume(cast(^Session_Actor)data,true)}
+
+// Owner-thread observation after provider jobs have run. Public readers touch
+// only this synchronized Kernel metadata, never TLS/Exchange/actor internals.
+// Returning/Preparing redirect tickets retain the ledger's Redirecting stage.
+@(private)
+session_publish_stage :: proc(a:^Session_Actor) {
+ h:=a.request
+ if h==(Request_Handle{}) {return}
+ stage:Request_Stage
+ switch a.phase {
+ case .Assigned:
+  stage=.Writing if a.transport_initialized else .Connecting
+ case .Resolving_A,.Resolving_AAAA,.Connecting:stage=.Connecting
+ case .Handshaking:stage=.Handshaking
+ case .Exchanging:
+  phase,valid:=exchange_api.exchange_phase(&a.exchange)
+  if !valid {return}
+  switch phase {
+  case .Writing_Head,.Writing_Body:stage=.Writing
+  case .Reading_Head,.Copying_Head,.Reading_Body:stage=.Reading
+  case .Draining,.Done:stage=.Retiring
+  case .Idle:return
+  }
+ case .Retiring:stage=.Retiring
+ case .Prepared,.Idle,.Done:return
+ }
+ s:=a.owner
+ sync.lock(&s.mu);sync.lock(&s.kernel.mu)
+ request:=admission_request_locked(&s.kernel,h)
+ model:=pool_session_locked(&s.kernel,a.model)
+ if request!=nil && request.state==.Active && request.session==a.model && a.model.slot==a.index &&
+    model!=nil && model.request==h {
+  request.stage=stage
+ }
+ sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+}
+
 @(private)
 session_resume :: proc(a:^Session_Actor,force:bool)->runtime_async.Resume_Result {
  if !session_valid(a) {return .Done}
@@ -272,6 +309,7 @@ session_resume :: proc(a:^Session_Actor,force:bool)->runtime_async.Resume_Result
   driven:=adapter.drive(&a.executor)
   if driven==.Yield {result=.Yield}
  }
+ session_publish_stage(a)
  return result
 }
 network_session_done :: proc(data:rawptr) {

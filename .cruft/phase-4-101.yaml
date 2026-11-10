@@ -191,10 +191,10 @@
       ],
       "round": 28,
       "agent": true,
-      "status": "in_progress",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Second State/session/close owners; embed stable handoff/hop metadata and open config gate atomically with driver. Prepare->close/drain->ledgerbegin/oldfree/modelretire->freshready->budgetclaim/commit same handle. Total32/originalcutoff, no intermediate completion/replay, all close/cancel/lifetime failure paths drain; preserve Unknown later-write effect. Within SAME existing five-file actor source ownership, publish gen-matched Active stage at endofresume afteradapterdrive using public exchange_phase; Handshaking/Connecting/Writing/Reading/Retiring, never overwrite Returning/Preparing Redirecting or Completed.",
-      "evidence": "redirect-actor/public-final/receipt.json SHA64b1ef1b42fbbcf9a8a65947cde27d761e9e15fa30c4bc36491126c5c8f57390;122native TCP/TLS cells ASanTSan +2selectedunits perSan, fivecurrentActorfiles exactsource/copiedguards. Actualacceptedhop/samehandle/lease/cutoff/DNS32/clientdrivenclose. Publicstageobservability investigation and remaining fullacceptance separate/open. Actualpreexistingpublicstage red nowrequires phasegetter prerequisite+sameowner correction beforefinal sourcefreeze; prior122proofremains historical exactsource."
+      "evidence": "redirect-actor/public-final/receipt.json SHA64b1ef1b42fbbcf9a8a65947cde27d761e9e15fa30c4bc36491126c5c8f57390;122native TCP/TLS cells ASanTSan +2selectedunits perSan, fivecurrentActorfiles exactsource/copiedguards. Actualacceptedhop/samehandle/lease/cutoff/DNS32/clientdrivenclose. Publicstageobservability investigation and remaining fullacceptance separate/open. Actualpreexistingpublicstage red nowrequires phasegetter prerequisite+sameowner correction beforefinal sourcefreeze; prior122proofremains historical exactsource. Stagepublisher session2d550ae6 nowverified original3heldprobe GREEN f74a6276846387a963062876db165a6c61ef059aa8a522eff5aa626726cd2158; publicpool56/cancel160/failure116/concurrency8 currentpairedgates pass. NoPrivatePhasepeek, skipnonActive ticketstates."
     },
     {
       "id": "101-28-redirect-native",
