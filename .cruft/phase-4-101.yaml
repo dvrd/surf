@@ -275,9 +275,10 @@
       ],
       "round": 29,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/concurrency101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-public-concurrency.json",
-      "proof_scope": "Real producer threads/poll-vs-take/direct unlink/close/runtime shutdown, capacity/byte/origin/waiter/perorigin/global exhaustion, work1 fairness, stale aliases, terminal results and lateResponse lifetime. Controller serialized init/destroy; no private completion injection."
+      "proof_scope": "Real producer threads/poll-vs-take/direct unlink/close/runtime shutdown, capacity/byte/origin/waiter/perorigin/global exhaustion, work1 fairness, stale aliases, terminal results and lateResponse lifetime. Controller serialized init/destroy; no private completion injection.",
+      "evidence": "concurrency31/final-tightened/receipt.json SHA7ab3eeae3a20d0116a554f95d42bba405ae6f2f676753f696a0e208e94663e4c;8publicTCP/TLScells+2units perASanTSan;4producers/2competingpollTakeconsumers/64requests,shutdown8accepted/runtimegonebeforeresults/lateResponse,heapScopeFD0. Independentreviewrejected12mutatedkind/transport/phasecontrols; noSDKfinding."
     },
     {
       "id": "101-32-public-failure",
