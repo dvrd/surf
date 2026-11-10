@@ -1,0 +1,819 @@
+{
+  "schema": 1,
+  "workers": 1,
+  "work_per_resume": 1,
+  "sanitizers": [
+    "address",
+    "thread"
+  ],
+  "expected_cases": 80,
+  "cases": [
+    {
+      "name": "dns-tcp-cancel",
+      "phase": "dns",
+      "transport": "tcp",
+      "action": "cancel",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tcp-total",
+      "phase": "dns",
+      "transport": "tcp",
+      "action": "total",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tcp-lifetime",
+      "phase": "dns",
+      "transport": "tcp",
+      "action": "lifetime",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tcp-close",
+      "phase": "dns",
+      "transport": "tcp",
+      "action": "close",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tcp-shutdown",
+      "phase": "dns",
+      "transport": "tcp",
+      "action": "shutdown",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tcp-setup",
+      "phase": "dns",
+      "transport": "tcp",
+      "action": "setup",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tls-cancel",
+      "phase": "dns",
+      "transport": "tls",
+      "action": "cancel",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tls-total",
+      "phase": "dns",
+      "transport": "tls",
+      "action": "total",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tls-lifetime",
+      "phase": "dns",
+      "transport": "tls",
+      "action": "lifetime",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tls-close",
+      "phase": "dns",
+      "transport": "tls",
+      "action": "close",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tls-shutdown",
+      "phase": "dns",
+      "transport": "tls",
+      "action": "shutdown",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "dns-tls-setup",
+      "phase": "dns",
+      "transport": "tls",
+      "action": "setup",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "tls-tls-cancel",
+      "phase": "tls",
+      "transport": "tls",
+      "action": "cancel",
+      "expected_stage": "Handshaking",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "tls-tls-total",
+      "phase": "tls",
+      "transport": "tls",
+      "action": "total",
+      "expected_stage": "Handshaking",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "tls-tls-lifetime",
+      "phase": "tls",
+      "transport": "tls",
+      "action": "lifetime",
+      "expected_stage": "Handshaking",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "tls-tls-close",
+      "phase": "tls",
+      "transport": "tls",
+      "action": "close",
+      "expected_stage": "Handshaking",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "tls-tls-shutdown",
+      "phase": "tls",
+      "transport": "tls",
+      "action": "shutdown",
+      "expected_stage": "Handshaking",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "tls-tls-setup",
+      "phase": "tls",
+      "transport": "tls",
+      "action": "setup",
+      "expected_stage": "Handshaking",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tcp-cancel",
+      "phase": "write",
+      "transport": "tcp",
+      "action": "cancel",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tcp-total",
+      "phase": "write",
+      "transport": "tcp",
+      "action": "total",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tcp-lifetime",
+      "phase": "write",
+      "transport": "tcp",
+      "action": "lifetime",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tcp-close",
+      "phase": "write",
+      "transport": "tcp",
+      "action": "close",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tcp-shutdown",
+      "phase": "write",
+      "transport": "tcp",
+      "action": "shutdown",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tls-cancel",
+      "phase": "write",
+      "transport": "tls",
+      "action": "cancel",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tls-total",
+      "phase": "write",
+      "transport": "tls",
+      "action": "total",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tls-lifetime",
+      "phase": "write",
+      "transport": "tls",
+      "action": "lifetime",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tls-close",
+      "phase": "write",
+      "transport": "tls",
+      "action": "close",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "write-tls-shutdown",
+      "phase": "write",
+      "transport": "tls",
+      "action": "shutdown",
+      "expected_stage": "Writing",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tcp-cancel",
+      "phase": "header",
+      "transport": "tcp",
+      "action": "cancel",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tcp-total",
+      "phase": "header",
+      "transport": "tcp",
+      "action": "total",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tcp-lifetime",
+      "phase": "header",
+      "transport": "tcp",
+      "action": "lifetime",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tcp-close",
+      "phase": "header",
+      "transport": "tcp",
+      "action": "close",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tcp-shutdown",
+      "phase": "header",
+      "transport": "tcp",
+      "action": "shutdown",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tls-cancel",
+      "phase": "header",
+      "transport": "tls",
+      "action": "cancel",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tls-total",
+      "phase": "header",
+      "transport": "tls",
+      "action": "total",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tls-lifetime",
+      "phase": "header",
+      "transport": "tls",
+      "action": "lifetime",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tls-close",
+      "phase": "header",
+      "transport": "tls",
+      "action": "close",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "header-tls-shutdown",
+      "phase": "header",
+      "transport": "tls",
+      "action": "shutdown",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tcp-cancel",
+      "phase": "body",
+      "transport": "tcp",
+      "action": "cancel",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tcp-total",
+      "phase": "body",
+      "transport": "tcp",
+      "action": "total",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tcp-lifetime",
+      "phase": "body",
+      "transport": "tcp",
+      "action": "lifetime",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tcp-close",
+      "phase": "body",
+      "transport": "tcp",
+      "action": "close",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tcp-shutdown",
+      "phase": "body",
+      "transport": "tcp",
+      "action": "shutdown",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tls-cancel",
+      "phase": "body",
+      "transport": "tls",
+      "action": "cancel",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tls-total",
+      "phase": "body",
+      "transport": "tls",
+      "action": "total",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tls-lifetime",
+      "phase": "body",
+      "transport": "tls",
+      "action": "lifetime",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tls-close",
+      "phase": "body",
+      "transport": "tls",
+      "action": "close",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "body-tls-shutdown",
+      "phase": "body",
+      "transport": "tls",
+      "action": "shutdown",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tcp-cancel",
+      "phase": "redirect",
+      "transport": "tcp",
+      "action": "cancel",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tcp-total",
+      "phase": "redirect",
+      "transport": "tcp",
+      "action": "total",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tcp-lifetime",
+      "phase": "redirect",
+      "transport": "tcp",
+      "action": "lifetime",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tcp-close",
+      "phase": "redirect",
+      "transport": "tcp",
+      "action": "close",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tcp-shutdown",
+      "phase": "redirect",
+      "transport": "tcp",
+      "action": "shutdown",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tls-cancel",
+      "phase": "redirect",
+      "transport": "tls",
+      "action": "cancel",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tls-total",
+      "phase": "redirect",
+      "transport": "tls",
+      "action": "total",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tls-lifetime",
+      "phase": "redirect",
+      "transport": "tls",
+      "action": "lifetime",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tls-close",
+      "phase": "redirect",
+      "transport": "tls",
+      "action": "close",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "redirect-tls-shutdown",
+      "phase": "redirect",
+      "transport": "tls",
+      "action": "shutdown",
+      "expected_stage": "Reading",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tcp-cancel",
+      "phase": "queued",
+      "transport": "tcp",
+      "action": "cancel",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tcp-total",
+      "phase": "queued",
+      "transport": "tcp",
+      "action": "total",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tcp-lifetime",
+      "phase": "queued",
+      "transport": "tcp",
+      "action": "lifetime",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tcp-close",
+      "phase": "queued",
+      "transport": "tcp",
+      "action": "close",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tcp-shutdown",
+      "phase": "queued",
+      "transport": "tcp",
+      "action": "shutdown",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tls-cancel",
+      "phase": "queued",
+      "transport": "tls",
+      "action": "cancel",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tls-total",
+      "phase": "queued",
+      "transport": "tls",
+      "action": "total",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Deadline",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tls-lifetime",
+      "phase": "queued",
+      "transport": "tls",
+      "action": "lifetime",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tls-close",
+      "phase": "queued",
+      "transport": "tls",
+      "action": "close",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "queued-tls-shutdown",
+      "phase": "queued",
+      "transport": "tls",
+      "action": "shutdown",
+      "expected_stage": "Queued",
+      "expected_terminal_phase": "Cancellation",
+      "layer": "public_client",
+      "class": "held_phase"
+    },
+    {
+      "name": "rawconnect-tcp-release_success",
+      "phase": "rawconnect",
+      "transport": "tcp",
+      "action": "release_success",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "None"
+    },
+    {
+      "name": "rawconnect-tcp-owner_cancel",
+      "phase": "rawconnect",
+      "transport": "tcp",
+      "action": "owner_cancel",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Cancelled"
+    },
+    {
+      "name": "rawconnect-tcp-close_connect",
+      "phase": "rawconnect",
+      "transport": "tcp",
+      "action": "close_connect",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Closed"
+    },
+    {
+      "name": "rawconnect-tcp-runtime_shutdown",
+      "phase": "rawconnect",
+      "transport": "tcp",
+      "action": "runtime_shutdown",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Cancelled"
+    },
+    {
+      "name": "rawconnect-tcp-later_finish",
+      "phase": "rawconnect",
+      "transport": "tcp",
+      "action": "later_finish",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Timeout"
+    },
+    {
+      "name": "rawconnect-tcp-earlier_finish",
+      "phase": "rawconnect",
+      "transport": "tcp",
+      "action": "earlier_finish",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Timeout"
+    },
+    {
+      "name": "rawconnect-tls-release_success",
+      "phase": "rawconnect",
+      "transport": "tls",
+      "action": "release_success",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "None"
+    },
+    {
+      "name": "rawconnect-tls-owner_cancel",
+      "phase": "rawconnect",
+      "transport": "tls",
+      "action": "owner_cancel",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Cancelled"
+    },
+    {
+      "name": "rawconnect-tls-close_connect",
+      "phase": "rawconnect",
+      "transport": "tls",
+      "action": "close_connect",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Closed"
+    },
+    {
+      "name": "rawconnect-tls-runtime_shutdown",
+      "phase": "rawconnect",
+      "transport": "tls",
+      "action": "runtime_shutdown",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Cancelled"
+    },
+    {
+      "name": "rawconnect-tls-later_finish",
+      "phase": "rawconnect",
+      "transport": "tls",
+      "action": "later_finish",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Timeout"
+    },
+    {
+      "name": "rawconnect-tls-earlier_finish",
+      "phase": "rawconnect",
+      "transport": "tls",
+      "action": "earlier_finish",
+      "layer": "runtime_connect_slot",
+      "class": "accepted_connecting_boundary",
+      "expected_runtime_error": "Timeout"
+    }
+  ],
+  "lifetime_policy": {
+    "queued": "Client lifetime expiry closes the whole Client; still-queued requests complete as Cancellation/Cancelled.",
+    "active": "Active HTTP requests retain their original minimum cutoff and classify deadline expiry with received status.",
+    "request_setup": "A request total cutoff or setup cutoff expiring on its own classifies Deadline."
+  },
+  "platform_scope": {
+    "host": "Darwin arm64",
+    "unverified": "A public Client stalled SYN is not certified: owned backlog1 saturates after3 successful fillers then resets immediately (ECONNRESET), not a pending SYN. No sysctls/routes/firewall were changed.",
+    "layered_connect": "Twelve Runtime Connecting-slot boundary cases own an external Task/socket outside the public Client connection cap, hold it before finish_connect while a cheap public Client TCP/TLS request completes on the same one-worker Runtime, then check release/cancel/close/shutdown/original or shorter budget. These are not Client setup/lifetime tests or a stalled SYN claim."
+  },
+  "required_layers": {
+    "public_client": 68,
+    "runtime_connect_slot": 12
+  },
+  "timeout_policy": {
+    "setup": "Configured setup700ms is shorter than the total5s and expires on the actual held DNS/TLS phase.",
+    "total": "Explicit request total700ms is shorter than configured setup5s; setup cannot extend that original cutoff, including queued admission.",
+    "lifetime": "Client lifetime700ms selects the original minimum request cutoff and closes the whole Client; still-queued work follows the documented close-style Cancellation policy."
+  }
+}
