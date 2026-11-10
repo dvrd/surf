@@ -247,3 +247,17 @@ boundary cases per sanitizer. A saturated SYN/connect stall is not certified by
 those results; delaying peer accept alone does not prove a pending TCP connect.
 These are Darwin loopback results; they do not certify Linux/Windows operation,
 HTTP/2, QUIC, streaming responses or replacement of every blocking/curl API.
+
+For a fresh full evidence run, select every source explicitly. The service
+collection supplies the owning AWS/Google/auth sources; the gate first checks
+that its Surf/HTTP/async Odin sources match the selected Client collection.
+Service checks certify isolated import/build/run compatibility, not application
+migration or a new offload implementation. Use a new report directory each time.
+
+```sh
+python3 "$WEBTOOLS_SHARED/surf/tests/final101.py" \
+  --odin "$WEBTOOLS_ODIN" --core-root "$WEBTOOLS_CORE" \
+  --shared-root "$WEBTOOLS_SHARED" \
+  --service-shared-root "$WEBTOOLS_SERVICE_SHARED" \
+  --report /tmp/webtools101-final/receipt.json
+```

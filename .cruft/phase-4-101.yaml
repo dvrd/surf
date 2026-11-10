@@ -321,7 +321,7 @@
       "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
       "proof_scope": "Examples compile against actual API; fixed cloned bodies/directonly/Root redirect rules, origin/trust lifetime, response ownership, operational concurrency/controller serialization, DNS refill cryptographic source, nonpreemptible cancellation latency and Darwin-only evidence.",
-      "evidence": "async/README.md SHA93685c63676e58812d04cef4ea66c9ef8ce755f0a3ade29df6d5e8dbfcd9d484;actualpublicexample strictcompiled,packagecheck0,rootreviewedownership/allocatorconcurrency/inheritedphysicalcharges/32reservedburneddraws/queuedlifeCancellation/controllerlifecycle/typedstage/currentDarwin68+12scope. Documentation only, finalreleasegatepending."
+      "evidence": "async/README.md SHA93685c63676e58812d04cef4ea66c9ef8ce755f0a3ade29df6d5e8dbfcd9d484;actualpublicexample strictcompiled,packagecheck0,rootreviewedownership/allocatorconcurrency/inheritedphysicalcharges/32reservedburneddraws/queuedlifeCancellation/controllerlifecycle/typedstage/currentDarwin68+12scope. Documentation only, finalreleasegatepending. FinalCLIexplicitservicecollection documented; READMEsha865a1eb3a91429abdf3985d2a122525fa9f67d90f5cff9f852adeb18667b9260."
     },
     {
       "id": "101-34-final-gate",
@@ -337,9 +337,10 @@
       ],
       "round": 31,
       "agent": true,
-      "status": "pending",
-      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/final101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-final-acceptance.json",
-      "proof_scope": "Require all public matrices and no skips/duplicates/stale source maps. Final current-source whole async/facade/consumer linked checks once; unchanged prerequisite references scoped honestly. Negative controls omitted/failed/stale required evidence; actual noSaba/native no easy_perform call/link evidence."
+      "status": "verified",
+      "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/final101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-final-acceptance.json --service-shared-root /Users/kakurega/dev/oss/Odin/shared",
+      "proof_scope": "Require all public matrices and no skips/duplicates/stale source maps. Final current-source whole async/facade/consumer linked checks once; unchanged prerequisite references scoped honestly. Negative controls omitted/failed/stale required evidence; actual noSaba/native no easy_perform call/link evidence. Separate explicitly selected owning-canonical AWS/Google/auth import/build/run compatibility via parent consumer gate and candidate core; firstrequire canonicalSurf/http/asyncOdin sourceequalcandidate. No service/applicationmigration oroffloadimplementation claim.",
+      "evidence": "FINAL current-source evidence/final101/required/receipt.json SHA051f3f2d4d7b0a7786b98251a79d9f24868d02bc15711525a055f076921b7c62;9requiredrunners522nativecells(450publicClient/48actor/24layeredCore)+2standaloneexec,18foundationperSan,19negativecontrols,whole112async/14exchange/27facadeperASanTSan,14nativecall/linkaudits. Explicitcanonicalservice3+emptybaselinepassed withproductionSDKidentical/candidatecore/noMigrationOffloadclaim;allcurrentSource/core/artifacts/inventory/servicesstatusbeforeafter stable."
     },
     {
       "id": "101-35-acceptance-review",
