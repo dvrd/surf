@@ -148,9 +148,10 @@
       ],
       "round": 26,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" check \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -no-entry-point -warnings-as-errors",
-      "proof_scope": "Read-only original-address owner-thread exchange_phase(^Exchange)->(Exchange_Phase,bool), existing enum only; reject nil/zero/copied/busy withoutmutation, noIO/alloc/clock/health claim. Actual new publicstage probe showed Connecting during TLS/body."
+      "proof_scope": "Read-only original-address owner-thread exchange_phase(^Exchange)->(Exchange_Phase,bool), existing enum only; reject nil/zero/copied/busy withoutmutation, noIO/alloc/clock/health claim. Actual new publicstage probe showed Connecting during TLS/body.",
+      "evidence": "Independent request-stage/getter/receipt.json SHAacf56823b80438e30109e0f25140f72794567d5356e52a5c91b2a60f32b16e15:3actualpublicoperation/callback getter tests perASanTSan; RootwholeExchangecomponent14tests perSan request-stage/getter-whole/receipt.json; read-onlyownerphaseAPI73b417b0, source/copied/core/binary guards. Actualactorstage correction stillpendingTask27publisher."
     },
     {
       "id": "101-27-exchange-phase-verify",
@@ -165,9 +166,10 @@
       ],
       "round": 27,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "\"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -define:ODIN_TEST_THREADS=1 -sanitize:address -out:/tmp/101-exchange-phase-address && \"$WEBTOOLS_ODIN\" test \"$WEBTOOLS_SHARED/surf/async/exchange\" -collection:shared=\"$WEBTOOLS_SHARED\" -define:ODIN_TEST_THREADS=1 -sanitize:thread -out:/tmp/101-exchange-phase-thread",
-      "proof_scope": "Real public Exchange operations/callbacks prove Writing until lastwrite callback consumed, thenReading phases; nil/zero/copied/busy preservewholeownerbytes. Separate actualpublicheldTLS/body probe validatesactorpublication afterTask27 integration."
+      "proof_scope": "Real public Exchange operations/callbacks prove Writing until lastwrite callback consumed, thenReading phases; nil/zero/copied/busy preservewholeownerbytes. Separate actualpublicheldTLS/body probe validatesactorpublication afterTask27 integration.",
+      "evidence": "Independent request-stage/getter/receipt.json SHAacf56823b80438e30109e0f25140f72794567d5356e52a5c91b2a60f32b16e15:3actualpublicoperation/callback getter tests perASanTSan; RootwholeExchangecomponent14tests perSan request-stage/getter-whole/receipt.json; read-onlyownerphaseAPI73b417b0, source/copied/core/binary guards. Actualactorstage correction stillpendingTask27publisher."
     },
     {
       "id": "101-27-redirect-actor",
