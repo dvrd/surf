@@ -296,9 +296,10 @@
       ],
       "round": 29,
       "agent": true,
-      "status": "pending",
+      "status": "verified",
       "done_when": "python3 \"$WEBTOOLS_SHARED/surf/tests/failure101.py\" --odin \"$WEBTOOLS_ODIN\" --core-root \"$WEBTOOLS_CORE\" --shared-root \"$WEBTOOLS_SHARED\" --report /tmp/101-public-failure.json",
-      "proof_scope": "Inject actual NEW allocation/grant boundaries in public init/clone/requeue, closedScope/lateclock and callback close/stats/cancel, exact lease/backing release. Valid physicalheaderfree only cleared failedinit/successfuldestroy. Reference prior ctor414, no duplicate certification."
+      "proof_scope": "Inject actual NEW allocation/grant boundaries in public init/clone/requeue, closedScope/lateclock and callback close/stats/cancel, exact lease/backing release. Valid physicalheaderfree only cleared failedinit/successfuldestroy. Reference prior ctor414, no duplicate certification.",
+      "evidence": "failure32/final/receipt.json SHAeaee071e7f732228431c52b24d9ab2297a7a4e27b03c4f9676e9c74ef592e7a4;116nativecells+3units perASanTSan,9managedpostarmgrants x6modes +baseline/3callbacks perSan. TypedScopeClosed/cancel/close/lateclock/primaryOOM,exactbody/newhop/clearedClientheaderphysicalFree/ResponseafterRuntime/wholebackingScope/heapFD0; sourcecopy167/core2675/5binaries/239logs guarded."
     },
     {
       "id": "101-33-client-docs",
