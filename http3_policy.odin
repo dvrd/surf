@@ -80,6 +80,7 @@ execute_http3 :: proc(
 	}
 	wire := http3.Client_Request{
 		qpack = config.http3_qpack,
+ ecn=config.http3_ecn,
 		client_credentials=config.tls.client_credentials,
 		client_credential_lease=config.tls.client_credential_lease,
 		method = http.method_text(request.method), target = path, authority = url.authority,

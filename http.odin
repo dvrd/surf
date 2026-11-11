@@ -61,6 +61,7 @@ Config :: struct {
 	// fall back to TCP once; other methods are not sent again. 0-RTT stays off.
 	http3: bool,
 	http3_qpack: h3.Qpack_Config,
+ http3_ecn:bool,
 	// Written only after an authenticated TLS response. Nil disables discovery.
 	alt_svc: ^Alt_Svc_Cache,
 	// Nil opens one HTTP/3 connection per call. A pool reuses an authenticated origin.

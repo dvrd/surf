@@ -58,3 +58,10 @@ blocked_streams=4}`. Grants belong to each authenticated connection; changing th
 configuration selects another pool connection. Peer limits, never-indexed
 credentials, blocked sections, decoder feedback and cancellation are handled by
 the shared transport. See `http/v3/QPACK_TRANSPORT.md` for its explicit bounds.
+
+`Config.http3_ecn` enables validated ECN probing on native HTTP3 connections;
+unsupported metadata and invalid peer feedback fall back to unmarked traffic.
+It participates in pool isolation. The native HTTP3 pool also supports explicit
+local-socket migration through `http3.pool_migrate`; preserve caller serialization.
+Server session tickets and authenticated resumption are native TLS features;
+HTTP3 early-data replay policy is separately tracked in OKAMI-384.
