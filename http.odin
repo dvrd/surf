@@ -206,10 +206,12 @@ execute_internal :: proc(
 			if !u.secure {
 				return {}, {kind = .Insecure_URL, phase = .Configuration, write_effect = .Not_Sent}
 			}
-			response, err = execute_http3(u, current, config, total_deadline, allocator)
+			response, err = execute_http3(u, current, config, total_deadline, allocator, upload)
 			if err.kind != .None {
 				if time.diff(time.now(), total_deadline) <= 0 {
-					return {}, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent}
+					err.kind = .Deadline_Failed
+					err.phase = .Deadline
+					return {}, err
 				}
 				// A datagram that already carried the request is not replayed on TCP.
 				if err.write_effect != .Not_Sent {
@@ -229,7 +231,7 @@ execute_internal :: proc(
 		if err.kind != .None do return {}, err
 		if config.alt_svc != nil && u.secure {
 			if value, found := response_header(&response, "Alt-Svc"); found {
-				_ = alt_svc_note(config.alt_svc, u.host, value, true, true, time.now())
+				_ = alt_svc_note(config.alt_svc, u.host, value, true, true, time.now(), u.port)
 			}
 		}
 

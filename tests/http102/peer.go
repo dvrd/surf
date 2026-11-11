@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -90,6 +91,15 @@ func connState(c net.Conn, state http.ConnState) {
 func route(w http.ResponseWriter, r *http.Request) {
 	emit(map[string]any{"event": "request", "path": r.URL.Path})
 	switch r.URL.Path {
+	case "/buffered-headers":
+		body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+		if err != nil {
+			http.Error(w, "read", http.StatusBadRequest)
+			return
+		}
+		_, _ = io.WriteString(w, strings.Join([]string{r.Proto, r.Method,
+			r.Header.Get("Authorization"), r.Header.Get("Cookie"), r.Header.Get("Content-Type"),
+			strings.Join(r.Header.Values("X-Review"), ","), string(body)}, "|"))
 	case "/blob":
 		n, _ := strconv.Atoi(r.URL.Query().Get("n"))
 		if n < 0 || n > 1<<20 {

@@ -63,7 +63,7 @@ surf_http3_dial_port :: proc(t: ^testing.T) {
 	now := time.now()
 	testing.expect_value(t, http3_dial_port(&cache, "synthetic.invalid", 8443, now), 8443)
 	testing.expect_value(t, http3_dial_port(&cache, "synthetic.invalid", 0, now), 443)
-	testing.expect(t, alt_svc_note(&cache, "synthetic.invalid", "h3=\":9443\"; ma=60", true, true, now))
+	testing.expect(t, alt_svc_note(&cache, "synthetic.invalid", "h3=\":9443\"; ma=60", true, true, now, 8443))
 	testing.expect_value(t, http3_dial_port(&cache, "synthetic.invalid", 8443, now), 9443)
 	later := time.time_add(now, 61 * time.Second)
 	testing.expect_value(t, http3_dial_port(&cache, "synthetic.invalid", 8443, later), 8443)
@@ -84,7 +84,7 @@ surf_http3_hostname_resolves :: proc(t: ^testing.T) {
 
 	cache: Alt_Svc_Cache
 	now := time.now()
-	testing.expect(t, alt_svc_note(&cache, "localhost", "h3=\":9443\"; ma=60", true, true, now))
+	testing.expect(t, alt_svc_note(&cache, "localhost", "h3=\":9443\"; ma=60", true, true, now, 8443))
 	port := http3_dial_port(&cache, "localhost", 8443, now)
 	host, host_error := http3_resolve("localhost", port, time.time_add(now, time.Second), {})
 	testing.expect_value(t, host_error.kind, .None)
@@ -107,7 +107,7 @@ surf_http3_hostname_resolves :: proc(t: ^testing.T) {
 	testing.expect_value(t, bad.phase, .Configuration)
 	testing.expect_value(t, bad.write_effect, .Not_Sent)
 
-	url := http.URL{host = "localhost", port = 9, target = "/", secure = true}
+	url := http.URL{host = "localhost", authority = "localhost:9", port = 9, target = "/", secure = true}
 	_, dial_error := execute_http3(url, {method = .GET}, {}, time.time_add(time.now(), 2 * time.Second), context.allocator)
 	testing.expect(t, dial_error.kind != .None)
 	testing.expect_value(t, dial_error.write_effect, .Not_Sent)
@@ -176,4 +176,16 @@ surf_roots_free :: proc(pool: ^tls.Root_Pool) {
 	if pool == nil do return
 	tls.root_pool_destroy(pool)
 	free(pool)
+}
+
+@(test)
+surf_alt_svc_isolated_by_origin_port :: proc(t: ^testing.T) {
+ cache: Alt_Svc_Cache
+ now := time.now()
+ testing.expect(t, alt_svc_note(&cache, "localhost", "h3=\":9443\"; ma=60", true, true, now, 8443))
+ testing.expect_value(t, http3_dial_port(&cache, "localhost", 8443, now), 9443)
+ testing.expect_value(t, http3_dial_port(&cache, "localhost", 443, now), 443)
+ testing.expect(t, alt_svc_note(&cache, "localhost", "h3=\":9444\"; ma=60", true, true, now, 443))
+ testing.expect_value(t, http3_dial_port(&cache, "localhost", 443, now), 9444)
+ testing.expect_value(t, http3_dial_port(&cache, "localhost", 8443, now), 9443)
 }

@@ -151,7 +151,7 @@ buffered_http_perform :: proc(
 	}
 	selected := tls_api.connection_state(connection).negotiated_protocol
 	if selected == "h2" {
-		result = buffered_http_h2(connection, method, url, body, upload_file, upload_size, config, total, reply)
+		result = buffered_http_h2(connection, method, url, body, headers, upload_file, upload_size, config, total, reply)
 		result.error = buffered_tcp_timeout(result.error)
 		return
 	}
@@ -200,6 +200,7 @@ buffered_http_method :: proc(method: string) -> (http.Method, bool) {
 @(private)
 buffered_http_h2 :: proc(
 	connection: ^tls_api.Conn, method, url: string, body: []byte,
+	headers: []string,
 	file: ^os.File, upload_size: i64, config: Config, deadline: time.Time, reply: ^Buffered_HTTP_Reply,
 ) -> Buffered_HTTP_Result {
 	mapped, ok := buffered_http_method(method)
@@ -207,6 +208,10 @@ buffered_http_h2 :: proc(
 		return {error = {kind = .Invalid_Method, phase = .Protocol, write_effect = .Not_Sent}}
 	}
 	request := http.Request{method = mapped, url = url}
+	fields: [http.MAX_HEADERS]http.Header
+	parsed_headers, header_error := buffered_http_h2_headers(headers, fields[:])
+	if header_error.kind != .None {return {error = header_error}}
+	request.headers = parsed_headers
 	upload: Upload_Source
 	upload_ptr: ^Upload_Source
 	if file != nil {
@@ -221,6 +226,37 @@ buffered_http_h2 :: proc(
 	response, error := h2_exchange_once(connection, request, upload_ptr, config, deadline, context.allocator, nil)
 	defer response_destroy(&response)
 	return buffered_http_from_response(&response, error, reply)
+}
+
+// Keep the buffered header-list conventions while passing application fields
+// through the shared HTTP/2 encoder. Empty colon values suppress a field;
+// semicolon-only entries explicitly send an empty value.
+@(private)
+buffered_http_h2_headers :: proc(headers: []string, storage: []http.Header) -> ([]http.Header, HTTP_Error) {
+	count := 0
+	for header in headers {
+		colon := strings.index_byte(header, ':')
+		semi := strings.index_byte(header, ';')
+		if colon < 0 && semi < 0 do continue
+		name := header[:colon] if colon >= 0 else header[:semi]
+		if !http.header_name_valid(name) {
+			return nil, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
+		}
+		value := ""
+		if colon >= 0 {
+			value = strings.trim(header[colon + 1:], " \t")
+			if value == "" do continue
+		}
+		if !http.header_value_valid(value) {
+			return nil, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
+		}
+		if count == len(storage) {
+			return nil, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
+		}
+		storage[count] = {name = name, value = value}
+		count += 1
+	}
+	return storage[:count], {}
 }
 
 @(private)

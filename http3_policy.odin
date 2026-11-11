@@ -3,6 +3,7 @@ package surf
 import http "../http"
 import http3 "../http/v3"
 import "core:mem"
+import "core:io"
 import "core:net"
 import "core:strings"
 import "core:time"
@@ -16,6 +17,7 @@ Alt_Svc :: struct {
 	host:     [256]u8,
 	host_len: int,
 	port:     int,
+	origin_port: int,
 	expires:  time.Time,
 }
 
@@ -37,6 +39,7 @@ execute_http3 :: proc(
 	config: Config,
 	total_deadline: time.Time,
 	allocator: mem.Allocator,
+	upload: ^Upload_Source = nil,
 ) -> (
 	Response,
 	HTTP_Error,
@@ -58,22 +61,67 @@ execute_http3 :: proc(
 	}
 	path := url.target
 	if len(path) == 0 do path = "/"
-	method := http.method_text(request.method)
+	fields: [http.MAX_HEADERS]http3.Field
+	if len(request.headers) > len(fields) {
+		return {}, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
+	}
+	names: [http.MAX_HEADER_SIZE]u8
+	names_n := 0
+	for header, i in request.headers {
+		if len(header.name) > len(names)-names_n {return {}, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}}
+		at := names_n
+		for character, j in header.name {
+			lower := character
+			if lower >= 'A' && lower <= 'Z' {lower += 32}
+			names[at+j] = u8(lower)
+		}
+		names_n += len(header.name)
+		fields[i] = {name = string(names[at:names_n]), value = header.value}
+	}
+	wire := http3.Client_Request{
+		method = http.method_text(request.method), target = path, authority = url.authority,
+		headers = fields[:len(request.headers)], body = request.body,
+		max_response_bytes = config.max_body_size,
+	}
+	source: HTTP3_Upload
+	wire_source: http3.Upload_Source
+	if upload != nil {
+		source.source = upload
+		wire_source = {data = &source, read = http3_upload_read, content_length = upload.content_length}
+		wire.upload = &wire_source
+	}
 	result: http3.Client_Result
 	if config.http3_pool != nil {
-		result = http3.pool_exchange(config.http3_pool, endpoint, url.host, method, path, config.tls.root_cas, deadline)
+		result = http3.pool_exchange_request(config.http3_pool, endpoint, url.host, wire, config.tls.root_cas, deadline)
 	} else {
-		result = http3.client_exchange(endpoint, url.host, method, path, config.tls.root_cas, deadline)
+		result = http3.client_exchange_request(endpoint, url.host, wire, config.tls.root_cas, deadline)
 	}
 	if result.error != .None {
-		return {}, http3_map_error(result, total_deadline)
+		error := http3_map_error(result, total_deadline)
+		error.source_io = source.error
+		return {}, error
 	}
 	return http3_response(&result, allocator)
 }
 
+@(private)
+HTTP3_Upload :: struct {source: ^Upload_Source, error: io.Error}
+
+@(private)
+http3_upload_read :: proc(data: rawptr, destination: []u8) -> (int, bool) {
+	source := cast(^HTTP3_Upload)data
+	n, error := io.read(source.source.stream, destination)
+	if error != nil && error != io.Error.EOF {
+		source.error = error
+		return n, false
+	}
+	if n == 0 {source.error = io.Error.EOF; return 0, false}
+	return n, true
+}
+
 // Alt-Svc wins only while the lookup is valid. Otherwise the URL port, or 443.
 http3_dial_port :: proc(cache: ^Alt_Svc_Cache, host: string, url_port: int, now: time.Time) -> int {
-	if port, ok := alt_svc_lookup(cache, host, now); ok && port > 0 {
+	if port, ok := alt_svc_lookup(cache, host, now, url_port); ok && port > 0 {
 		return port
 	}
 	if url_port > 0 do return url_port
@@ -101,6 +149,10 @@ http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) 
 	if result.error == .Deadline && time.diff(time.now(), total_deadline) <= 0 {
 		return {kind = .Deadline_Failed, phase = .Deadline, write_effect = effect}
 	}
+	if result.error == .Invalid_Request {return {kind = .Invalid_Config, phase = .Configuration, write_effect = effect}}
+	if result.error == .Body_Limit {return {kind = .Body_Oversized, phase = .Body_Limit, write_effect = effect}}
+	if result.error == .Source {return {kind = .IO_Failed, phase = .Read, write_effect = effect}}
+	if result.error == .Cancelled {return {kind = .IO_Failed, phase = .Cancellation, write_effect = effect, transport = {kind = .Cancelled}}}
 	if result.error == .Certificate {
 		return {kind = .IO_Failed, phase = .TLS, write_effect = effect}
 	}
@@ -126,24 +178,26 @@ http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -
 	if n > 0 do copy(body[:n], result.body[:n])
 	response.body_storage = body
 	response.body = response.body_storage[:]
-	if result.altsvc_len <= 0 do return response, {}
-	keep := result.altsvc_len
-	if keep > len(result.altsvc) do keep = len(result.altsvc)
-	storage, storage_error := make([]u8, keep, allocator)
-	if storage_error != nil {
-		delete(body)
-		return {}, {kind = .Allocation_Failed, allocation = storage_error, phase = .Configuration, write_effect = .Response_Received}
+	bytes := 0
+	for i in 0..<result.header_count {
+		field, ok := http3.client_result_header(result, i)
+		if !ok {response_destroy(&response); return {}, {kind = .IO_Failed, phase = .Protocol, write_effect = .Response_Received}}
+		bytes += len(field.name) + len(field.value)
 	}
-	copy(storage, result.altsvc[:keep])
-	headers, header_error := make([]http.Header, 1, allocator)
-	if header_error != nil {
-		delete(storage, allocator)
-		delete(body)
-		return {}, {kind = .Allocation_Failed, allocation = header_error, phase = .Configuration, write_effect = .Response_Received}
-	}
-	headers[0] = {name = "alt-svc", value = string(storage)}
+	storage, storage_error := make([]u8, bytes, allocator)
+	if storage_error != nil {response_destroy(&response); return {}, {kind = .Allocation_Failed, allocation = storage_error, phase = .Configuration, write_effect = .Response_Received}}
 	response.header_storage = storage
+	headers, header_error := make([]http.Header, result.header_count, allocator)
+	if header_error != nil {response_destroy(&response); return {}, {kind = .Allocation_Failed, allocation = header_error, phase = .Configuration, write_effect = .Response_Received}}
 	response.headers = headers
+	at := 0
+	for i in 0..<result.header_count {
+		field, _ := http3.client_result_header(result, i)
+		n := copy(storage[at:], field.name)
+		headers[i].name = string(storage[at:at+n]); at += n
+		n = copy(storage[at:], field.value)
+		headers[i].value = string(storage[at:at+n]); at += n
+	}
 	return response, {}
 }
 
@@ -154,10 +208,13 @@ alt_svc_note :: proc(
 	host, value: string,
 	authenticated, secure: bool,
 	now: time.Time,
+	origin_port: int = 443,
 ) -> bool {
 	if cache == nil || !authenticated || !secure || len(host) == 0 || len(host) > 256 {
 		return false
 	}
+	effective_port := origin_port
+	if effective_port == 0 {effective_port = 443}
 	port, ma, parsed := alt_svc_h3(value)
 	if !parsed || ma <= 0 {
 		return false
@@ -166,7 +223,7 @@ alt_svc_note :: proc(
 	index := cache.next % ALT_SVC_SLOTS
 	replaced := false
 	for i in 0 ..< ALT_SVC_SLOTS {
-		if cache.slots[i].used && string(cache.slots[i].host[:cache.slots[i].host_len]) == host {
+		if cache.slots[i].used && cache.slots[i].origin_port == effective_port && string(cache.slots[i].host[:cache.slots[i].host_len]) == host {
 			index = i
 			replaced = true
 			break
@@ -176,17 +233,20 @@ alt_svc_note :: proc(
 	copy(slot.host[:], host)
 	slot.host_len = len(host)
 	slot.port = port
+	slot.origin_port = effective_port
 	slot.expires = time.time_add(now, time.Duration(ma) * time.Second)
 	slot.used = true
 	if !replaced do cache.next += 1
 	return true
 }
 
-alt_svc_lookup :: proc(cache: ^Alt_Svc_Cache, host: string, now: time.Time) -> (port: int, ok: bool) {
+alt_svc_lookup :: proc(cache: ^Alt_Svc_Cache, host: string, now: time.Time, origin_port: int = 443) -> (port: int, ok: bool) {
+	effective_port := origin_port
+	if effective_port == 0 {effective_port = 443}
 	if cache == nil do return 0, false
 	for i in 0 ..< ALT_SVC_SLOTS {
 		slot := &cache.slots[i]
-		if !slot.used || string(slot.host[:slot.host_len]) != host do continue
+		if !slot.used || slot.origin_port != effective_port || string(slot.host[:slot.host_len]) != host do continue
 		if time.diff(now, slot.expires) <= 0 {
 			slot^ = {}
 			return 0, false
