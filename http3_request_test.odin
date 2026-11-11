@@ -49,7 +49,7 @@ surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t:^testi
  defer store.destroy(&owner)
  assert(store.replace(owner,&credential).kind==.None)
  fixture:=Surf_H3_Fixture{valid=true}
- fixture.listener.config={endpoint={net.IP4_Loopback,0},credentials=owner,on_request=surf_h3_request_handler,on_request_user=&fixture}
+ fixture.listener.config={qpack={table_capacity=4096,blocked_streams=4},endpoint={net.IP4_Loopback,0},credentials=owner,on_request=surf_h3_request_handler,on_request_user=&fixture}
  port,ok:=http3.listener_listen(&fixture.listener)
  if !testing.expect(t,ok) {return}
  worker:=thread.create_and_start_with_poly_data(&fixture,proc(f:^Surf_H3_Fixture){for !sync.atomic_load(&f.stop) {if !http3.listener_step(&f.listener) {break}}})
@@ -61,7 +61,9 @@ surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t:^testi
  cache:Alt_Svc_Cache
  alt_buf:[80]u8
  assert(alt_svc_note(&cache,"localhost",fmt.bprintf(alt_buf[:],"h3=\":%d\"; ma=60",port),true,true,time.now(),8443))
- config:=Config{http3=true,alt_svc=&cache,timeout=8*time.Second,tls={root_cas=roots.roots[:roots.count]}}
+ pool:http3.Pool
+ defer http3.pool_close(&pool)
+ config:=Config{http3=true,http3_pool=&pool,http3_qpack={table_capacity=4096,blocked_streams=4},alt_svc=&cache,timeout=8*time.Second,tls={root_cas=roots.roots[:roots.count]}}
  headers:=[]http.Header{{"Authorization","Bearer fixture"},{"Cookie","session=fixture"},{"Content-Type","application/json"},{"X-Review","one"}}
  request:=http.Request{method=.POST,url="https://localhost:8443/probe?one=two",headers=headers,body=transmute([]u8)string("request-body")}
  response,error:=execute(request,config)
@@ -82,11 +84,6 @@ surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t:^testi
  testing.expect_value(t,upload_error.kind,.None)
  testing.expect_value(t,uploaded.status,401)
  testing.expect_value(t,string(uploaded.body),"denied")
- config.max_body_size=3
- limited,limit_error:=execute_upload(request,{stream=bytes.buffer_to_stream(&source),content_length=0},config)
- defer response_destroy(&limited)
- testing.expect_value(t,limit_error.kind,.Body_Oversized)
- testing.expect_value(t,limit_error.phase,.Body_Limit)
  // A source callback can return after the total deadline. Preserve the
  // conservative sent state and source error instead of making it replay-safe.
  slow_reads:=0
@@ -98,6 +95,12 @@ surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t:^testi
  testing.expect_value(t,late_error.phase,.Deadline)
  testing.expect_value(t,late_error.write_effect,.Unknown)
  testing.expect_value(t,late_error.source_io,io.Error.No_Progress)
+ config.timeout=8*time.Second
+ config.max_body_size=3
+ limited,limit_error:=execute_upload(request,{stream=bytes.buffer_to_stream(&source),content_length=0},config)
+ defer response_destroy(&limited)
+ testing.expect_value(t,limit_error.kind,.Body_Oversized)
+ testing.expect_value(t,limit_error.phase,.Body_Limit)
  sync.atomic_store(&fixture.stop,true);thread.join(worker)
  testing.expect_value(t,fixture.calls,3)
  // Only the first two requests carry the asserted body.

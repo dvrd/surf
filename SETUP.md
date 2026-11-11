@@ -52,3 +52,9 @@ is64 KiB; exceeding it or a lower `max_body_size` returns `Body_Oversized`
 rather than a successful truncated body. The source remains caller-owned and is
 never rewound or replayed. HTTP/3 uses the matching Core QUIC connection recovery
 implementation after the TLS handshake; updating only Surf is insufficient.
+
+Dynamic HTTP/3 QPACK is enabled with `http3_qpack={table_capacity=4096,
+blocked_streams=4}`. Grants belong to each authenticated connection; changing the
+configuration selects another pool connection. Peer limits, never-indexed
+credentials, blocked sections, decoder feedback and cancellation are handled by
+the shared transport. See `http/v3/QPACK_TRANSPORT.md` for its explicit bounds.

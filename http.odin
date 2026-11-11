@@ -60,6 +60,7 @@ Config :: struct {
 	// Explicit HTTP/3. Default off. Cleartext is refused. GET and HEAD may
 	// fall back to TCP once; other methods are not sent again. 0-RTT stays off.
 	http3: bool,
+	http3_qpack: h3.Qpack_Config,
 	// Written only after an authenticated TLS response. Nil disables discovery.
 	alt_svc: ^Alt_Svc_Cache,
 	// Nil opens one HTTP/3 connection per call. A pool reuses an authenticated origin.
@@ -815,6 +816,7 @@ reader_line :: proc(
 	}
 }
 config_validate :: proc(c: Config) -> HTTP_Error {
+	if !h3.qpack_config_valid(c.http3_qpack) {return {kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}}
 	if c.max_body_size < 0 ||
 	   c.max_body_size > http.MAX_BODY_SIZE ||
 	   c.max_redirects < 0 ||

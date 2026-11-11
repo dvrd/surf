@@ -14,8 +14,10 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 
-// One origin keeps at most one live connection. Callers keep Config slices
-// (roots, ALPN, resolver) alive through http_client_close. Do not copy a client.
+// An origin identity uses one live connection. Identity/trust rotation may keep
+// older WebSocket connections alive while new requests use a fresh bounded lane.
+// Keep immutable Config roots/ALPN/resolver borrows alive through close. Do not
+// copy or concurrently mutate a client.
 HTTP_ORIGIN_SLOTS :: 4
 HTTP_STREAM_SLOTS :: 8
 
@@ -55,6 +57,9 @@ HTTP_Lane :: struct {
 	allocator: mem.Allocator,
 	max_streams, byte_limit: int,
 	read_buf: [1 << 14]u8,
+	tunnels: [HTTP_STREAM_SLOTS]^HTTP2_Tunnel,
+	closed_tunnels: [HTTP_STREAM_SLOTS]h2.Stream_Handle,
+	identity: HTTP_Client_Identity,
 }
 
 @(private)
@@ -277,15 +282,22 @@ http_tls_connect :: proc(url: http.URL, config: Config, total_deadline: time.Tim
 
 @(private)
 http_lane_prepare :: proc(c: ^HTTP_Client, url: http.URL, deadline: time.Time) -> (lane: ^HTTP_Lane, reused: bool, error: HTTP_Error) {
+	identity,identity_error:=http_identity_acquire(c.config.tls)
+	if identity_error.kind!=.None {return nil,false,identity_error}
+	defer http_identity_release(&identity)
 	for &candidate in c.lanes {
 		if candidate.tls == nil {continue}
 		if candidate.secure != url.secure || candidate.port != url.port || !strings.equal_fold(candidate.host, url.host) {continue}
-		if candidate.protocol == .HTTP2 && candidate.reusable && candidate.booted && !candidate.dead && !candidate.goaway {
+		matches:=candidate.identity.store==identity.store && candidate.identity.generation==identity.generation &&
+		 http_tls_config_equal(candidate.tls.config,c.config.tls)
+		if matches && candidate.protocol == .HTTP2 && candidate.reusable && candidate.booted && !candidate.dead && !candidate.goaway {
 			http_arm_socket(c, candidate.tls.tcp.socket)
 			return &candidate, true, {}
 		}
+		// Identity/trust rotation affects new streams. An admitted WebSocket
+		// keeps its pinned identity and transport until explicitly retired.
+		if !matches && http_lane_has_tunnels(&candidate) && !candidate.dead && !candidate.goaway {continue}
 		http_lane_close(c, &candidate)
-		break
 	}
 	for &candidate in c.lanes {
 		if candidate.tls != nil {continue}
@@ -293,12 +305,16 @@ http_lane_prepare :: proc(c: ^HTTP_Client, url: http.URL, deadline: time.Time) -
 		break
 	}
 	if lane == nil {return nil, false, {kind = .Invalid_Config, phase = .Admission, write_effect = .Not_Sent}}
-	connection, dial_error := http_tls_connect(url, c.config, deadline, c.allocator, &c.dials)
-	if dial_error.kind != .None {return nil, false, dial_error}
+	lane.identity=identity;identity={}
+	settings:=c.config
+	if lane.identity.store!=nil {settings.tls.client_credential_lease=&lane.identity.lease}
+	connection, dial_error := http_tls_connect(url, settings, deadline, c.allocator, &c.dials)
+	if dial_error.kind != .None {http_identity_release(&lane.identity);return nil, false, dial_error}
 	host, allocation := make([]u8, len(url.host), c.allocator)
 	if allocation != nil {
 		tls_api.abort(connection)
 		free(connection, c.allocator)
+		http_identity_release(&lane.identity)
 		return nil, false, {kind = .Allocation_Failed, phase = .Admission, write_effect = .Not_Sent, allocation = allocation}
 	}
 	copy(host, url.host)
@@ -331,7 +347,7 @@ http_lane_prepare :: proc(c: ^HTTP_Client, url: http.URL, deadline: time.Time) -
 
 @(private)
 http_lane_close :: proc(c: ^HTTP_Client, lane: ^HTTP_Lane) {
-	if lane == nil || lane.tls == nil && !lane.engine_up && len(lane.host) == 0 {return}
+	if lane == nil || lane.tls == nil && !lane.engine_up && len(lane.host) == 0 && lane.identity.store==nil {return}
 	if lane.tls != nil {http_disarm_socket(c, lane.tls.tcp.socket)}
 	h2_engine_close(lane)
 	allocator := lane.allocator
@@ -340,6 +356,7 @@ http_lane_close :: proc(c: ^HTTP_Client, lane: ^HTTP_Lane) {
 		free(lane.tls, allocator)
 	}
 	if len(lane.host) > 0 && allocator.procedure != nil {delete(lane.host, allocator)}
+	http_identity_release(&lane.identity)
 	lane^ = {}
 }
 
@@ -401,6 +418,7 @@ h2_engine_open :: proc(lane: ^HTTP_Lane) -> HTTP_Error {
 @(private)
 h2_engine_close :: proc(lane: ^HTTP_Lane) {
 	if lane == nil || !lane.engine_up {return}
+	for stream in lane.tunnels {if stream!=nil {h2_tunnel_detach(stream)}}
 	for {
 		event, ok := h2.connection_poll(&lane.engine)
 		if !ok {break}
@@ -751,6 +769,7 @@ h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 
 @(private)
 h2_service :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
+	h2_tunnel_reap(lane)
 	progress := false
 	if !lane.engine_up {return false, {kind = .IO_Failed, phase = .Protocol, write_effect = .Not_Sent}}
 	for _ in 0 ..< 16 {
@@ -786,8 +805,10 @@ h2_poll :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 		event, ok := h2.connection_poll(&lane.engine)
 		if !ok {break}
 		saw = true
-		error := h2_apply(lane, jobs, event)
-		release_error := h2.connection_event_release(&lane.engine, event.token)
+		handled,taken,error:=h2_tunnel_event(lane,event)
+		if !handled {error=h2_apply(lane,jobs,event)}
+		release_error:h2.Error
+		if !taken {release_error=h2.connection_event_release(&lane.engine,event.token)}
 		if error.kind != .None {return true, error}
 		if release_error.kind != .None {return true, h2_map_error(release_error, .Unknown, 0)}
 		for &job in jobs {

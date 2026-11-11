@@ -79,6 +79,9 @@ execute_http3 :: proc(
 		fields[i] = {name = string(names[at:names_n]), value = header.value}
 	}
 	wire := http3.Client_Request{
+		qpack = config.http3_qpack,
+		client_credentials=config.tls.client_credentials,
+		client_credential_lease=config.tls.client_credential_lease,
 		method = http.method_text(request.method), target = path, authority = url.authority,
 		headers = fields[:len(request.headers)], body = request.body,
 		max_response_bytes = config.max_body_size,
@@ -193,10 +196,10 @@ http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -
 	at := 0
 	for i in 0..<result.header_count {
 		field, _ := http3.client_result_header(result, i)
-		n := copy(storage[at:], field.name)
-		headers[i].name = string(storage[at:at+n]); at += n
-		n = copy(storage[at:], field.value)
-		headers[i].value = string(storage[at:at+n]); at += n
+		copied := copy(storage[at:], field.name)
+		headers[i].name = string(storage[at:at+copied]); at += copied
+		copied = copy(storage[at:], field.value)
+		headers[i].value = string(storage[at:at+copied]); at += copied
 	}
 	return response, {}
 }
