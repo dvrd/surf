@@ -32,7 +32,7 @@ http3_fallback_allowed :: proc(method: http.Method) -> bool {
 }
 
 // Half of the remaining deadline is the HTTP/3 budget. A miss that has not
-// transmitted falls back only for GET and HEAD. 0-RTT is not enabled.
+// transmitted falls back only for GET and HEAD. Early data requires the configured request predicate.
 execute_http3 :: proc(
 	url: http.URL,
 	request: http.Request,
@@ -79,6 +79,8 @@ execute_http3 :: proc(
 		fields[i] = {name = string(names[at:names_n]), value = header.value}
 	}
 	wire := http3.Client_Request{
+ session_cache=config.tls.session_cache,
+ cancel=config._http3_cancel,cancel_data=config._http3_cancel_data,
 		qpack = config.http3_qpack,
  ecn=config.http3_ecn,
 		client_credentials=config.tls.client_credentials,
@@ -87,6 +89,17 @@ execute_http3 :: proc(
 		headers = fields[:len(request.headers)], body = request.body,
 		max_response_bytes = config.max_body_size,
 	}
+ if config.http3_early_data!=nil {policy_request:=request;wire.early_data=config.http3_early_data(&policy_request)}
+ trailer_fields:[32]http3.Field
+ trailer_names:[4096]u8;trailer_bytes:=0
+ if len(request.trailers)>len(trailer_fields) {return {},{kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
+ for field,i in request.trailers {
+  if len(field.name)>len(trailer_names)-trailer_bytes {return {},{kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
+  start:=trailer_bytes
+  for character,j in field.name {lower:=character;if lower>='A'&&lower<='Z' {lower+=32};trailer_names[start+j]=u8(lower)}
+  trailer_bytes+=len(field.name);trailer_fields[i]={name=string(trailer_names[start:trailer_bytes]),value=field.value}
+ }
+ wire.trailers=trailer_fields[:len(request.trailers)]
 	source: HTTP3_Upload
 	wire_source: http3.Upload_Source
 	if upload != nil {
@@ -202,7 +215,8 @@ http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -
 		copied = copy(storage[at:], field.value)
 		headers[i].value = string(storage[at:at+copied]); at += copied
 	}
-	return response, {}
+ if trailer_error:=http3_response_trailers(&response,result,allocator);trailer_error.kind!=.None {response_destroy(&response);return {},trailer_error}
+ return response, {}
 }
 
 // Stores h3=":port"; ma=seconds only for an authenticated HTTPS origin.

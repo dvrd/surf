@@ -38,6 +38,7 @@ HTTP_Client :: struct {
 	limits:     HTTP_Origin_Limits,
 	allocator:  mem.Allocator,
 	lanes:      [HTTP_ORIGIN_SLOTS]HTTP_Lane,
+ http3_tunnels:[4]^HTTP3_Tunnel,
 	dials:      int,
 	cancel:     int,
 	mu:         sync.Mutex,
@@ -99,6 +100,7 @@ http_client_init :: proc(c: ^HTTP_Client, config: Config, limits: HTTP_Origin_Li
 
 http_client_close :: proc(c: ^HTTP_Client) {
 	if c == nil || c._self != c {return}
+	for &tunnel in c.http3_tunnels {if tunnel!=nil {_=h3_tunnel_abort(tunnel);tunnel=nil}}
 	for &lane in c.lanes {http_lane_close(c, &lane)}
 	c._self = nil
 	c^ = {}
@@ -139,6 +141,12 @@ http_client_multiplex :: proc(c: ^HTTP_Client, requests: []http.Request, results
 	}
 	intrinsics.atomic_store(&c.cancel, 0)
 	for &result in results {result = {}}
+ if c.config.http3 {
+  if len(requests)!=1 {return {kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}}
+  config:=c.config;config._http3_cancel=http_client_h3_cancelled;config._http3_cancel_data=c
+  results[0].response,results[0].error=execute(requests[0],config,allocator)
+  return results[0].error
+ }
 	parsed: [HTTP_STREAM_SLOTS]http.URL
 	for request, i in requests {
 		url, error := http.url_parse(request.url)
@@ -1094,3 +1102,6 @@ h2_name_forbidden :: proc(name: string) -> bool {
 	}
 	return false
 }
+
+@(private)
+http_client_h3_cancelled :: proc(data:rawptr)->bool {return h2_cancelled(&(cast(^HTTP_Client)data).cancel)}

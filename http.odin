@@ -39,6 +39,8 @@ HTTP_Error :: struct {
 }
 
 Config :: struct {
+ _http3_cancel:proc(rawptr)->bool,
+ _http3_cancel_data:rawptr,
 	tls:           tls_api.Config,
 	// Zero selects 8 MiB. All responses, including redirect bodies, are bounded.
 	max_body_size: int,
@@ -58,10 +60,11 @@ Config :: struct {
 	// This reference does not extend the arena/storage lifetime.
 	allocator_scope: resources.Scope,
 	// Explicit HTTP/3. Default off. Cleartext is refused. GET and HEAD may
-	// fall back to TCP once; other methods are not sent again. 0-RTT stays off.
+	// fall back to TCP once; other methods are not sent again. Early data requires its explicit predicate.
 	http3: bool,
 	http3_qpack: h3.Qpack_Config,
  http3_ecn:bool,
+ http3_early_data:proc(^http.Request)->bool,
 	// Written only after an authenticated TLS response. Nil disables discovery.
 	alt_svc: ^Alt_Svc_Cache,
 	// Nil opens one HTTP/3 connection per call. A pool reuses an authenticated origin.
@@ -72,6 +75,8 @@ Config :: struct {
 // Owns header strings/body. Do not copy and destroy twice. Destroy on success;
 // errors return an empty response. Content-Encoding is not decompressed.
 Response :: struct {
+ trailers:[]http.Header,
+ trailer_storage:[]u8,
 	status:         int,
 	headers:        []http.Header,
 	body:           []u8,
@@ -84,6 +89,8 @@ response_destroy :: proc(response: ^Response) {
 	if response == nil do return
 	old := response^; response^ = {}
 	if old.allocator.procedure != nil {
+		delete(old.trailers,old.allocator)
+ delete(old.trailer_storage,old.allocator)
 		delete(old.headers, old.allocator)
 		delete(old.header_storage, old.allocator)
 		delete(old.body_storage)
@@ -170,6 +177,7 @@ execute_internal :: proc(
 		return {}, e
 	}
 
+ if config._http3_cancel!=nil && config._http3_cancel(config._http3_cancel_data) {return {},{kind=.IO_Failed,phase=.Cancellation,write_effect=.Not_Sent,transport={kind=.Cancelled}}}
 	current := request
 	owned_url: string
 	defer if len(owned_url) > 0 {
@@ -185,7 +193,10 @@ execute_internal :: proc(
 		storage: [http.MAX_HEADER_SIZE]u8
 		content_length: i64 = -1
 		if upload != nil {content_length = upload.content_length}
-		_, validation := http1.request_encode(storage[:], current, content_length)
+        if config.http3 && !http3_request_trailers_valid(current.trailers) {return {},{kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}}
+		preflight:=current
+ if config.http3 {preflight.trailers=nil}
+ _, validation := http1.request_encode(storage[:], preflight, content_length)
 		if validation.kind != .None {
 			error := http_protocol_error(validation)
 			error.phase = .Configuration
@@ -210,6 +221,8 @@ execute_internal :: proc(
 			}
 			response, err = execute_http3(u, current, config, total_deadline, allocator, upload)
 			if err.kind != .None {
+                if err.phase==.Cancellation {return {},err}
+                if config._http3_cancel!=nil && config._http3_cancel(config._http3_cancel_data) {return {},{kind=.IO_Failed,phase=.Cancellation,write_effect=err.write_effect,transport={kind=.Cancelled}}}
 				if time.diff(time.now(), total_deadline) <= 0 {
 					err.kind = .Deadline_Failed
 					err.phase = .Deadline
@@ -219,7 +232,7 @@ execute_internal :: proc(
 				if err.write_effect != .Not_Sent {
 					return {}, err
 				}
-				if upload != nil || !http3_fallback_allowed(current.method) {
+				if upload != nil || len(current.trailers)>0 || !http3_fallback_allowed(current.method) {
 					return {}, err
 				}
 				response, err = execute_tls(u, current, config, total_deadline, allocator, upload)
