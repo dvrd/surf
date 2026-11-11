@@ -107,6 +107,10 @@ execute_http3 :: proc(
 		wire_source = {data = &source, read = http3_upload_read, content_length = upload.content_length}
 		wire.upload = &wire_source
 	}
+ aggregate:Http3_Body
+ if e:=http3_body_init(&aggregate,config,allocator);e.kind!=.None{return {},e}
+ defer delete(aggregate.body)
+ sink:=http3.Body_Sink{data=&aggregate,write=http3_body_write};wire.body_sink=&sink;wire.max_response_bytes=aggregate.limit
 	result: http3.Client_Result
 	if config.http3_pool != nil {
 		result = http3.pool_exchange_request(config.http3_pool, endpoint, url.host, wire, config.tls.root_cas, deadline)
@@ -114,11 +118,15 @@ execute_http3 :: proc(
 		result = http3.client_exchange_request(endpoint, url.host, wire, config.tls.root_cas, deadline)
 	}
 	if result.error != .None {
+        if aggregate.allocation!=nil{return {},{kind=.Allocation_Failed,phase=.Read,allocation=aggregate.allocation,write_effect=.Response_Received}}
 		error := http3_map_error(result, total_deadline)
 		error.source_io = source.error
 		return {}, error
 	}
-	return http3_response(&result, allocator)
+ response,e:=http3_response(&result,allocator)
+ if e.kind!=.None{return {},e}
+ delete(response.body_storage);response.body_storage=aggregate.body;aggregate.body={};response.body=response.body_storage[:]
+ return response,{}
 }
 
 @(private)
@@ -166,6 +174,8 @@ http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) 
 	if result.error == .Deadline && time.diff(time.now(), total_deadline) <= 0 {
 		return {kind = .Deadline_Failed, phase = .Deadline, write_effect = effect}
 	}
+	if result.error==.Capacity {return {kind=.Invalid_Config,phase=.Admission,write_effect=effect}}
+ if result.error==.Request_Rejected {return {kind=.IO_Failed,phase=.Protocol,write_effect=effect}}
 	if result.error == .Invalid_Request {return {kind = .Invalid_Config, phase = .Configuration, write_effect = effect}}
 	if result.error == .Body_Limit {return {kind = .Body_Oversized, phase = .Body_Limit, write_effect = effect}}
 	if result.error == .Source {return {kind = .IO_Failed, phase = .Read, write_effect = effect}}
