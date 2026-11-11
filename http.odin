@@ -2,6 +2,7 @@ package surf
 
 
 import http "../http"
+import h3 "../http/v3"
 import "core:compress"
 import http1 "../http/v1"
 import tls_api "core:crypto/tls"
@@ -56,6 +57,13 @@ Config :: struct {
 	// Trusted coverage for a caller arena whose BOTH backings are charged.
 	// This reference does not extend the arena/storage lifetime.
 	allocator_scope: resources.Scope,
+	// Explicit HTTP/3. Default off. Cleartext is refused. GET and HEAD may
+	// fall back to TCP once; other methods are not sent again. 0-RTT stays off.
+	http3: bool,
+	// Written only after an authenticated TLS response. Nil disables discovery.
+	alt_svc: ^Alt_Svc_Cache,
+	// Nil opens one HTTP/3 connection per call. A pool reuses an authenticated origin.
+	http3_pool: ^h3.Pool,
 }
 
 
@@ -194,13 +202,36 @@ execute_internal :: proc(
 			return {}, {kind = .Deadline_Failed}
 		}
 
-		if u.secure {
+		if config.http3 {
+			if !u.secure {
+				return {}, {kind = .Insecure_URL, phase = .Configuration, write_effect = .Not_Sent}
+			}
+			response, err = execute_http3(u, current, config, total_deadline, allocator)
+			if err.kind != .None {
+				if time.diff(time.now(), total_deadline) <= 0 {
+					return {}, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent}
+				}
+				// A datagram that already carried the request is not replayed on TCP.
+				if err.write_effect != .Not_Sent {
+					return {}, err
+				}
+				if upload != nil || !http3_fallback_allowed(current.method) {
+					return {}, err
+				}
+				response, err = execute_tls(u, current, config, total_deadline, allocator, upload)
+			}
+		} else if u.secure {
 			response, err = execute_tls(u, current, config, total_deadline, allocator, upload)
 		} else {
 			response, err = execute_tcp(u, current, config, total_deadline, allocator, upload)
 		}
 
 		if err.kind != .None do return {}, err
+		if config.alt_svc != nil && u.secure {
+			if value, found := response_header(&response, "Alt-Svc"); found {
+				_ = alt_svc_note(config.alt_svc, u.host, value, true, true, time.now())
+			}
+		}
 
 		last_status^ = response.status
 		redirect := slice.contains(
@@ -228,44 +259,24 @@ execute_tls :: proc(
 	url: http.URL, request: http.Request, config: Config, total_deadline: time.Time,
 	allocator: mem.Allocator, upload: ^Upload_Source = nil,
 ) -> (response: Response, err: HTTP_Error) {
-	connection, allocation_err := new(
-		tls_api.Conn,
-		allocator,
-	)
-	if allocation_err != nil || connection == nil {
-		if allocation_err == nil {allocation_err = .Out_Of_Memory}
-		return {}, {
-			kind = .Allocation_Failed, phase = .Configuration, write_effect = .Not_Sent,
-			allocation = allocation_err,
-		}
-	}
-
-	settings := config.tls
-	settings.server_name = url.host
-	if validation := tls_api.config_validate(settings); validation != .None {
-		free(connection, allocator)
-		return {}, http_error_classify({kind = .TLS_Failed, tls_dial = {kind = .Invalid_Config, config = validation}}, .Configuration, .Not_Sent)
-	}
-	setup_deadline := connection_setup_deadline(config, total_deadline)
-	socket, setup_error := bounded_socket(url, config, setup_deadline)
-	if setup_error.kind != .None {free(connection, allocator); return {}, setup_error}
-	remaining := time.diff(time.now(), setup_deadline)
-	if remaining <= 0 {
-		net.close(socket)
-		free(connection, allocator)
-		return {}, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent}
-	}
-	underlying := trans.tcp_connection(&connection.tcp)
-	if client_error := tls_api.client(connection, underlying, settings); client_error != .None {
-		net.close(socket)
-		free(connection, allocator)
-		return {}, http_error_classify({kind = .TLS_Failed, tls_dial = {kind = .Invalid_Config, config = client_error}}, .Configuration, .Not_Sent)
-	}
-	connection.tcp = {socket = socket}
-	if handshake_error := tls_api.handshake_until(connection, setup_deadline); handshake_error.kind != .None {
+	connection: ^tls_api.Conn
+	connection, err = http_tls_connect(url, config, total_deadline, allocator, nil)
+	if err.kind != .None {return {}, err}
+	defer {
 		tls_api.abort(connection)
 		free(connection, allocator)
-		return {}, http_error_classify({kind = .TLS_Failed, tls_dial = {kind = .Handshake_Failed, handshake = handshake_error}}, .TLS, .Not_Sent)
+	}
+
+	deadline_err := tls_api.set_deadline(connection, total_deadline)
+	if deadline_err.kind != .None {
+		return {}, {kind = .Deadline_Failed, transport = deadline_err, phase = .Deadline, write_effect = .Not_Sent}
+	}
+	selected := tls_api.connection_state(connection).negotiated_protocol
+	if selected == "h2" {
+		return h2_exchange_once(connection, request, upload, config, total_deadline, allocator, nil)
+	}
+	if selected != "" && selected != "http/1.1" {
+		return {}, {kind = .IO_Failed, phase = .Protocol, write_effect = .Not_Sent}
 	}
 
 	adapter := TLS_Adapter {
@@ -277,30 +288,15 @@ execute_tls :: proc(
 		write = tls_write,
 		close = tls_close,
 	}
-	deadline_err := tls_api.set_deadline(
-		connection,
-		total_deadline,
-	)
-	if deadline_err.kind == .None {
-		if upload != nil {
-			response, err = exchange_upload(stream, request, upload^, config.max_body_size, allocator, total_deadline)
-		} else {
-			response, err = exchange(stream, request, config.max_body_size, allocator)
-		}
-		if err.kind == .IO_Failed {
-			err.tls_io = adapter.last_error
-			err = http_error_classify(err, err.phase, err.write_effect, err.status)
-		}
+	if upload != nil {
+		response, err = exchange_upload(stream, request, upload^, config.max_body_size, allocator, total_deadline)
 	} else {
-		err = {
-			kind      = .Deadline_Failed,
-			transport = deadline_err,
-		}
+		response, err = exchange(stream, request, config.max_body_size, allocator)
 	}
-
-	tls_api.abort(connection)
-	free(connection, allocator)
-
+	if err.kind == .IO_Failed {
+		err.tls_io = adapter.last_error
+		err = http_error_classify(err, err.phase, err.write_effect, err.status)
+	}
 	if err.kind != .None && err.phase == .Unknown {err = http_error_classify(err, .TLS, .Not_Sent)}
 	return response, err
 }
@@ -825,10 +821,12 @@ config_validate :: proc(c: Config) -> HTTP_Error {
 		return {kind = .Invalid_Config}
 	}
 
-	// Surf has only an HTTP/1 driver: never negotiate a protocol it cannot use.
-	if len(c.tls.alpn_protocols) > tls_api.MAX_ALPN_PROTOCOLS {return {kind = .Invalid_Config}}
-	for protocol in c.tls.alpn_protocols {
-		if protocol != "http/1.1" {return {kind = .Invalid_Config}}
+	// TCP binding only. Missing ALPN stays HTTP/1 with no implicit h2/h3.
+	// Offering h2 does not speak HTTP/2; that starts only after the peer
+	// selects it. h3 is rejected here, before DNS, sockets or upload reads.
+	// QUIC is not this stack.
+	if tls_api.alpn_transport_offers(.TCP, c.tls.alpn_protocols) != .None {
+		return {kind = .Invalid_Config}
 	}
 	return {}
 }

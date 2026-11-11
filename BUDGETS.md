@@ -46,33 +46,34 @@ arena storage retains the caller's original arena lifetime requirement.
 
 Managed native operations install the charged allocator and a charged temporary
 arena in the call context, including TLS's 1 MiB certificate flight and chain
-verification allocations. They retire call temporaries before returning. TLS
-requires explicit trust roots; it does not lazily load or cache system roots.
-Load `tls.Root_Pool` at host startup with a host allocator and keep it stable
-until all clients finish. Roots, profiles, caller inputs, protocol stack scratch,
+verification allocations. They retire call temporaries before returning. A nil
+root list fails before dial. A non-nil empty list loads platform anchors for
+that connection and frees them with it; there is no process-wide cache. An
+explicit `tls.Root_Pool` stays on the host allocator until every client using
+it has finished. Roots, profiles, caller inputs, protocol stack scratch,
 and independently owned transport state are outside the operation's heap budget.
 
 `buffered_http_execute_owned` returns a Response with independent owned output;
 its trailing allocator/scope/allocator_scope options use the same rules above.
-`buffered_http_execute_managed` selects budgeting for the original borrowed curl
-result. That mode requires a host coverage annotation for `context.temp_allocator`;
+`buffered_http_execute_managed` selects budgeting for the borrowed native result.
+That mode requires a host coverage annotation for `context.temp_allocator`;
 its output remains valid only until that arena resets. Freeing the logical result
-does not release arena blocks. The original nine-argument curl procedure remains
+does not release arena blocks. The original nine-argument procedure remains
 usable as an AWS HTTP_Execute callback.
 
-Managed curl additionally reserves its fixed 64 KiB response scratch until output
+The buffered call reserves its fixed 64 KiB response scratch until output
 copying finishes. Setup strings use a charged call arena; header inputs are
-limited to HTTP's header count and 16 KiB aggregate header text. Curl's opaque
-internal allocations and process caches use curl's allocator and are not claimed
-as scope-controlled heap. The output/body and known scratch bounds are enforced;
-this interface does not claim an RSS or complete foreign-library memory ceiling.
+limited to HTTP's header count and 16 KiB aggregate header text. Platform trust
+and the TLS flight use the caller's context allocator, not the operation scope.
+The output/body and known scratch bounds are enforced; this interface does not
+claim an RSS ceiling.
 
 ## Validation
 
 `tests/budget_test.odin` exercises retained full backing, hierarchy admission,
 covered arenas, stream rejection, Surf-to-exchange transfer and a reentrant free
 that releases the Response frame. `tests/budgets_loopback.py` runs independent
-native HTTP, curl and TLS peers under ASan/TSan. It checks global retained-body
+native HTTP, buffered and TLS peers under ASan/TSan. It checks global retained-body
 pressure, oversized responses, borrowed arena recovery, empty owner retirement,
 TLS temporary admission/rejection, zero final charges and stable descriptor
 counts. Existing setup, upload and outcome harnesses remain regression gates.

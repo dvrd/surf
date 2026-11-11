@@ -119,8 +119,10 @@ HTTP bytes reached a peer. Inspect `HTTP_Error.write_effect` for failure context
 strings are cloned. **TLS certificate objects referenced by `tls.root_cas` remain
 borrowed and immutable** until all Client sessions have physically closed; keep
 their root pool alive through that point. Create a new Client for trust rotation.
-TLS server-name verification always uses the URL hostname. ALPN offers may contain
-only `http/1.1`; other protocols reject configuration. Connections use direct
+TLS server-name verification always uses the URL hostname. This TCP client may
+omit ALPN (HTTP/1 fallback, no implicit `h2` or `h3`) or offer only `http/1.1`
+and `h2`. `h3` and any other name reject configuration before network I/O.
+Accepting an `h2` token does not implement HTTP/2. Connections use direct
 transport only, without an environment-proxy policy.
 
 Pool identity includes scheme, canonical hostname, effective port and the Client

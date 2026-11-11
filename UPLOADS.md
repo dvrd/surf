@@ -29,7 +29,7 @@ The source's `io.Error` is retained in `HTTP_Error.source_io`; no file path or p
 
 Once connected, native transport deadlines bound socket I/O. The upload driver also checks the absolute deadline around source reads. It cannot interrupt an arbitrary synchronous source callback: readers must provide their own cooperative bounds. Caller-owned transports can report cancellation through `net.Connection_Error.Cancelled`; the error retains its cancellation category and conservative write effect. These blocking APIs do not introduce an external cancellation mechanism.
 
-Connection establishment now uses the [bounded setup prerequisite](SETUP.md) for DNS, TCP and TLS on supported platforms. This upload capability and that prerequisite do not certify full compatibility with the legacy adapter. The legacy curl adapter remains in place. Replacing it (OKAMI-133), migrating its consumers (OKAMI-134), and completing the parent migration (OKAMI-124) still require trust/method/protocol and deadline parity; they are not completed by OKAMI-132 alone.
+Connection establishment now uses the [bounded setup prerequisite](SETUP.md) for DNS, TCP and TLS on supported platforms. `buffered_http_execute` is that native client: a file upload sends exactly `upload_size` bytes for any HTTP/1 method, and a short file is phase `Write` with effect `Unknown`. HTTP/2 file upload follows the native method set. Consumer migration (OKAMI-134) and the parent migration (OKAMI-124) are separate from this adapter switch.
 
 ## Offline verification
 

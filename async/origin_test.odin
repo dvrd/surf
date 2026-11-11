@@ -268,7 +268,7 @@ identity_empty_profile_and_exhaustion_are_transactional :: proc(t:^testing.T) {
  probe:Identity_Grant_Probe
  testing.expect_value(t,profile_init(&profile,invalid,identity_backing(&probe)).kind,.Invalid_Config)
  testing.expect_value(t,probe.calls,0);testing.expect(t,profile.self==nil && profile.owner_id==0)
- invalid=identity_config();invalid.http.tls.alpn_protocols={"h2"}
+ invalid=identity_config();invalid.http.tls.alpn_protocols={"h3"}
  testing.expect_value(t,profile_init(&profile,invalid,identity_backing(&probe)).kind,.Invalid_Config)
  testing.expect_value(t,probe.calls,0)
  // Local-counter boundary probe avoids changing process identity allocation.

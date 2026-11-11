@@ -101,7 +101,7 @@ network_schema_rejects_forged_normalization_and_invalid_redirect_policy :: proc(
  for redirects in ([3]int{-1,6,max(int)}) {
   input=network_schema_base();input.http.max_redirects=redirects;network_schema_reject(t,input)
  }
- input=network_schema_base();input.http.tls.alpn_protocols=[]string{"h2"};network_schema_reject(t,input)
+ input=network_schema_base();input.http.tls.alpn_protocols=[]string{"h3"};network_schema_reject(t,input)
  input=network_schema_base();input.http.timeout=-1;network_schema_reject(t,input)
  input=network_schema_base();input.lifetime={at=1};network_schema_reject(t,input)
 }

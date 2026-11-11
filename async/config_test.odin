@@ -116,14 +116,18 @@ schema_root_http_and_alpn_policy_preserved :: proc(t:^testing.T) {
  testing.expect_value(t,normalized.response_body_limit,http.MAX_BODY_SIZE)
  testing.expect_value(t,normalized.request_timeout,max(time.Duration))
  testing.expect_value(t,normalized.http.allow_http,true)
- for offers in ([4][]string{{"h2"},{"h3"},{"http/1.1","h2"},{""}}) {
+ for offers in ([5][]string{{"h3"},{"h2","h3"},{"http/1.1","h3"},{""},{"http/2"}}) {
   _,error=schema_normalize({http={tls={alpn_protocols=offers}}})
   testing.expect_value(t,error.kind,.Invalid_Config)
  }
- offers:=[]string{"http/1.1"}
- normalized,error=schema_normalize({http={tls={alpn_protocols=offers}}})
+ for offers in ([3][]string{{"http/1.1"},{"h2"},{"http/1.1","h2"}}) {
+  accepted,accepted_error:=schema_normalize({http={tls={alpn_protocols=offers}}})
+  testing.expect_value(t,accepted_error.kind,.None)
+  testing.expect_value(t,raw_data(accepted.http.tls.alpn_protocols),raw_data(offers))
+ }
+ normalized,error=schema_normalize({})
  testing.expect_value(t,error.kind,.None)
- testing.expect_value(t,raw_data(normalized.http.tls.alpn_protocols),raw_data(offers))
+ testing.expect_value(t,len(normalized.http.tls.alpn_protocols),0)
  _,error=schema_normalize({http={tls={handshake_timeout=-1}}})
  testing.expect_value(t,error.kind,.Invalid_Config)
 }

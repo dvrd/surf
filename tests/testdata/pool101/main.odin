@@ -161,7 +161,7 @@ run_mode :: proc(c:^client.Client,r:^runtime_async.Runtime,config:client.Client_
  }
  if mode=="clients"||mode=="trust"||mode=="alpn"{
   b:client.Client;other:=config;wrong:tls.Root_Pool
-  offers:=[1]string{"h2"}
+  offers:=[1]string{"h3"}
   if mode=="trust"{raw,cause:=os.read_entire_file(fmt.tprintf("%s/wrong.pem",dir),allocator);assert(cause==nil);assert(tls.root_pool_parse(&wrong,raw,allocator).kind==.None);delete(raw,allocator);other.http.tls.root_cas=wrong.roots[:wrong.count]}
   if mode=="alpn"{other.http.tls.alpn_protocols=offers[:]}
   init:=client.client_init(&b,r,other,allocator)
