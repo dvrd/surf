@@ -26,3 +26,21 @@ acknowledgment, allocation/copy/adoption helpers, and serialized queue semantics
 Tests use Surf's real exchange path over an offline injected connection and
 verify that moved bytes remain live after `response_destroy`, are freed with the
 original allocator exactly once, and are preserved on failed extraction.
+
+## Reusable HTTP/2 metadata lifetime
+
+Returning a buffered response does not mean its HTTP/2 stream metadata can already
+be released. Pending events, flow credit, output and a later peer checkpoint may
+still retain the closed stream. `HTTP_Client` retains up to 32 completed request
+handles per origin, matching its maximum configured stream limit, and retries
+physical reaping while driving the native lifecycle and checkpoint exchange.
+Reaping counts as progress so a newly available slot is used before blocking for
+more input. Late retired-stream events still release their owners and credit.
+If retirement storage is exhausted, the lane closes and drains its engine owners;
+no completed handle is silently forgotten and no request is replayed.
+
+The focused `http2_retirement_test.odin` regressions run 128 sequential successful
+reads plus resets at the beginning, middle and end of the second 64-read sequence,
+on one TLS connection, at stream limits 1, 8 and 32. They exceed both the configured
+stream capacity and the retirement table size. Related tests retain HTTP/1 fallback,
+HTTP/2 multiplexing, GOAWAY, cancellation and WebSocket owner/permission coverage.

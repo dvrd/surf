@@ -60,6 +60,7 @@ HTTP_Lane :: struct {
 	read_buf: [1 << 14]u8,
 	tunnels: [HTTP_STREAM_SLOTS]^HTTP2_Tunnel,
 	closed_tunnels: [HTTP_STREAM_SLOTS]h2.Stream_Handle,
+	retired_requests: [HTTP_RETIRED_REQUEST_SLOTS]h2.Stream_Handle,
 	identity: HTTP_Client_Identity,
 }
 
@@ -778,7 +779,7 @@ h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 @(private)
 h2_service :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	h2_tunnel_reap(lane)
-	progress := false
+	progress := h2_retired_requests_reap(lane)
 	if !lane.engine_up {return false, {kind = .IO_Failed, phase = .Protocol, write_effect = .Not_Sent}}
 	for _ in 0 ..< 16 {
 		events, poll_error := h2_poll(lane, jobs)
@@ -791,6 +792,7 @@ h2_service :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 		flushed := h2.connection_flush(&lane.engine)
 		lived := h2.connection_lifecycle(&lane.engine)
 		fed := h2.connection_feed(&lane.engine, nil)
+		progress = h2_retired_requests_reap(lane) || progress
 		if flushed.error.kind != .None || lived.error.kind != .None || fed.error.kind != .None {
 			lane.dead = true
 			lane.reusable = false
@@ -832,6 +834,7 @@ h2_poll :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 
 @(private)
 h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP_Error {
+	if h2_retired_request_event(lane, event) {return {}}
 	switch value in event.payload {
 	case h2.Ready_Event:
 		lane.ready = true
@@ -1039,9 +1042,9 @@ h2_read :: proc(lane: ^HTTP_Lane) -> (int, HTTP_Error) {
 h2_finish :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 	if lane != nil && lane.engine_up {
 		for &job in jobs {
-			if job.opened && job.ended && job.sent {
-				_ = h2.connection_reap(&lane.engine, job.handle)
-			}
+			if !job.opened {continue}
+			if !job.sent {lane.reusable = false; continue}
+			h2_retire_request(lane, job.handle)
 		}
 	}
 	for &job in jobs {
