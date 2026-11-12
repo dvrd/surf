@@ -1044,7 +1044,11 @@ h2_finish :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 		for &job in jobs {
 			if !job.opened {continue}
 			if !job.sent {lane.reusable = false; continue}
-			h2_retire_request(lane, job.handle)
+			// Retain only scalar identity, never the job's borrowed request storage.
+			handle := h2.Stream_Handle{owner_id = job.handle.owner_id,
+				slot = job.handle.slot, generation = job.handle.generation,
+				stream_id = job.handle.stream_id}
+			h2_retire_request(lane, handle)
 		}
 	}
 	for &job in jobs {

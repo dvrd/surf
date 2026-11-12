@@ -1,5 +1,6 @@
 package surf
 
+import http "../http"
 import "core:testing"
 import "core:crypto/tls"
 import "core:time"
@@ -56,5 +57,19 @@ http_retirement_sequence :: proc(t: ^testing.T, streams: int) {
    if testing.failed(t) {return}
   }
  }
+ response, error := http_retirement_stack_borrow(client, echo)
+ testing.expect_value(t, error.kind, .None)
+ testing.expect_value(t, string(response.body), "/echo")
+ response_destroy(&response)
  testing.expect_value(t, http_client_dials(client), 1)
+}
+
+// The caller's request borrows end when exchange returns. Retaining the completed
+// stream's scalar handle must not imply retaining these stack-backed headers/body.
+http_retirement_stack_borrow :: proc(client: ^HTTP_Client, url: string) ->
+ (Response, HTTP_Error) {
+ headers := [1]http.Header{{"Content-Type", "text/plain"}}
+ body := [2]u8{'o', 'k'}
+ return http_client_exchange(client, {method = .POST, url = url,
+  headers = headers[:], body = body[:]})
 }
