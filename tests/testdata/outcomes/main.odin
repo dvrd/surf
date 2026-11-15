@@ -75,8 +75,13 @@ main :: proc() {
 		delete(url)
 	}
 	_, curl_refused := surf.buffered_http_execute("POST", refused_url, nil, nil, "", allow_http = true)
-	assert((curl_refused.error.phase == .Connect && curl_refused.error.write_effect == .Not_Sent) ||
-        (curl_refused.error.phase == .Deadline && curl_refused.error.write_effect == .Unknown))
+    fmt.printf("REFUSED kind=%v phase=%v effect=%v status=%d provider=%d network=%v transport=%v\n",
+        curl_refused.error.kind, curl_refused.error.phase, curl_refused.error.write_effect,
+        curl_refused.status, curl_refused.error.provider_code, curl_refused.error.network,
+        curl_refused.error.transport.kind)
+    os.flush(os.stdout)
+    assert((curl_refused.error.phase == .Connect || curl_refused.error.phase == .Deadline) &&
+        curl_refused.error.write_effect == .Not_Sent)
 	status_url := fmt.aprintf("%s/status", http_url)
 	defer delete(status_url)
 	_, status_result := surf.buffered_http_execute("POST", status_url, nil, nil, "", allow_http = true)

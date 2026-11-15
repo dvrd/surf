@@ -171,3 +171,15 @@ legacy_cstring_allocation_failure_is_typed_and_stops_setup :: proc(t: ^testing.T
 	testing.expect_value(t, result.error.write_effect, .Not_Sent)
 	testing.expect_value(t, state.count, 1)
 }
+
+@(test)
+setup_timeout_retains_not_sent_before_tcp_connection :: proc(t: ^testing.T) {
+    error := surf.http_error_classify(
+        {kind = .Dial_Failed, network = net.Dial_Error.Timeout}, .Connect, .Not_Sent,
+    )
+    testing.expect_value(t, error.kind, .Dial_Failed)
+    testing.expect_value(t, error.phase, .Deadline)
+    testing.expect_value(t, error.write_effect, .Not_Sent)
+    testing.expect_value(t, error.status, 0)
+    testing.expect_value(t, error.provider_code, 0)
+}

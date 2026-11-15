@@ -1,0 +1,38 @@
+{
+  "base_commit": "2f455c9b10d251fbcdbb87ec2a8c4d77ac0cfb96",
+  "canonical_original_failure_sha256": "3f21f5df71b79027c0306e9c7da34502acfbb9126706da092f179e62969149ad",
+  "diagnostic_original_assertion_unchanged": true,
+  "diagnostic_observed": {
+    "kind": "Dial_Failed",
+    "phase": "Deadline",
+    "effect": "Not_Sent",
+    "status": 0,
+    "provider": 0,
+    "network": "Timeout",
+    "transport": "None"
+  },
+  "verification": {
+    "package_ASan_tests": 29,
+    "owned_outcomes_ASan_cases": 16,
+    "exact_POST_counts": true,
+    "diff_check": true
+  },
+  "compiler_sha256": "dac83d6eb5faaf9f62cef37297f34a0e21dbe3976a8b8a52c81f3db3d90f0b9c",
+  "compiler_version": "dev-2026-11:c826157de",
+  "source_sha256": {
+    "tests/outcomes_test.odin": "fec7351b99d05754cf08fdbe564e844cb1c4321e2c7856cea05c46c234c646fc",
+    "tests/testdata/outcomes/main.odin": "acffdd67ac4abc5d6686df8a1223d28b83ba6128727e9fd1c76d0d60ebe453f3",
+    "tests/outcomes_loopback.py": "ddfa6a42257f7e585c48d63cb8bb86df4ae63f28ad4752cc605db6bf8032d327",
+    "buffered_perform.odin": "007094086282a8bef974eb1816afa5a914850945043a195dc23761d941601889",
+    "setup.odin": "4e8bf46b3ce07dca0e3dc95d76b1fbc9803557915d348011d5836c3201ce77fc",
+    "outcome.odin": "6601e16015f73fe1c2adf3f2873fe67082cc3f38b928f7d452b84fb07a788ff9",
+    "OUTCOMES.md": "4d20c88d1c4a60182421049d5da766de510c24dfe5832f3c074fb9703594e123"
+  },
+  "source_scope": "Tests/diagnostics only; no production transport/API/TLS/deadline changes.",
+  "provider_calls": 0,
+  "claims": [
+    "Actual ASan run confirms documented pre-TCP timeout Not_Sent excluded by old fixture.",
+    "This fixes fixture expectation; it does not explain why platform reported timeout rather than immediate refusal.",
+    "Original assertion trap and earlier root failure remain retained; no HTTP operation replay inside library."
+  ]
+}
