@@ -46,7 +46,7 @@ http_retirement_sequence :: proc(t: ^testing.T, streams: int) {
     testing.expect_value(t, error.kind, .IO_Failed)
     testing.expect_value(t, error.phase, .Protocol)
     testing.expect_value(t, error.write_effect, .Unknown)
-    testing.expect_value(t, http102_count(&peer.log, `"path":"/reset"`)-before, 1)
+    testing.expect_value(t, http102_wait_count(&peer.log, `"path":"/reset"`, before+1)-before, 1)
     if testing.failed(t) {return}
    }
    response, error := http_client_exchange(client, {method = .GET, url = echo})
@@ -72,4 +72,16 @@ http_retirement_stack_borrow :: proc(client: ^HTTP_Client, url: string) ->
  body := [2]u8{'o', 'k'}
  return http_client_exchange(client, {method = .POST, url = url,
   headers = headers[:], body = body[:]})
+}
+
+// Transport completion and the independent peer-log reader are separate events.
+@(private)
+http102_wait_count :: proc(log: ^Http102_Log, needle: string, expected: int) -> int {
+ start := time.tick_now()
+ for time.tick_since(start) < 2*time.Second {
+  count := http102_count(log, needle)
+  if count >= expected {return count}
+  time.sleep(time.Millisecond)
+ }
+ return http102_count(log, needle)
 }
