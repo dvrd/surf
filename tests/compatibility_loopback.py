@@ -5,6 +5,7 @@ This gate deliberately retains legacy semantics, including methods that ignore
 buffered bodies and HEAD custom-request body waiting. It does not infer native
 parity from successful legacy runs. No live provider or trust-store mutation.
 """
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import json
@@ -113,7 +114,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='surf-compatibility-') as directory:
         temp = Path(directory)
         cert, key, binary = temp/'ca.pem', temp/'key.pem', temp/'fixture'
-        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+        test_run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                         '-keyout', str(key), '-out', str(cert), '-days', '1',
                         '-subj', '/CN=localhost', '-addext',
                         'subjectAltName=DNS:localhost,IP:127.0.0.1'], check=True, capture_output=True)
@@ -128,7 +129,7 @@ def main():
                    '-warnings-as-errors', '-out:'+str(binary)]
         if args.sanitize:
             command += ['-sanitize:'+args.sanitize]
-        subprocess.run(command, check=True, timeout=90)
+        test_run(command, check=True, timeout=90)
         report['build'] = command
         report['compiler'] = {'path': str(args.odin),
                               'version': subprocess.check_output([str(args.odin), 'version'], text=True).strip(),
@@ -163,7 +164,7 @@ def main():
                            HTTP_PROXY='http://127.0.0.1:1', HTTPS_PROXY='http://127.0.0.1:1',
                            NO_PROXY='', no_proxy='')
                 before = len(peer.records)
-                result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=8)
+                result = test_run(command, env=env, text=True, capture_output=True, timeout=8)
                 assert result.returncode == 0, (name, result.stdout, result.stderr)
                 assert 'Sanitizer' not in result.stderr, (name, result.stderr)
                 assert result.stdout.startswith('{'), (name, result.stdout, result.stderr)

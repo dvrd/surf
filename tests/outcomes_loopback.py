@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise actual native/curl error paths against owned offline loopback peers."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import collections
 import contextlib
@@ -74,7 +75,7 @@ class Handler(socketserver.BaseRequestHandler):
 with tempfile.TemporaryDirectory(prefix='surf-outcomes-') as tmp:
     temp = Path(tmp)
     for name in ('server', 'wrong-root'):
-        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+        test_run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                         '-keyout', str(temp / (name + '.key')), '-out', str(temp / (name + '.pem')),
                         '-days', '1', '-subj', '/CN=' + name], check=True, capture_output=True)
     (temp / 'empty-resolv.conf').write_text('# Deliberately no resolver for the native DNS failure fixture.\n')
@@ -100,14 +101,14 @@ with tempfile.TemporaryDirectory(prefix='surf-outcomes-') as tmp:
                    '-warnings-as-errors', '-out:' + str(binary)]
         if args.sanitize:
             command.append('-sanitize:address')
-        subprocess.run(command, check=True)
+        test_run(command, check=True)
         env = dict(os.environ,
                    SURF_OUTCOME_HTTP='http://127.0.0.1:' + str(peers[0].server_address[1]),
                    SURF_OUTCOME_TLS='https://127.0.0.1:' + str(peers[1].server_address[1]),
                    SURF_OUTCOME_REFUSED='http://127.0.0.1:' + str(refused.getsockname()[1]),
                    SURF_OUTCOME_WRONG_ROOT=str(temp / 'wrong-root.pem'),
                    SURF_OUTCOME_EMPTY_RESOLVER=str(temp / 'empty-resolv.conf'))
-        subprocess.run([str(binary)], env=env, check=True, timeout=20)
+        test_run([str(binary)], env=env, check=True, timeout=20)
         expected = {f'/{provider}-{path}': 1 for provider in ('native', 'curl')
                     for path in ('reset', 'large', 'malformed', 'slow')}
         expected['/status'] = 1

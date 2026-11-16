@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build a physical-copy public Client and unchanged facade consumer, then run it."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -46,7 +47,7 @@ def main():
     def run(label, command):
         command = list(map(str, command))
         start = time.monotonic()
-        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=120)
+        result = test_run(command, env=env, capture_output=True, text=True, timeout=120)
         log = report.parent / (label + '.log')
         log.write_text(result.stdout + result.stderr)
         state['checks'].append({'label': label, 'command': command, 'returncode': result.returncode, 'log': str(log), 'log_sha256': sha(log), 'seconds': time.monotonic() - start})
@@ -69,7 +70,7 @@ def main():
             temp = Path(directory)
             copied = temp / 'shared'
             copied.mkdir()
-            state['closure'] = gate.copy_closure('surf/async', shared, copied)
+            state['closure'] = copy_closure(gate, 'surf/async', shared, copied)
             state['copied_sources_before'] = manifest(copied)
             state['source_closure_before'] = manifest(shared, state['copied_sources_before'])
             require(state['copied_sources_before'] == state['source_closure_before'], 'Copy mismatch')

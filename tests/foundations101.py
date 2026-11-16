@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run physical-copy public prerequisite consumers; full Surf101 remains open."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -142,7 +143,7 @@ def main():
         cell = {'name': label, 'command': [str(x) for x in command]}
         state['checks'].append(cell)
         try:
-            completed = subprocess.run(command, env=env, text=True, capture_output=True, timeout=timeout)
+            completed = test_run(command, env=env, text=True, capture_output=True, timeout=timeout)
             text = completed.stdout + completed.stderr
             cell['returncode'] = completed.returncode
         except (OSError, subprocess.TimeoutExpired) as error:
@@ -172,7 +173,7 @@ def main():
             copied = work / 'shared'
             copied.mkdir()
             packages = ('surf', 'surf/tests', 'http/v1', 'async/connection', 'async/connection/tests')
-            state['dependency_closures'] = {name: gate.copy_closure(name, source, copied) for name in packages}
+            state['dependency_closures'] = {name: copy_closure(gate, name, source, copied) for name in packages}
             require(not any(p.is_symlink() for p in copied.rglob('*')), 'Copied closure contains a symlink')
             state['copied_files_before'] = manifest(copied)
             state['source_files_before'] = manifest(source, state['copied_files_before'])
@@ -190,7 +191,7 @@ def main():
                 _, output = run('public-run-' + sanitizer, [binary])
                 require(output.strip() == 'FOUNDATIONS101 owner_budget=3 persistent_encode=1 reuse_metadata=1 facade_exchange=1 heap_zero=true',
                         'Public consumer completion marker missing')
-                for package, count in (('http/v1', 22), ('surf/tests', 27)):
+                for package, count in (('http/v1', 29), ('surf/tests', 29)):
                     binary = report.parent / (report.stem + '-' + package.replace('/', '-') + '-' + sanitizer)
                     cell, _ = run(package.replace('/', '-') + '-' + sanitizer, [compiler, 'test', copied / package,
                         '-collection:shared=' + str(copied), '-thread-count:1', '-warnings-as-errors',
@@ -203,7 +204,7 @@ def main():
             require(budget['passed'] and len(budget['cells']) == 2 * len(args.sanitizers), 'Budget gate count/failure')
             require(all(c['returncode'] == 0 for c in budget['cells']), 'Budget tests incomplete')
             observed = sorted((next(arg for arg in c['command'] if arg.startswith('-sanitize:')), c['tests']) for c in budget['cells'])
-            expected = sorted(('-sanitize:' + sanitizer, count) for sanitizer in args.sanitizers for count in (2, 3))
+            expected = sorted(('-sanitize:' + sanitizer, count) for sanitizer in args.sanitizers for count in (2, 5))
             require(observed == expected, 'Budget sanitizer/package coverage mismatch')
             state['request_budget_report'] = {'path': str(budget_report), 'sha256': digest(budget_report), 'actual_test_cells': len(budget['cells'])}
             state['source_files_after'] = manifest(source, state['source_files_before'])

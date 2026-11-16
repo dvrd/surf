@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """One source-bound paired gate for three independent redirect foundations."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -13,12 +14,11 @@ import tempfile
 import time
 
 STREAMS = {
-    'ledger': 'async/redirect_kernel_test.odin',
-    'prepare': 'async/redirect_prepare_test.odin',
-    'queue': 'async/redirect_queue_test.odin',
+    'ledger': 'async/tests/internal/redirect_kernel_test.odin',
+    'prepare': 'async/tests/internal/redirect_prepare_test.odin',
+    'queue': 'async/tests/internal/redirect_queue_test.odin',
 }
-API_FILES = ['async/redirect_types.odin', 'async/redirect_kernel.odin',
-             'async/redirect_prepare.odin', 'async/redirect_allocator.odin', 'async/network_queue.odin']
+API_FILES = ['async/redirect.odin', 'async/pool.odin']
 
 
 def digest(path):
@@ -69,7 +69,7 @@ def main():
         cell={'name':label,'command':command}
         state['checks'].append(cell)
         try:
-            done=subprocess.run(command,env=env,text=True,capture_output=True,timeout=180)
+            done=test_run(command,env=env,text=True,capture_output=True,timeout=180)
             output=done.stdout+done.stderr
             cell.update(returncode=done.returncode,stdout=done.stdout,stderr=done.stderr)
         except (OSError,subprocess.TimeoutExpired) as error:
@@ -106,7 +106,7 @@ def main():
         gate=importlib.util.module_from_spec(spec);spec.loader.exec_module(gate)
         with tempfile.TemporaryDirectory(prefix='surf101-redirect-foundations-') as temporary:
             copied=Path(temporary)/'shared';copied.mkdir()
-            state['closure']=gate.copy_closure('surf/async',shared,copied)
+            state['closure']=copy_closure(gate, 'surf/async',shared,copied)
             state['copied_sources_before']=manifest(copied)
             state['source_closure_before']=manifest(shared,state['copied_sources_before'])
             require(state['copied_sources_before']==state['source_closure_before'],'Physical closure mismatch')

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Owned independent Surf104 streaming, upload, gzip and lifetime wire gate."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import copy
 import hashlib
@@ -266,7 +267,7 @@ def main():
         command = [str(x) for x in command]
         start = time.monotonic()
         try:
-            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=timeout)
+            result = test_run(command, env=env, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired as error:
             stdout = error.stdout or b""
             stderr = error.stderr or b""
@@ -298,7 +299,7 @@ def main():
         spec.loader.exec_module(gate)
         physical = evidence / "shared"
         physical.mkdir()
-        state["closures"] = {name: gate.copy_closure(name, shared, physical)
+        state["closures"] = {name: copy_closure(gate, name, shared, physical)
                              for name in ("surf/async", "async/connection")}
         initial = files(physical)
         source_map = {str((shared / Path(p).relative_to(physical)).resolve()): digest

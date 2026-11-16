@@ -1,6 +1,5 @@
 package surf
 
-
 import http "../http"
 import h3 "../http/v3"
 import "core:compress"
@@ -10,17 +9,16 @@ import trans "core:net"
 import "core:mem"
 import resources "core:sync/budget"
 import "core:io"
-import "core:net"
 import "core:slice"
 import "core:strings"
 import "core:time"
-
-
+import owned "core:mem/owned"
+import charged "core:mem/budget"
 
 HTTP_Error :: struct {
 	kind:       http.Error_Kind,
 	transport:  trans.Connection_Error,
-	network:    net.Network_Error,
+	network:    trans.Network_Error,
 	tls_dial:   tls_api.Dial_Error,
 	tls_io:     tls_api.IO_Error,
 	allocation: mem.Allocator_Error,
@@ -52,7 +50,7 @@ Config :: struct {
 	// Zero uses the remaining total budget. A positive value bounds DNS+TCP+TLS
 	// together for each new connection, always capped by the total deadline.
 	setup_timeout: time.Duration,
-	resolver:      net.Resolver_Options,
+	resolver:      trans.Resolver_Options,
 	// Zero preserves unmanaged compatibility. Host supplies an operation Scope
 	// below its connection/global hierarchy.
 	scope: resources.Scope,
@@ -1053,4 +1051,258 @@ redirect_path_normalize :: proc(dst: []u8, target: string) -> int {
 
 http_protocol_error :: proc(error: http.Error) -> HTTP_Error {
 	return {kind = error.kind, allocation = error.allocation, phase = .Protocol}
+}
+
+// Moves the response's complete body allocation into a separately releasable
+// owner. Headers remain with response; response_destroy stays safe afterward.
+// The allocator backing body_storage must survive until the chunk is released.
+// Borrowed/manually constructed bodies are rejected without changing response.
+response_take_body :: proc(response: ^Response) -> (chunk: owned.Chunk, error: owned.Error) {
+	if response == nil || len(response.body) != len(response.body_storage) ||
+	   raw_data(response.body) != raw_data(response.body_storage) {
+		return {}, {kind=.Invalid_Input}
+	}
+	chunk, error = owned.take_dynamic(&response.body_storage)
+	if error.kind == .None {response.body = nil}
+	return
+}
+
+@(private)
+connection_setup_deadline :: proc(config: Config, total: time.Time) -> time.Time {
+	if config.setup_timeout <= 0 {return total}
+	now := time.now()
+	budget := min(config.setup_timeout, max(time.Duration(0), time.diff(now, total)))
+	return time.time_add(now, budget)
+}
+
+@(private)
+bounded_socket :: proc(url: http.URL, config: Config, deadline: time.Time) -> (trans.TCP_Socket, HTTP_Error) {
+	endpoints, resolve_error := trans.resolve_endpoints_until(url.host, url.port, deadline, config.resolver)
+	if resolve_error != nil {
+		return 0, http_error_classify({kind = .Dial_Failed, network = resolve_error}, .DNS, .Not_Sent)
+	}
+	socket, connect_error := trans.dial_tcp_candidates_until(endpoints, deadline)
+	if connect_error != nil {
+		return 0, http_error_classify({kind = .Dial_Failed, network = connect_error}, .Connect, .Not_Sent)
+	}
+	return socket, {}
+}
+
+@(private)
+Budget_Context :: struct {
+	binding:               charged.Binding,
+	stream:                resources.Lease,
+	coverage:              resources.Scope,
+	temporary:             mem.Dynamic_Arena,
+	temporary_initialized: bool,
+}
+
+// Scope/coverage handles borrow host ownership during entry. An annotation is a
+// trusted host promise about an arena's backing, not inference from its pointer.
+@(private)
+budget_begin :: proc(
+	scope, coverage: resources.Scope,
+	backing: mem.Allocator,
+) -> (
+	Budget_Context,
+	mem.Allocator,
+	HTTP_Error,
+) {
+	if scope == (resources.Scope{}) {
+		if coverage != (resources.Scope{}) do return {}, {}, budget_error(.Invalid_Config)
+		return {}, backing, {}
+	}
+	if coverage != (resources.Scope{}) && !resources.covers(coverage, scope) {
+		return {}, {}, budget_error(.Invalid_Config)
+	}
+	managed_scope, managed := charged.allocator_scope(backing)
+	if managed && !resources.covers(managed_scope, scope) {
+		reason: resources.Error = .Invalid_Config
+		if !resources.same_root(managed_scope, scope) do reason = .Foreign_Root
+		return {}, {}, budget_error(reason)
+	}
+	if !managed && coverage == (resources.Scope{}) && .Free not_in mem.query_features(backing) {
+		return {}, {}, budget_error(.Invalid_Config)
+	}
+	ctx: Budget_Context
+	lease, admission := resources.reserve(scope, {streams = 1})
+	if admission != .None do return {}, {}, budget_error(admission)
+	ctx.stream = lease
+	allocator := backing
+	failure: HTTP_Error
+	if managed {
+		ctx.binding, failure = budget_retain_allocator(backing)
+	} else if coverage == (resources.Scope{}) {
+		ctx.binding, failure = budget_create_allocator(scope, backing)
+		if failure.kind == .None do allocator = charged.allocator(ctx.binding)
+	}
+	if failure.kind == .None && coverage != (resources.Scope{}) {
+		retained, error := resources.retain_scope(coverage)
+		if error != .None do failure = budget_error(error)
+		else do ctx.coverage = retained
+	}
+	if failure.kind != .None {
+		budget_cleanup(&ctx); return {}, {}, failure
+	}
+	return ctx, allocator, {}
+}
+
+@(private)
+budget_retain_allocator :: proc(source: mem.Allocator) -> (charged.Binding, HTTP_Error) {
+	binding, error := charged.retain_allocator(source)
+	return binding, budget_allocator_error(error)
+}
+@(private)
+budget_create_allocator :: proc(
+	scope: resources.Scope,
+	backing: mem.Allocator,
+) -> (
+	charged.Binding,
+	HTTP_Error,
+) {
+	binding, error := charged.create(scope, {backing = backing})
+	return binding, budget_allocator_error(error)
+}
+@(private)
+budget_allocator_error :: proc(error: charged.Error) -> HTTP_Error {
+	if error.kind == .None do return {}
+	result := budget_error(error.budget)
+	result.allocation = error.allocation
+	if error.kind == .Invalid_Config || error.kind == .Invalid_Handle {
+		result.kind = .Invalid_Config
+	}
+	return result
+}
+@(private)
+budget_error :: proc(reason: resources.Error) -> HTTP_Error {
+	kind: http.Error_Kind = .Allocation_Failed
+	if reason == .Invalid_Config || reason == .Invalid_Handle || reason == .Foreign_Root {
+		kind = .Invalid_Config
+	}
+	return {kind = kind, budget = reason, phase = .Admission, write_effect = .Not_Sent}
+}
+@(private)
+budget_cleanup :: proc(ctx: ^Budget_Context) {
+	old := ctx^; ctx^ = {}
+	if old.temporary_initialized do mem.dynamic_arena_destroy(&old.temporary)
+	charged.release(&old.binding)
+	resources.release_scope(&old.coverage)
+	resources.release(&old.stream)
+}
+@(private)
+budget_response :: proc(ctx: ^Budget_Context, response: ^Response) {
+	response._allocator_scope = ctx.coverage
+	ctx.coverage = {}
+}
+
+// Called only after the context has reached its final caller-owned stack address.
+// Returned temporary allocator views must not escape the blocking operation.
+@(private)
+budget_temporary :: proc(ctx: ^Budget_Context, allocator: mem.Allocator) -> mem.Allocator {
+	assert(!ctx.temporary_initialized)
+	mem.dynamic_arena_init(
+		&ctx.temporary,
+		block_allocator = allocator,
+		array_allocator = allocator,
+		block_size = 16 * mem.Kilobyte,
+		out_band_size = 8 * mem.Kilobyte,
+	)
+	ctx.temporary_initialized = true
+	return mem.dynamic_arena_allocator(&ctx.temporary)
+}
+
+// Failure categories preserve observable distinctions without storing URLs,
+// headers, tokens or response bodies. Unknown means the provider cannot say.
+HTTP_Phase :: enum {
+	Unknown,
+	Configuration,
+	DNS,
+	Connect,
+	TLS,
+	Write,
+	Read,
+	Protocol,
+	Body_Limit,
+	Deadline,
+	Cancellation,
+	Admission,
+ Decode,
+}
+
+// Unknown is deliberately the zero value: a zero/named legacy aggregate must
+// never become evidence that replaying a non-idempotent operation is safe.
+HTTP_Write_Effect :: enum {
+	Unknown,
+	Not_Sent,
+	Response_Received,
+}
+
+// Classify only facts available from existing typed diagnostics. A received
+// response is not proof of business success, transaction commit, or replay safety.
+http_error_classify :: proc(error: HTTP_Error, fallback: HTTP_Phase, effect: HTTP_Write_Effect, status: int = 0) -> HTTP_Error {
+	result := error
+	if result.kind == .None {return result}
+	if result.phase == .Unknown {
+		result.phase = fallback
+		#partial switch result.kind {
+		case .Invalid_Config, .Invalid_URL, .Insecure_URL, .Invalid_Method, .Reserved_Header:
+			result.phase = .Configuration
+		case .Invalid_Header:
+			result.phase = .Configuration if fallback == .Configuration else .Protocol
+		case .Body_Oversized: result.phase = .Body_Limit
+		case .Deadline_Failed: result.phase = .Deadline
+		case .Dial_Failed: result.phase = http_network_phase(result.network)
+		case .TLS_Failed:
+			result.phase = .TLS
+			#partial switch result.tls_dial.kind {
+			case .Invalid_Config, .Invalid_State: result.phase = .Configuration
+			case .TCP_Dial_Failed: result.phase = http_network_phase(result.tls_dial.network)
+			}
+		case .Invalid_Status, .Conflicting_Framing, .Unsupported_Transfer_Encoding, .Invalid_Content_Length,
+       .Invalid_Chunk, .Invalid_Trailer, .Header_Oversized, .Header_Limit, .Too_Many_Informational,
+       .Redirect_Limit, .Invalid_Redirect, .Unsafe_Redirect:
+			result.phase = .Protocol
+		}
+	}
+	// Record/authentication failures remain TLS failures; transport failures
+	// retain the read/write phase until a more specific timeout/cancel is known.
+	#partial switch result.tls_io.kind {
+	case .Handshake_Failed, .Unexpected_EOF, .Invalid_Record, .Encryption_Failed,
+	     .Decryption_Failed, .Unexpected_Content_Type, .Peer_Alert, .Interleaved_Record,
+	     .Record_Boundary_Violation, .Invalid_Post_Handshake, .Post_Handshake_Oversized:
+		result.phase = .TLS
+	}
+	// TLS adapters retain their underlying timeout/cancellation diagnostics.
+	transport := result.transport
+	if result.tls_io.transport.kind != .None {transport = result.tls_io.transport}
+	for candidate in ([?]trans.Connection_Error{
+		result.tls_dial.handshake.client_hello.transport,
+		result.tls_dial.handshake.server_hello.record.transport,
+		result.tls_dial.handshake.record.transport,
+		result.tls_dial.handshake.transport,
+	}) {
+		if candidate.kind != .None {transport = candidate}
+	}
+	if transport.kind == .Timeout {result.phase = .Deadline}
+	if transport.kind == .Cancelled {result.phase = .Cancellation}
+	if result.tls_dial.handshake.kind == .Deadline_Failed {result.phase = .Deadline}
+	result.write_effect = effect
+	if result.status == 0 {result.status = status}
+	return result
+}
+
+http_network_phase :: proc(error: trans.Network_Error) -> HTTP_Phase {
+	if error == nil {return .Unknown}
+	#partial switch cause in error {
+	case trans.Resolve_Error: return .DNS
+	case trans.DNS_Error:
+		if cause == .Timeout {return .Deadline}
+		return .DNS
+	case trans.Dial_Error:
+		if cause == .Timeout {return .Deadline}
+		return .Connect
+	case trans.Create_Socket_Error: return .Connect
+	case trans.Parse_Endpoint_Error: return .Configuration
+	}
+	return .Unknown
 }

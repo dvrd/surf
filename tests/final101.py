@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run and validate the complete current-source OKAMI-101 acceptance matrix."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -10,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -415,7 +417,7 @@ def main():
     def run(label, command, timeout=3600):
         command = list(map(str, command))
         started = time.monotonic()
-        result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=timeout)
+        result = test_run(command, env=env, text=True, capture_output=True, timeout=timeout)
         log = report.parent/(label+'.log')
         log.write_text(result.stdout+result.stderr)
         state['commands'].append({'name': label, 'command': command, 'returncode': result.returncode,
@@ -468,22 +470,35 @@ def main():
         run('negative-controls', [sys.executable, shared/'surf/tests/test_final101.py', '--runner', Path(__file__).resolve(),
             '--receipt', directory/'concurrency/receipt.json', '--shared-root', shared, '--core-root', core])
         state['whole_packages'] = {}
-        for package in ('surf/async', 'surf/async/exchange', 'surf/tests'):
-            counts = []
-            expected_names = re.findall(r'@\(test\)\s*(\w+)\s*::', '\n'.join(p.read_text() for p in sorted((shared/package).glob('*.odin'))))
-            require(bool(expected_names) and len(expected_names) == len(set(expected_names)), 'Whole-package discovered test set invalid: '+package)
-            for san in SANITIZERS:
-                label = 'whole-'+package.replace('/', '-')+'-'+san
-                binary = report.parent/label
-                output = run(label, [compiler, 'test', shared/package, '-collection:shared='+str(shared),
-                    '-warnings-as-errors', '-thread-count:1', '-sanitize:'+san, '-define:ODIN_TEST_THREADS=1',
-                    '-define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true', '-keep-executable', '-out:'+str(binary)])
-                found = re.findall(r'Finished (\d+) tests? in ', output)
-                require(found == [str(len(expected_names))] and 'All tests were successful' in output, 'Whole package count mismatch: '+label)
-                counts.append(int(found[0]))
-            if package == 'surf/tests':
-                require(counts == [27, 27], 'Unchanged facade27 tests required')
-            state['whole_packages'][package] = {'counts': counts, 'test_names': expected_names}
+        spec = importlib.util.spec_from_file_location('final101_whole_closure', helper)
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        with tempfile.TemporaryDirectory(prefix='surf101-whole-packages-') as temporary:
+            copied = Path(temporary)/'shared'
+            for package in ('surf/async', 'surf/async/exchange', 'surf/tests'):
+                copy_closure(gate, package, shared, copied)
+            projection = current_manifest(copied)
+            file_map(shared, projection, 'whole-package live projection')
+            for package in ('surf/async', 'surf/async/exchange', 'surf/tests'):
+                counts = []
+                expected_names = re.findall(r'@\(test\)\s*(\w+)\s*::', '\n'.join(p.read_text() for p in test_files(copied/package)))
+                require(bool(expected_names) and len(expected_names) == len(set(expected_names)), 'Whole-package discovered test set invalid: '+package)
+                for san in SANITIZERS:
+                    label = 'whole-'+package.replace('/', '-')+'-'+san
+                    binary = report.parent/label
+                    output = run(label, [compiler, 'test', copied/package, '-collection:shared='+str(copied),
+                        '-warnings-as-errors', '-thread-count:1', '-sanitize:'+san, '-define:ODIN_TEST_THREADS=1',
+                        '-define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true', '-keep-executable', '-out:'+str(binary)])
+                    found = re.findall(r'Finished (\d+) tests? in ', output)
+                    require(found == [str(len(expected_names))] and 'All tests were successful' in output, 'Whole package count mismatch: '+label)
+                    counts.append(int(found[0]))
+                if package == 'surf/tests':
+                    require(counts == [29, 29], 'Current facade29 tests required')
+                state['whole_packages'][package] = {'counts': counts, 'test_names': expected_names}
+
+            require(projection == current_manifest(copied), 'Whole-package copy changed')
+            file_map(shared, projection, 'whole-package final live projection')
+            state['whole_package_sources'] = projection
 
         state['native_link_audits'] = {}
         for name in ('actor', 'client', 'redirect', 'pool', 'cancel', 'concurrency', 'failure'):

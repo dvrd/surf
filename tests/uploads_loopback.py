@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify native, bounded-memory TCP/TLS uploads with owned local fixtures."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import collections
 import contextlib
@@ -87,7 +88,7 @@ basicConstraints=critical,CA:TRUE
 keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign
 extendedKeyUsage=serverAuth
 ''')
-    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256',
+    test_run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256',
                     '-keyout', str(temp / 'server.key'), '-out', str(temp / 'server.pem'),
                     '-days', '1', '-config', str(temp / 'openssl.cnf')], check=True, capture_output=True)
     with (temp / 'upload.bin').open('wb') as output:
@@ -113,14 +114,14 @@ extendedKeyUsage=serverAuth
                    '-warnings-as-errors', '-out:' + str(binary)]
         if args.sanitize:
             command.append('-sanitize:address')
-        subprocess.run(command, check=True)
+        test_run(command, check=True)
         env = dict(os.environ,
                    SURF_UPLOAD_HTTP='http://127.0.0.1:' + str(peers[0].server_address[1]),
                    SURF_UPLOAD_TLS='https://127.0.0.1:' + str(peers[1].server_address[1]),
                    SURF_UPLOAD_FILE=str(temp / 'upload.bin'),
                    SURF_UPLOAD_SHORT=str(temp / 'short.bin'),
                    SURF_UPLOAD_ROOT=str(temp / 'server.pem'))
-        subprocess.run([str(binary)], env=env, check=True, timeout=45)
+        test_run([str(binary)], env=env, check=True, timeout=45)
         expected = {
             '/put': ('PUT', 65 * 1024 * 1024), '/post': ('POST', 17),
             '/delete': ('DELETE', 0), '/prefix': ('PUT', 3), '/redirect': ('POST', 17),

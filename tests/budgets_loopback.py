@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Owned native/curl budget and transfer recovery with independent HTTP peers."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import json
@@ -84,10 +85,10 @@ def main():
                    '-out:' + str(binary)]
         if args.sanitize:
             command += ['-sanitize:' + args.sanitize]
-        subprocess.run(command, check=True, timeout=60)
+        test_run(command, check=True, timeout=60)
         report['build'] = command
         report['binary_sha256'] = hashlib.sha256(binary.read_bytes()).hexdigest()
-        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+        test_run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                         '-days', '1', '-subj', '/CN=localhost', '-addext',
                         'subjectAltName=DNS:localhost,IP:127.0.0.1', '-keyout',
                         str(Path(directory) / 'key.pem'), '-out',
@@ -107,7 +108,7 @@ def main():
                 command = [str(binary), mode, f'{scheme}://127.0.0.1:{peer.port}/budget', scenario]
                 if mode == 'tls':
                     command += [str(Path(directory) / 'root.pem')]
-                result = subprocess.run(command, text=True, capture_output=True, timeout=30)
+                result = test_run(command, text=True, capture_output=True, timeout=30)
                 assert result.returncode == 0, (mode, scenario, result.stderr, result.stdout)
                 assert 'Sanitizer' not in result.stderr, result.stderr
                 try:

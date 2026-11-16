@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Independent real Actor/Runtime fixture; never public Client.init evidence."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -128,7 +129,7 @@ def main():
         cell={'name':name,'command':command,'returncode':None};state['commands'].append(cell)
         log=report.parent/(name+'.log')
         try:
-            process=subprocess.run(command,env=env,capture_output=True,text=True,timeout=timeout)
+            process=test_run(command,env=env,capture_output=True,text=True,timeout=timeout)
             text=process.stdout+process.stderr;cell['returncode']=process.returncode
         except (OSError,subprocess.TimeoutExpired) as error:
             def decode(value): return value.decode(errors='replace') if isinstance(value,bytes) else value or ''
@@ -148,18 +149,18 @@ def main():
         state['go']['sha256']=sha(state['go']['path'])
         standard=sorted(str(p.relative_to(core)) for tree in ('base','core','vendor') for p in (core/tree).rglob('*') if p.is_file() and p.suffix in ('.odin','.c','.h','.s','.S'))
         state['core_sources_before']=manifest(core,standard)
-        fixture_names=['tests/session_actor101.py','tests/testdata/session_actor101/main.odin','tests/testdata/session_actor101/peer.go','async/session_test.odin']
+        fixture_names=['tests/session_actor101.py','tests/testdata/session_actor101/main.odin','tests/testdata/session_actor101/peer.go','async/tests/internal/session_test.odin']
         state['fixtures_before']=manifest(shared/'surf',fixture_names)
         helper=compiler.parent/'ci/webtools_consumer_gate.py';state['closure_helper_sha256']=sha(helper)
         spec=importlib.util.spec_from_file_location('actor_closure',helper);gate=importlib.util.module_from_spec(spec);spec.loader.exec_module(gate)
         with tempfile.TemporaryDirectory(prefix='surf101-actor-') as tmp:
             temp=Path(tmp);copied=temp/'shared';copied.mkdir()
-            state['closure']=gate.copy_closure('surf/async',shared,copied)
+            state['closure']=copy_closure(gate, 'surf/async',shared,copied)
             state['copied_sources_before']=manifest(copied);state['source_closure_before']=manifest(shared,state['copied_sources_before'])
             require(state['copied_sources_before']==state['source_closure_before'],'physical closure mismatch')
             snapshots=report.parent/'executed-actor-source';snapshots.mkdir(exist_ok=True)
             state['executed_actor_sources']={}
-            for name in ('session.odin','dial.odin','session_tls.odin','session_close.odin','coordinator.odin','network_queue.odin','runtime_ownership.odin'):
+            for name in ('session.odin','coordinator.odin','pool.odin'):
                 source=copied/'surf/async'/name;destination=snapshots/name;shutil.copyfile(source,destination);state['executed_actor_sources'][name]=sha(destination)
             host=temp/'host';host.mkdir();shutil.copyfile(shared/'surf/tests/testdata/session_actor101/main.odin',host/'main.odin')
             peer=report.parent/'peer';run('peer-build',['go','build','-o',peer,shared/'surf/tests/testdata/session_actor101/peer.go']);run('peer-vet',['go','vet',shared/'surf/tests/testdata/session_actor101/peer.go']);state['peer_binary_sha256']=sha(peer)

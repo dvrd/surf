@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Strict paired public held-phase cancellation and one-worker progress gate."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -127,7 +128,7 @@ def main():
         cell = {'name': name, 'command': command}
         state['commands'].append(cell)
         try:
-            done = subprocess.run(command, env=env, capture_output=True, text=True, timeout=timeout)
+            done = test_run(command, env=env, capture_output=True, text=True, timeout=timeout)
             text = done.stdout + done.stderr
             cell['returncode'] = done.returncode
             cell['stdout'] = done.stdout
@@ -153,7 +154,7 @@ def main():
 
     try:
         require((core/'core/crypto/tls/async_idle.odin').is_file(), 'Explicit core lacks public TLS idle classifier')
-        require((shared/'async/stream_probe.odin').is_file(), 'Explicit shared lacks public nonconsuming stream probe')
+        require((shared/'async/socket.odin').is_file(), 'Explicit shared lacks public nonconsuming stream probe')
         go = Path(shutil.which('go', path=env['PATH'])).resolve()
         state['go'] = {'path': str(go), 'sha256': sha(go), 'version': run('go-version', [go, 'version']).strip()}
         state['compiler'] = {'path': str(compiler), 'sha256': sha(compiler), 'version': run('compiler-version', [compiler, 'version']).strip(), 'root': str(core)}
@@ -181,7 +182,7 @@ def main():
             temp = Path(tmp)
             copied = temp/'shared'
             copied.mkdir()
-            state['closures'] = {name: gate.copy_closure(name, shared, copied) for name in ('surf/async', 'async/connection')}
+            state['closures'] = {name: copy_closure(gate, name, shared, copied) for name in ('surf/async', 'async/connection')}
             state['copied_files_before'] = manifest(copied)
             state['source_files_before'] = manifest(shared, state['copied_files_before'])
             package_dirs=sorted({str(Path(n).parent) for n in state['copied_files_before'] if n.endswith('.odin')})

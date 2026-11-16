@@ -3,6 +3,7 @@
 
 No async Client actor, socket, TLS or persistent HTTP transport is executed here.
 """
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -64,7 +65,7 @@ def main():
         cell = dict(name=label, command=list(map(str, command)))
         state['checks'].append(cell)
         try:
-            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=120)
+            result = test_run(command, env=env, capture_output=True, text=True, timeout=120)
             output = result.stdout + result.stderr
             cell['returncode'] = result.returncode
         except (OSError, subprocess.TimeoutExpired) as error:
@@ -96,7 +97,7 @@ def main():
             copied = Path(temp) / 'shared'
             packages = set()
             for package in ('surf/tests/testdata/kernel101', 'surf/async', 'surf/tests'):
-                packages.update(closure_helper.copy_closure(package, source, copied))
+                packages.update(copy_closure(closure_helper, package, source, copied))
             assert not any(p.is_symlink() for p in copied.rglob('*'))
             state['dependency_packages'] = sorted(packages)
             state['copied_root'] = str(copied)
@@ -104,10 +105,10 @@ def main():
             state['copy_before'] = manifest(copied)
             assert state['source_before'] == state['copy_before']
             # Prevent accepting a reduced or zero-test closure.
-            expected = {'surf/async': 46, 'surf/tests': 27}
+            expected = {'surf/async': 116, 'surf/tests': 29}
             for package, count in expected.items():
                 declared = sum(len(re.findall(r'^\s*@\(test\)', p.read_text(), re.M))
-                               for p in (copied / package).glob('*.odin'))
+                               for p in test_files(copied / package))
                 assert declared == count, (package, declared)
             for sanitizer in state['sanitizers']:
                 common = ['-collection:shared=' + str(copied), '-warnings-as-errors', '-sanitize:' + sanitizer]

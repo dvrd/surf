@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Required paired public Client producer/result/shutdown concurrency gate."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -77,7 +78,7 @@ def main():
 
     def run(label, command, timeout=120):
         command = list(map(str, command));started = time.monotonic()
-        p = subprocess.run(command, env=env, text=True, capture_output=True, timeout=timeout)
+        p = test_run(command, env=env, text=True, capture_output=True, timeout=timeout)
         log = report.parent/(label+'.log');log.write_text(p.stdout+p.stderr)
         state['commands'].append({'name': label, 'command': command, 'returncode': p.returncode, 'log': str(log), 'log_sha256': sha(log), 'seconds': time.monotonic()-started})
         require(p.returncode == 0, 'Failed '+str(log))
@@ -90,16 +91,16 @@ def main():
         state['go'] = {'path': str(go), 'sha256': sha(go), 'version': run('go-version', [go, 'version']).strip()}
         standard = sorted(str(p.relative_to(core)) for folder in ('base', 'core', 'vendor') for p in (core/folder).rglob('*') if p.is_file() and p.suffix in ('.odin', '.c', '.h', '.s', '.S'))
         state['core_sources_before'] = manifest(core, standard)
-        artifacts = ['async/concurrency_test.odin', 'tests/concurrency101.py', 'tests/testdata/concurrency101/main.odin', 'tests/testdata/concurrency101/peer.go']
+        artifacts = ['async/tests/internal/concurrency_test.odin', 'tests/concurrency101.py', 'tests/testdata/concurrency101/main.odin', 'tests/testdata/concurrency101/peer.go']
         state['fixtures_before'] = manifest(shared/'surf', artifacts)
-        names = re.findall(r'@\(test\)\s*(\w+)\s*::', (shared/'surf/async/concurrency_test.odin').read_text())
+        names = re.findall(r'@\(test\)\s*(\w+)\s*::', (shared/'surf/async/tests/internal/concurrency_test.odin').read_text())
         require(len(names) == 2, 'Exact public concurrency unit aggregates')
         helper = compiler.parent/'ci/webtools_consumer_gate.py';state['helper_sha256'] = sha(helper)
         spec = importlib.util.spec_from_file_location('concurrency101_closure', helper)
         gate = importlib.util.module_from_spec(spec);spec.loader.exec_module(gate)
         with tempfile.TemporaryDirectory(prefix='surf101-concurrency-') as tmp:
             temp = Path(tmp);copied = temp/'shared';copied.mkdir()
-            state['closure'] = gate.copy_closure('surf/async', shared, copied)
+            state['closure'] = copy_closure(gate, 'surf/async', shared, copied)
             state['copied_sources_before'] = manifest(copied);state['source_sources_before'] = manifest(shared, state['copied_sources_before'])
             require(state['copied_sources_before'] == state['source_sources_before'], 'Physical copy mismatch')
             host = temp/'host';host.mkdir();shutil.copyfile(shared/'surf/tests/testdata/concurrency101/main.odin', host/'main.odin')

@@ -1,7 +1,6 @@
 package tests
 
 import surf ".."
-import http "../../http"
 import "core:net"
 import "core:strings"
 import "core:testing"

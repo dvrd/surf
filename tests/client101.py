@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Physical-copy public Client HTTP1/TLS smoke and ownership gate."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -64,7 +65,7 @@ def main():
         cell = {'name': name, 'command': command}
         state['commands'].append(cell)
         try:
-            done = subprocess.run(command, env=env, capture_output=True, text=True, timeout=timeout)
+            done = test_run(command, env=env, capture_output=True, text=True, timeout=timeout)
             text = done.stdout + done.stderr
             cell['returncode'] = done.returncode
             cell['stdout'] = done.stdout
@@ -90,14 +91,14 @@ def main():
 
     try:
         require((core/'core/crypto/tls/async_idle.odin').is_file(), 'Explicit core lacks public TLS idle classifier')
-        require((shared/'async/stream_probe.odin').is_file(), 'Explicit shared lacks public nonconsuming stream probe')
+        require((shared/'async/socket.odin').is_file(), 'Explicit shared lacks public nonconsuming stream probe')
         go = Path(shutil.which('go', path=env['PATH'])).resolve()
         state['go'] = {'path': str(go), 'sha256': sha(go), 'version': run('go-version', [go, 'version']).strip()}
         state['compiler'] = {'path': str(compiler), 'sha256': sha(compiler), 'version': run('compiler-version', [compiler, 'version']).strip(), 'root': str(core)}
         stdnames = sorted(str(x.relative_to(core)) for folder in ('base', 'core', 'vendor') for x in (core/folder).rglob('*') if x.is_file() and x.suffix in ('.odin', '.h', '.c', '.s', '.S'))
         state['standard_sources_before'] = manifest(core, stdnames)
         state['runner_sha256'] = sha(__file__)
-        artifacts = ['async/client_test.odin', 'tests/client101.py', 'tests/testdata/client101/main.odin', 'tests/testdata/client101/peer.go']
+        artifacts = ['async/tests/internal/client_test.odin', 'tests/client101.py', 'tests/testdata/client101/main.odin', 'tests/testdata/client101/peer.go']
         state['fixture_sources_before'] = manifest(here, artifacts)
         helper = compiler.parent/'ci/webtools_consumer_gate.py'
         state['closure_helper_sha256'] = sha(helper)
@@ -108,7 +109,7 @@ def main():
             temp = Path(tmp)
             copied = temp/'shared'
             copied.mkdir()
-            state['closures'] = {name: gate.copy_closure(name, shared, copied) for name in ('surf/async', 'async/connection')}
+            state['closures'] = {name: copy_closure(gate, name, shared, copied) for name in ('surf/async', 'async/connection')}
             state['copied_files_before'] = manifest(copied)
             state['source_files_before'] = manifest(shared, state['copied_files_before'])
             require(state['copied_files_before'] == state['source_files_before'], 'Physical closure hash mismatch')

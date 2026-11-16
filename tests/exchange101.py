@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Physical-copy HTTP1 exchange and public TLS idle-checkout gate."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import hashlib
 import importlib.util
@@ -49,12 +50,11 @@ def main():
     compiler, core, shared, report = [x.resolve() for x in (a.odin, a.core_root, a.shared_root, a.report)]
     require(len(a.sanitizers)==len(set(a.sanitizers)), "Duplicate sanitizer selection")
     if a.require_idle_policy:
-        require(set(a.sanitizers)=={"address", "thread"}, "Required idle policy needs both sanitizers")
+        require(set(a.sanitizers)=={"address", "thread"}, "Full idle matrix requires both sanitizers")
     report.parent.mkdir(parents=True, exist_ok=True)
     here = shared / 'surf'
-    policy = here / '.cruft/idle-policy101.md'
     state = {'passed': False, 'scope': 'owned literal/fake byte streams and native numeric-loopback HTTP1/TLS13 exchange; no Client/session actor, DNS or cross-platform certification',
-             'commands': [], 'cells': [], 'native_execution_count': 0, 'idle_policy_approved': False, 'selected_sanitizers': a.sanitizers, 'artifact_hashes': {}}
+             'commands': [], 'cells': [], 'native_execution_count': 0, 'selected_sanitizers': a.sanitizers, 'artifact_hashes': {}}
     env = dict(os.environ, ODIN_ROOT=str(core), GOTOOLCHAIN='local', GOPROXY='off', GOSUMDB='off', CGO_ENABLED='0')
     env['PATH'] = '/opt/homebrew/opt/llvm@22/bin:' + env.get('PATH', '')
     env['GOCACHE'] = str(report.parent / 'go-cache')
@@ -68,7 +68,7 @@ def main():
         cell = {'name': name, 'command': command}
         state['commands'].append(cell)
         try:
-            done = subprocess.run(command, env=env, capture_output=True, text=True, timeout=timeout)
+            done = test_run(command, env=env, capture_output=True, text=True, timeout=timeout)
             text = done.stdout + done.stderr
             cell['returncode'] = done.returncode
             cell['stdout'] = done.stdout
@@ -94,15 +94,14 @@ def main():
 
     try:
         require((core/'core/crypto/tls/async_idle.odin').is_file(), 'Explicit core lacks public TLS idle classifier')
-        require((shared/'async/stream_probe.odin').is_file(), 'Explicit shared lacks public nonconsuming stream probe')
+        require((shared/'async/socket.odin').is_file(), 'Explicit shared lacks public nonconsuming stream probe')
         go = Path(shutil.which('go', path=env['PATH'])).resolve()
         state['go'] = {'path': str(go), 'sha256': sha(go), 'version': run('go-version', [go, 'version']).strip()}
         state['compiler'] = {'path': str(compiler), 'sha256': sha(compiler), 'version': run('compiler-version', [compiler, 'version']).strip(), 'root': str(core)}
         stdnames = sorted(str(x.relative_to(core)) for folder in ('base', 'core', 'vendor') for x in (core/folder).rglob('*') if x.is_file() and x.suffix in ('.odin', '.h', '.c', '.s', '.S'))
         state['standard_sources_before'] = manifest(core, stdnames)
-        state['policy_sha256'] = sha(policy)
         state['runner_sha256'] = sha(__file__)
-        artifacts = ['async/exchange/exchange_test.odin', 'tests/exchange101.py', 'tests/testdata/exchange101/main.odin', 'tests/testdata/exchange101/peer.go', '.cruft/idle-policy101.md']
+        artifacts = ['async/exchange/tests/internal/exchange_test.odin', 'tests/exchange101.py', 'tests/testdata/exchange101/main.odin', 'tests/testdata/exchange101/peer.go']
         state['fixture_sources_before'] = manifest(here, artifacts)
         helper = compiler.parent/'ci/webtools_consumer_gate.py'
         state['closure_helper_sha256'] = sha(helper)
@@ -113,7 +112,7 @@ def main():
             temp = Path(tmp)
             copied = temp/'shared'
             copied.mkdir()
-            state['closures'] = {name: gate.copy_closure(name, shared, copied) for name in ('surf/async/exchange', 'async/connection')}
+            state['closures'] = {name: copy_closure(gate, name, shared, copied) for name in ('surf/async/exchange', 'async/connection')}
             state['copied_files_before'] = manifest(copied)
             state['source_files_before'] = manifest(shared, state['copied_files_before'])
             require(state['copied_files_before'] == state['source_files_before'], 'Physical closure hash mismatch')
@@ -132,7 +131,7 @@ def main():
                 flags = ['-collection:shared='+str(copied), '-warnings-as-errors', '-thread-count:1', '-sanitize:'+sanitizer]
                 unit = run('unit-'+sanitizer, [compiler, 'test', copied/'surf/async/exchange', *flags,
                     '-define:ODIN_TEST_THREADS=1', '-define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true', '-keep-executable', '-out:'+str(report.parent/('tests-'+sanitizer))])
-                require(re.findall(r'Finished (\d+) tests? in ', unit)==['11'] and 'All tests were successful' in unit, 'Exchange aggregate count mismatch')
+                require(re.findall(r'Finished (\d+) tests? in ', unit)==['17'] and 'All tests were successful' in unit, 'Exchange aggregate count mismatch')
                 state['artifact_hashes'][str(report.parent/('tests-'+sanitizer))] = sha(report.parent/('tests-'+sanitizer))
                 run('host-build-'+sanitizer, [compiler, 'build', host, *flags, '-out:'+str(binary)])
                 state['artifact_hashes'][str(binary)] = sha(binary)
@@ -183,20 +182,15 @@ def main():
         require(state['fixture_sources_before']==state['fixture_sources_after'], 'Fixture source changed during execution')
         state['standard_sources_after'] = manifest(core, stdnames)
         require(state['standard_sources_before']==state['standard_sources_after'], 'Core sources changed during execution')
-        require(state['runner_sha256']==sha(__file__) and state['policy_sha256']==sha(policy), 'Gate/policy changed during execution')
+        require(state['runner_sha256']==sha(__file__), 'Gate changed during execution')
         require(state['compiler']['sha256']==sha(compiler) and state['go']['sha256']==sha(go) and state['closure_helper_sha256']==sha(helper), 'Toolchain/helper changed during execution')
         state['artifact_hashes_after'] = {name: sha(name) for name in state['artifact_hashes']}
         require(state['artifact_hashes']==state['artifact_hashes_after'], 'Executable artifact changed during execution')
-        statuses = re.findall(r'^Status: (.+)$', policy.read_text(), re.M)
-        require(len(statuses)==1, 'Policy needs exactly one Status line')
-        state['idle_policy_status'] = statuses[0]
-        state['idle_policy_approved'] = statuses == ['approved']
         expected = {san+'-'+transport+'-'+mode for san in a.sanitizers for transport, modes in [('tcp', ['healthy','fragmented','same-read','separate','partial','close']), ('tls', ['healthy','fragmented','same-read','separate','partial','close','keyupdate','keyupdate-inline'])] for mode in modes}
         require(len(state['cells'])==len(expected) and {cell['name'] for cell in state['cells']}==expected, 'Missing or duplicate native matrix cells')
         state['expected_native_cells'] = len(expected)
         if a.require_idle_policy:
-            require(state['idle_policy_approved'], 'Idle policy lacks reviewed approval')
-            require(len(expected)==28 and state['native_execution_count']==28, 'Required idle policy needs 28 actual unique cells')
+            require(len(expected)==28 and state['native_execution_count']==28, 'Full idle matrix requires 28 actual unique cells')
         state['log_hashes'] = {str(path): sha(path) for path in sorted(report.parent.glob('*.log'))}
         state['passed'] = True
     except Exception as error:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Darwin local-only bounded setup, cleanup and event-loop isolation checks."""
+from staging import copy_closure, test_run, test_files
 import argparse
 import contextlib
 from pathlib import Path
@@ -74,10 +75,10 @@ def serve(kind, handler):
 with tempfile.TemporaryDirectory(prefix='surf-setup-') as temporary:
     temp=Path(temporary)
     binary=temp/'checks'
-    subprocess.run([args.odin,'build',str(root/'testdata/setup'),'-thread-count:1','-warnings-as-errors','-sanitize:address','-out:'+str(binary)],check=True)
-    subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1','-keyout',str(temp/'key.pem'),'-out',str(temp/'root.pem')],check=True,capture_output=True)
+    test_run([args.odin,'build',str(root/'testdata/setup'),'-thread-count:1','-warnings-as-errors','-sanitize:address','-out:'+str(binary)],check=True)
+    test_run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost,IP:127.0.0.1','-keyout',str(temp/'key.pem'),'-out',str(temp/'root.pem')],check=True,capture_output=True)
     def run(mode,port,*extra):
-        subprocess.run([str(binary),mode,str(port),str(temp/'root.pem'),*map(str,extra)],check=True,timeout=5)
+        test_run([str(binary),mode,str(port),str(temp/'root.pem'),*map(str,extra)],check=True,timeout=5)
     with serve(UDP,DNS) as dns:
         run('dns',dns.server_address[1])
         run('surf-dns',dns.server_address[1])
