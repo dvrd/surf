@@ -1013,7 +1013,12 @@ h2_finish :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 			if !job.opened {continue}
 			if !job.sent {lane.reusable = false; continue}
 			// Retain only scalar identity, never the job's borrowed request storage.
-			h2_retire_request(lane, job.handle)
+			// The copy is required: escape analysis is not field-sensitive, so passing
+			// job.handle marks the borrowed request as retained by the lane.
+			handle := h2.Stream_Handle{owner_id = job.handle.owner_id,
+				slot = job.handle.slot, generation = job.handle.generation,
+				stream_id = job.handle.stream_id}
+			h2_retire_request(lane, handle)
 		}
 	}
 	for &job in jobs {
