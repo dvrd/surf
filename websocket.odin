@@ -141,26 +141,8 @@ websocket_upgrade_deadline_start :: proc(conn: ^WebSocket_Conn) -> (bool, WebSoc
 		if timeout == 0 do timeout = 10 * time.Second
 
 		deadline := time.time_add(time.now(), timeout)
-		err := conn.stream.set_read_deadline(
-			conn.stream.data,
-			deadline,
-		)
-		if err.kind != .None {
-			return false, websocket_upgrade_fail(
-				conn,
-				{kind = .Deadline_Failed, stream = err},
-			)
-		}
-
-		err = conn.stream.set_write_deadline(
-			conn.stream.data,
-			deadline,
-		)
-		if err.kind != .None {
-			return false, websocket_upgrade_fail(
-				conn,
-				{kind = .Deadline_Failed, stream = err},
-			)
+		if err := websocket_stream_set_deadlines(conn.stream, deadline); err.kind != .None {
+			return false, websocket_upgrade_fail(conn, {kind = .Deadline_Failed, stream = err})
 		}
 
 		deadlines_set = true
@@ -207,27 +189,19 @@ websocket_upgrade_request_send :: proc(conn: ^WebSocket_Conn, key: [16]u8) -> We
 	return {}
 }
 
-websocket_upgrade_deadline_clear :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
-	err := conn.stream.set_read_deadline(
-		conn.stream.data,
-		{},
-	)
+// Sets the read deadline, then the write deadline; stops at the first failure.
+websocket_stream_set_deadlines :: proc(stream: WebSocket_Stream, deadline: time.Time) -> WebSocket_Stream_Error {
+	err := stream.set_read_deadline(stream.data, deadline)
 	if err.kind != .None {
-		return websocket_upgrade_fail(
-			conn,
-			{kind = .Deadline_Failed, stream = err},
-		)
+		return err
 	}
 
-	err = conn.stream.set_write_deadline(
-		conn.stream.data,
-		{},
-	)
-	if err.kind != .None {
-		return websocket_upgrade_fail(
-			conn,
-			{kind = .Deadline_Failed, stream = err},
-		)
+	return stream.set_write_deadline(stream.data, deadline)
+}
+
+websocket_upgrade_deadline_clear :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
+	if err := websocket_stream_set_deadlines(conn.stream, {}); err.kind != .None {
+		return websocket_upgrade_fail(conn, {kind = .Deadline_Failed, stream = err})
 	}
 
 	return {}
@@ -483,10 +457,7 @@ websocket_set_deadline :: proc(
 		return {kind = .Deadline_Unsupported}
 	}
 
-	err := conn.stream.set_read_deadline(conn.stream.data, deadline)
-	if err.kind != .None do return err
-
-	return conn.stream.set_write_deadline(conn.stream.data, deadline)
+	return websocket_stream_set_deadlines(conn.stream, deadline)
 }
 
 WebSocket_MAX_CONTROL_FRAMES_WITHOUT_MESSAGE :: 1024
@@ -585,33 +556,27 @@ websocket_read_message :: proc(
 
 		#partial switch header.opcode {
 		case .Ping, .Pong, .Close:
-			controls += 1
-			if controls > WebSocket_MAX_CONTROL_FRAMES_WITHOUT_MESSAGE {
-				return {}, 0, websocket_fail(
-					conn,
-					{kind = .No_Progress},
-					1008,
-				)
+			if idle_error := websocket_idle_frame(conn, &controls); idle_error.kind != .None {
+				return {}, 0, idle_error
 			}
 
-			if control_error := websocket_control_read(conn, header);
-			   control_error.kind != .None do return {}, 0, control_error
+			if control_error := websocket_control_read(conn, header); control_error.kind != .None {
+				return {}, 0, control_error
+			}
 		case .Text, .Binary, .Continuation:
 			if header.payload_length == 0 {
-				controls += 1
-				if controls > WebSocket_MAX_CONTROL_FRAMES_WITHOUT_MESSAGE {
-					return {}, 0, websocket_fail(
-						conn,
-						{kind = .No_Progress},
-						1008,
-					)
+				if idle_error := websocket_idle_frame(conn, &controls); idle_error.kind != .None {
+					return {}, 0, idle_error
 				}
-
 			}
 
-			if data_error := websocket_data_read(conn, header);
-			   data_error.kind != .None do return {}, 0, data_error
-			if conn.message_ready do return websocket_deliver_message(conn, dst)
+			if data_error := websocket_data_read(conn, header); data_error.kind != .None {
+				return {}, 0, data_error
+			}
+
+			if conn.message_ready {
+				return websocket_deliver_message(conn, dst)
+			}
 
 		case:
 			return {}, 0, websocket_fail(
@@ -621,6 +586,17 @@ websocket_read_message :: proc(
 			)
 		}
 	}
+}
+
+// Counts a frame that carries no message payload. A peer sending only such
+// frames is failed with 1008 instead of stalling the read forever.
+websocket_idle_frame :: proc(conn: ^WebSocket_Conn, idle: ^int) -> WebSocket_Error {
+	idle^ += 1
+	if idle^ > WebSocket_MAX_CONTROL_FRAMES_WITHOUT_MESSAGE {
+		return websocket_fail(conn, {kind = .No_Progress}, 1008)
+	}
+
+	return {}
 }
 
 websocket_control_read :: proc(
@@ -658,15 +634,10 @@ websocket_control_read :: proc(
 websocket_peer_close :: proc(conn: ^WebSocket_Conn, body: []u8) -> WebSocket_Error {
 	if frame_err := websocket.close_payload_validate(body);
 	   frame_err != .None {
-		code: u16 = 1002
-		if frame_err == .Invalid_UTF8 {
-			code = 1007
-		}
-
 		return websocket_fail(
 			conn,
 			{kind = .Invalid_Close, frame = frame_err},
-			code,
+			websocket_close_validation_code(frame_err),
 		)
 	}
 
@@ -1060,6 +1031,16 @@ websocket_close_payload :: proc(dst: ^[125]u8, code: u16, reason: string) -> (in
 	copy(dst[2:], reason)
 	size := 2 + len(reason)
 	return size, websocket.close_payload_validate(dst[:size])
+}
+
+// Close code sent for a peer close payload that failed validation.
+@(private)
+websocket_close_validation_code :: proc(frame_err: websocket.Frame_Error) -> u16 {
+	if frame_err == .Invalid_UTF8 {
+		return 1007
+	}
+
+	return 1002
 }
 
 // 1005 means no status was present; it is never sent as a wire code.

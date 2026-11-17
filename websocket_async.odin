@@ -756,11 +756,9 @@ websocket_async_take_upgrade :: proc(session: ^WebSocket_Async) -> bool {
 			return false
 		}
 	}
-	room := len(session.upgrade_buf) - session.upgrade_len
 	available := session.inbox_len - session.inbox_at
 	if available <= 0 do return session.upgrade_len > 0
 	n := copy(session.upgrade_buf[session.upgrade_len:], session.inbox[session.inbox_at:session.inbox_len])
-	if n > room do n = room
 	session.upgrade_len += n
 	session.inbox_at += n
 	return true
@@ -963,8 +961,7 @@ websocket_async_finish_control :: proc(session: ^WebSocket_Async, body: []u8) ->
 	case .Pong:
 	case .Close:
 		if frame_error := websocket.close_payload_validate(body); frame_error != .None {
-			code: u16 = 1002
-			if frame_error == .Invalid_UTF8 do code = 1007
+			code := websocket_close_validation_code(frame_error)
 			websocket_async_fail(session, {kind = .Invalid_Frame, frame = frame_error, close_code = code})
 			return false
 		}

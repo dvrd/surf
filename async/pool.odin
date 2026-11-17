@@ -16,13 +16,6 @@ import scopes "core:sync/budget"
 import "core:time"
 
 @(private)
-pool_request_locked :: proc(k:^Kernel,handle:Request_Handle)->^Request_Slot {
- if handle.owner_id!=k.owner_id || handle.slot==0 || u64(handle.slot)>u64(len(k.requests)) || handle.generation==0 {return nil}
- slot:=&k.requests[int(handle.slot)-1]
- if slot.generation!=handle.generation || slot.state==.Free || slot.state==.Retired {return nil}
- return slot
-}
-@(private)
 pool_session_locked :: proc(k:^Kernel,handle:Cell_Handle)->^Session_Model {
  if handle.slot==0 || u64(handle.slot)>u64(len(k.sessions)) || handle.generation==0 {return nil}
  slot:=&k.sessions[int(handle.slot)-1]
@@ -99,7 +92,7 @@ pool_reserve_policy :: proc(k:^Kernel,preparing:Preparing_Request,origin:^Prepar
  sync.lock(&k.mu)
  defer sync.unlock(&k.mu)
  if k.closed {return {},{kind=.Closed}}
- request:=pool_request_locked(k,preparing.request)
+ request:=admission_request_locked(k,preparing.request)
  if request==nil {return {},{kind=.Invalid_Handle}}
  if request.state!=.Preparing || request.origin.slot!=0 || request.session.slot!=0 || request.cancel_requested {return {},{kind=.Invalid_State}}
  selection,error:=pool_select_locked(k,origin.key,now,allow_new)
@@ -150,7 +143,7 @@ pool_session_state :: proc(k:^Kernel,handle:Cell_Handle,state:Session_State,now:
  if session==nil {return {kind=.Invalid_Handle}}
  previous:=session.state
  if previous==.Connecting && state==.Busy {
-  request:=pool_request_locked(k,session.request)
+  request:=admission_request_locked(k,session.request)
   if request==nil || request.state!=.Active || request.session!=handle {return {kind=.Invalid_State}}
  } else if previous==.Busy && state==.Idle {
   if session.request!=(Request_Handle{}) {return {kind=.Pending}}
@@ -546,7 +539,7 @@ network_queue_claim_budget :: proc(s:^Client_State,preparing:Preparing_Request,o
  // An Idle peek avoids consuming scarce IDs. It is never carried across an
 // unlock as an admission right: pool_reserve_policy recomputes its own commit.
  sync.lock(&s.kernel.mu)
- request:=pool_request_locked(&s.kernel,preparing.request)
+ request:=admission_request_locked(&s.kernel,preparing.request)
  if request==nil {sync.unlock(&s.kernel.mu);sync.unlock(&s.mu);return {},{kind=.Invalid_Handle}}
  if request.state!=.Preparing || request.origin.slot!=0 || request.session.slot!=0 || request.cancel_requested {
   sync.unlock(&s.kernel.mu)
@@ -645,7 +638,7 @@ pool_assign_locked :: proc(k:^Kernel,origin:Cell_Handle,session_index:u32,now:i6
   request.session={slot=session_index,generation=session.generation}
  } else {
   handle=session.request
-  request=pool_request_locked(k,handle)
+  request=admission_request_locked(k,handle)
   assert(request!=nil)
  }
  old:=session.state
@@ -712,7 +705,7 @@ pool_dispatch :: proc(k:^Kernel,work:int,now:i64)->(Assignment,int,Client_Error)
    session:=&k.sessions[index]
    if session.origin!=origin_handle {continue}
    if session.state==.Reserved {
-    request:=pool_request_locked(k,session.request)
+    request:=admission_request_locked(k,session.request)
     if pool_dispatchable(request,now,session.reserved_from==.Idle) && request.origin==origin_handle &&
        request.session==(Cell_Handle{slot=u32(index+1),generation=session.generation}) {
      return pool_assign_locked(k,origin_handle,u32(index+1),now,false),used,{}

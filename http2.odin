@@ -989,7 +989,6 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 			lane.dead = true
 			return wrote, {kind = .IO_Failed, phase = .Write, write_effect = .Not_Sent}
 		}
-		if n < len(view.bytes) {continue}
 	}
 	return wrote, {}
 }

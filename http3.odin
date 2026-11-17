@@ -108,7 +108,6 @@ execute_http3 :: proc(
 		client_credential_lease=config.tls.client_credential_lease,
 		method = http.method_text(request.method), target = path, authority = url.authority,
 		headers = fields[:len(request.headers)], body = request.body,
-		max_response_bytes = config.max_body_size,
 	}
  if config.http3_early_data!=nil {policy_request:=request;wire.early_data=config.http3_early_data(&policy_request)}
 	trailer_fields: [32]http3.Field
