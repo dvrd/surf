@@ -10,6 +10,7 @@ import "core:io"
 import "core:mem"
 import owned "core:mem/owned"
 import "core:net"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
@@ -75,7 +76,6 @@ H2_Job :: struct {
 	names: [2048]u8,
 	names_n: int,
 	length_text: [32]u8,
-	length_n: int,
 	fields: [32]hpack.Field,
 	field_n: int,
 	body: []u8,
@@ -157,7 +157,12 @@ http_client_multiplex :: proc(c: ^HTTP_Client, requests: []http.Request, results
 			return {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent}
 		}
 		scratch: [http.MAX_HEADER_SIZE]u8
-		if _, validation := http_request_check(scratch[:], request); validation.kind != .None {return validation}
+		if _, validation := http1.request_encode(scratch[:], request); validation.kind != .None {
+			invalid := http_protocol_error(validation)
+			invalid.phase = .Configuration
+			invalid.write_effect = .Not_Sent
+			return invalid
+		}
 		parsed[i] = url
 	}
 	if !parsed[0].secure {
@@ -207,23 +212,6 @@ http_client_multiplex :: proc(c: ^HTTP_Client, requests: []http.Request, results
 	}
 	if lane.dead || lane.goaway || !lane.reusable {http_lane_close(c, lane)}
 	return drive_error
-}
-
-@(private)
-http_request_check :: proc(dst: []u8, request: http.Request) -> (int, HTTP_Error) {
-	n, validation := request_encode_for_check(dst, request)
-	if validation.kind != .None {
-		error := http_protocol_error(validation)
-		error.phase = .Configuration
-		error.write_effect = .Not_Sent
-		return 0, error
-	}
-	return n, {}
-}
-
-@(private)
-request_encode_for_check :: proc(dst: []u8, request: http.Request) -> (int, http.Error) {
-	return http1.request_encode(dst, request)
 }
 
 @(private)
@@ -372,23 +360,11 @@ http_lane_close :: proc(c: ^HTTP_Client, lane: ^HTTP_Lane) {
 
 @(private)
 http_lane_http1 :: proc(c: ^HTTP_Client, lane: ^HTTP_Lane, request: http.Request, upload: ^Upload_Source, allocator: mem.Allocator, deadline: time.Time) -> (Response, HTTP_Error) {
-	adapter := TLS_Adapter{connection = lane.tls}
-	stream := net.Connection{data = &adapter, read = tls_read, write = tls_write, close = tls_close}
 	if deadline_error := tls_api.set_deadline(lane.tls, deadline); deadline_error.kind != .None {
 		http_lane_close(c, lane)
 		return {}, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent, transport = deadline_error}
 	}
-	response: Response
-	err: HTTP_Error
-	if upload != nil {
-		response, err = exchange_upload(stream, request, upload^, c.config.max_body_size, allocator, deadline)
-	} else {
-		response, err = exchange(stream, request, c.config.max_body_size, allocator)
-	}
-	if err.kind == .IO_Failed {
-		err.tls_io = adapter.last_error
-		err = http_error_classify(err, err.phase, err.write_effect, err.status)
-	}
+	response, err := exchange_tls(lane.tls, request, upload, c.config.max_body_size, allocator, deadline)
 	http_lane_close(c, lane)
 	return response, err
 }
@@ -608,9 +584,8 @@ h2_no_progress :: proc(jobs: []H2_Job) -> bool {
 @(private)
 h2_fail_open :: proc(jobs: []H2_Job, error: HTTP_Error) {
 	for &job in jobs {
-		if job.failed || job.ended && job.sent && job.error.kind == .None {continue}
 		if job.ended && job.sent && job.error.kind == .None {continue}
-		if !job.failed {h2_fail(&job, error)}
+		h2_fail(&job, error)
 	}
 }
 
@@ -672,8 +647,7 @@ h2_fields :: proc(job: ^H2_Job) -> h2.Error {
 	length := i64(len(job.body))
 	if job.upload != nil {length = job.upload.content_length}
 	if length > 0 {
-		job.length_n = h2_format_int(job.length_text[:], length)
-		if job.length_n <= 0 || !h2_field(job, "content-length", string(job.length_text[:job.length_n])) {return {kind = .Invalid_Input}}
+		if !h2_field(job, "content-length", strconv.write_int(job.length_text[:], length, 10)) {return {kind = .Invalid_Input}}
 	}
 	for header in job.request.headers {
 		name := header.name
@@ -705,23 +679,6 @@ h2_field :: proc(job: ^H2_Job, name, value: string) -> bool {
 	job.fields[job.field_n] = {name = stored, value = value}
 	job.field_n += 1
 	return true
-}
-
-@(private)
-h2_format_int :: proc(dst: []u8, value: i64) -> int {
-	if value < 0 || len(dst) == 0 {return 0}
-	if value == 0 {dst[0] = '0'; return 1}
-	tmp: [32]u8
-	n := 0
-	left := value
-	for left > 0 && n < len(tmp) {
-		tmp[n] = u8('0' + left%10)
-		left /= 10
-		n += 1
-	}
-	if n > len(dst) {return 0}
-	for i in 0 ..< n {dst[i] = tmp[n-1-i]}
-	return n
 }
 
 @(private)
@@ -1046,10 +1003,7 @@ h2_finish :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 			if !job.opened {continue}
 			if !job.sent {lane.reusable = false; continue}
 			// Retain only scalar identity, never the job's borrowed request storage.
-			handle := h2.Stream_Handle{owner_id = job.handle.owner_id,
-				slot = job.handle.slot, generation = job.handle.generation,
-				stream_id = job.handle.stream_id}
-			h2_retire_request(lane, handle)
+			h2_retire_request(lane, job.handle)
 		}
 	}
 	for &job in jobs {
@@ -1098,7 +1052,7 @@ h2_feed :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, src: []u8) -> HTTP_Error {
 h2_name_forbidden :: proc(name: string) -> bool {
 	switch len(name) {
 	case 2:
-		return name[0] == 't' && name[1] == 'e' || name[0] == 'T' && name[1] == 'E' || name[0] == 'T' && name[1] == 'e' || name[0] == 't' && name[1] == 'E'
+		return strings.equal_fold(name, "te")
 	case 7:
 		return strings.equal_fold(name, "upgrade")
 	case 10:

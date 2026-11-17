@@ -4,7 +4,6 @@ import http "../http"
 import http1 "../http/v1"
 import "core:io"
 import "core:mem"
-import resources "core:sync/budget"
 import "core:net"
 import "core:time"
 
@@ -42,55 +41,8 @@ exchange_upload :: proc(
 	Response,
 	HTTP_Error,
 ) {
-	return exchange_upload_scoped(stream, request, source, max_body_size, allocator, deadline)
-}
-
-exchange_upload_scoped :: proc(
-	stream: net.Connection,
-	request: http.Request,
-	source: Upload_Source,
-	max_body_size: int = 0,
-	allocator := context.allocator,
-	deadline: time.Time = {},
-	scope: resources.Scope = {},
-	allocator_scope: resources.Scope = {},
-) -> (
-	Response,
-	HTTP_Error,
-) {
-	ctx, call_allocator, admission := budget_begin(scope, allocator_scope, allocator)
-	if admission.kind != .None do return {}, admission
-	defer budget_cleanup(&ctx)
-	previous_context := context
-	next_context := context
-	if resources.scope_of(ctx.stream) != (resources.Scope{}) {
-		next_context.allocator = call_allocator
-		next_context.temp_allocator = budget_temporary(&ctx, call_allocator)
-	}
-	context = next_context
-	defer context = previous_context
-	outcome: HTTP_Exchange_Outcome
-	response, error := exchange_upload_internal(
-		stream,
-		request,
-		source,
-		max_body_size,
-		call_allocator,
-		deadline,
-		&outcome,
-	)
-	if error.kind != .None {
-		effect: HTTP_Write_Effect = .Not_Sent
-		if outcome.write_started {
-			effect = .Unknown
-		}
-		if outcome.status != 0 {
-			effect = .Response_Received
-		}
-		error = http_error_classify(error, .Read, effect, outcome.status)
-	}
-	if error.kind == .None do budget_response(&ctx, &response)
-	return response, error
+	upload := source
+	return exchange_run(stream, request, &upload, max_body_size, allocator, deadline, {}, {})
 }
 
 @(private)

@@ -9,7 +9,6 @@ import trans "core:net"
 import "core:mem"
 import resources "core:sync/budget"
 import "core:io"
-import "core:slice"
 import "core:strings"
 import "core:time"
 import owned "core:mem/owned"
@@ -171,10 +170,6 @@ execute_internal :: proc(
 	err: HTTP_Error,
 ) {
 
-	if e := config_validate(config); e.kind != .None {
-		return {}, e
-	}
-
  if config._http3_cancel!=nil && config._http3_cancel(config._http3_cancel_data) {return {},{kind=.IO_Failed,phase=.Cancellation,write_effect=.Not_Sent,transport={kind=.Cancelled}}}
 	current := request
 	owned_url: string
@@ -249,10 +244,11 @@ execute_internal :: proc(
 		}
 
 		last_status^ = response.status
-		redirect := slice.contains(
-			[]type_of(response.status){301, 302, 303, 307, 308},
-			response.status,
-		)
+		redirect := false
+		switch response.status {
+		case 301, 302, 303, 307, 308:
+			redirect = true
+		}
 		if !redirect || config.max_redirects == 0 {
 			return response, {}
 		}
@@ -294,25 +290,25 @@ execute_tls :: proc(
 		return {}, {kind = .IO_Failed, phase = .Protocol, write_effect = .Not_Sent}
 	}
 
-	adapter := TLS_Adapter {
-		connection = connection,
-	}
-	stream := trans.Connection {
-		data  = &adapter,
-		read  = tls_read,
-		write = tls_write,
-		close = tls_close,
-	}
-	if upload != nil {
-		response, err = exchange_upload(stream, request, upload^, config.max_body_size, allocator, total_deadline)
-	} else {
-		response, err = exchange(stream, request, config.max_body_size, allocator)
-	}
+	response, err = exchange_tls(connection, request, upload, config.max_body_size, allocator, total_deadline)
+	if err.kind != .None && err.phase == .Unknown {err = http_error_classify(err, .TLS, .Not_Sent)}
+	return response, err
+}
+
+// HTTP/1.1 over an established TLS connection. The TLS diagnostic behind an I/O
+// failure is kept so classification can tell record failures from transport ones.
+@(private)
+exchange_tls :: proc(
+	connection: ^tls_api.Conn, request: http.Request, upload: ^Upload_Source, max_body_size: int,
+	allocator: mem.Allocator, deadline: time.Time,
+) -> (Response, HTTP_Error) {
+	adapter := TLS_Adapter{connection = connection}
+	stream := trans.Connection{data = &adapter, read = tls_read, write = tls_write, close = tls_close}
+	response, err := exchange_run(stream, request, upload, max_body_size, allocator, deadline, {}, {})
 	if err.kind == .IO_Failed {
 		err.tls_io = adapter.last_error
 		err = http_error_classify(err, err.phase, err.write_effect, err.status)
 	}
-	if err.kind != .None && err.phase == .Unknown {err = http_error_classify(err, .TLS, .Not_Sent)}
 	return response, err
 }
 
@@ -327,21 +323,11 @@ execute_tcp :: proc(
 		socket = socket,
 	}
 	stream := trans.tcp_connection(&connection)
-	deadline_err := trans.set_deadline(
-		stream,
-		total_deadline,
-	)
+	deadline_err := trans.set_deadline(stream, total_deadline)
 	if deadline_err.kind == .None {
-		if upload != nil {
-			response, err = exchange_upload(stream, request, upload^, config.max_body_size, allocator, total_deadline)
-		} else {
-			response, err = exchange(stream, request, config.max_body_size, allocator)
-		}
+		response, err = exchange_run(stream, request, upload, config.max_body_size, allocator, total_deadline, {}, {})
 	} else {
-		err = {
-			kind      = .Deadline_Failed,
-			transport = deadline_err,
-		}
+		err = {kind = .Deadline_Failed, transport = deadline_err}
 	}
 
 	stream.close(stream.data)
@@ -354,36 +340,28 @@ execute_redirect :: proc(
 	response: ^Response, current: http.Request, u: http.URL, config: Config,
 	redirects: int, allocator: mem.Allocator,
 ) -> (string, HTTP_Error) {
+	// location borrows the response until the new URL has been built.
+	defer response_destroy(response)
 	if redirects >= config.max_redirects {
-		response_destroy(response)
 		return "", {kind = .Redirect_Limit}
 	}
 
-	if current.method != .GET &&
-	   !slice.contains(
-			   []type_of(response.status){307, 308},
-			   response.status,
-		   ) {
-		response_destroy(response)
+	if current.method != .GET && response.status != 307 && response.status != 308 {
 		return "", {kind = .Unsafe_Redirect}
 	}
 
-	location, has_location := response_header(
-		response,
-		"Location",
-	)
+	location: string
 	locations := 0
 	for h in response.headers do if strings.equal_fold(h.name, "Location") {
+		if locations == 0 do location = h.value
 		locations += 1
 	}
 
-	if !has_location || locations != 1 {
-		response_destroy(response)
+	if locations != 1 {
 		return "", {kind = .Invalid_Redirect}
 	}
 
 	new_url, resolve_err := redirect_url(u, location, allocator)
-	response_destroy(response)
 	if resolve_err.kind != .None {
 		return "", resolve_err
 	}
@@ -435,7 +413,7 @@ exchange :: proc(
 	Response,
 	HTTP_Error,
 ) {
-	return exchange_scoped(stream, request, max_body_size, allocator)
+	return exchange_run(stream, request, nil, max_body_size, allocator, {}, {}, {})
 }
 
 // Explicit scoped variant preserves exchange's original injectable procedure type.
@@ -450,6 +428,16 @@ exchange_scoped :: proc(
 	Response,
 	HTTP_Error,
 ) {
+	return exchange_run(stream, request, nil, max_body_size, allocator, {}, scope, allocator_scope)
+}
+
+// One exchange on a connected stream. A nil upload sends request.body; deadline
+// only bounds upload source reads.
+@(private)
+exchange_run :: proc(
+	stream: trans.Connection, request: http.Request, upload: ^Upload_Source, max_body_size: int,
+	allocator: mem.Allocator, deadline: time.Time, scope, allocator_scope: resources.Scope,
+) -> (Response, HTTP_Error) {
 	ctx, call_allocator, admission := budget_begin(scope, allocator_scope, allocator)
 	if admission.kind != .None do return {}, admission
 	defer budget_cleanup(&ctx)
@@ -462,7 +450,13 @@ exchange_scoped :: proc(
 	context = next_context
 	defer context = previous_context
 	outcome: HTTP_Exchange_Outcome
-	response, error := exchange_internal(stream, request, max_body_size, call_allocator, &outcome)
+	response: Response
+	error: HTTP_Error
+	if upload != nil {
+		response, error = exchange_upload_internal(stream, request, upload^, max_body_size, call_allocator, deadline, &outcome)
+	} else {
+		response, error = exchange_internal(stream, request, max_body_size, call_allocator, &outcome)
+	}
 	if error.kind != .None {
 		effect: HTTP_Write_Effect = .Not_Sent
 		if outcome.write_started {
@@ -946,10 +940,8 @@ redirect_parts :: proc(base: http.URL, location: string, parts: ^[5]string) -> i
 	count := 0
 	scheme_end := strings.index_byte(location, ':')
 	path_end := len(location)
-	for c, i in location {
-		if slice.contains([]type_of(c){'/', '?'}, c) {
-			path_end = i; break
-		}
+	if i := strings.index_any(location, "/?"); i >= 0 {
+		path_end = i
 	}
 	if scheme_end >= 0 && scheme_end < path_end {
 		parts[0], count = location, 1
@@ -1030,7 +1022,7 @@ redirect_path_normalize :: proc(dst: []u8, target: string) -> int {
 			continue
 		}
 
-		if slice.contains([]string{".", ".."}, path) {
+		if path == "." || path == ".." {
 			break
 		}
 
