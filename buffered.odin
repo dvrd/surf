@@ -390,13 +390,9 @@ buffered_http_perform :: proc(
 @(private)
 buffered_tcp_timeout :: proc(error: HTTP_Error) -> HTTP_Error {
 	result := error
-	if result.kind == .None || result.kind == .Dial_Failed || result.write_effect != .Not_Sent {
-		return result
+	if result.kind != .None && result.kind != .Dial_Failed && result.phase == .Deadline && result.write_effect == .Not_Sent {
+		result.write_effect = .Unknown
 	}
-	if result.phase == .DNS || result.phase == .Connect || result.phase == .Configuration || result.phase == .TLS {
-		return result
-	}
-	if result.phase == .Deadline {result.write_effect = .Unknown}
 	return result
 }
 
@@ -445,25 +441,31 @@ buffered_http_h2 :: proc(
 	return buffered_http_from_response(&response, error, reply)
 }
 
-// Keep the buffered header-list conventions while passing application fields
-// through the shared HTTP/2 encoder. Empty colon values suppress a field;
-// semicolon-only entries explicitly send an empty value.
+// The buffered header-list convention: "Name: value" sends the value, "Name:"
+// suppresses the field and "Name;" sends it with an empty value. A line with
+// neither separator is not present.
+@(private)
+buffered_http_header :: proc(header: string) -> (name, value: string, suppress, present: bool) {
+	if colon := strings.index_byte(header, ':'); colon >= 0 {
+		value = strings.trim(header[colon + 1:], " \t")
+		return header[:colon], value, value == "", true
+	}
+	semi := strings.index_byte(header, ';')
+	if semi < 0 do return
+	return header[:semi], "", false, true
+}
+
+// Passes application fields through the shared HTTP/2 encoder.
 @(private)
 buffered_http_h2_headers :: proc(headers: []string, storage: []http.Header) -> ([]http.Header, HTTP_Error) {
 	count := 0
 	for header in headers {
-		colon := strings.index_byte(header, ':')
-		semi := strings.index_byte(header, ';')
-		if colon < 0 && semi < 0 do continue
-		name := header[:colon] if colon >= 0 else header[:semi]
+		name, value, suppress, present := buffered_http_header(header)
+		if !present do continue
 		if !http.header_name_valid(name) {
 			return nil, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
 		}
-		value := ""
-		if colon >= 0 {
-			value = strings.trim(header[colon + 1:], " \t")
-			if value == "" do continue
-		}
+		if suppress do continue
 		if !http.header_value_valid(value) {
 			return nil, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
 		}
@@ -628,10 +630,21 @@ buffered_source_io :: proc(error: os.Error) -> io.Error {
 }
 
 @(private)
-buffered_http_append :: proc(dst: []u8, used: int, text: string) -> (int, bool) {
-	if used > len(dst) || len(text) > len(dst) - used do return used, false
-	copy(dst[used:], text)
-	return used + len(text), true
+Buffered_HTTP_Writer :: struct {
+	dst:      []u8,
+	used:     int,
+	overflow: bool,
+}
+
+@(private)
+buffered_http_put :: proc(w: ^Buffered_HTTP_Writer, parts: ..string) {
+	for part in parts {
+		if len(part) > len(w.dst) - w.used {
+			w.overflow = true
+			return
+		}
+		w.used += copy(w.dst[w.used:], part)
+	}
 }
 
 // Method bytes are copied unchanged. A body buffer is sent only for the exact
@@ -640,9 +653,9 @@ buffered_http_append :: proc(dst: []u8, used: int, text: string) -> (int, bool) 
 buffered_http_encode :: proc(
 	dst: []u8, method: string, parsed: http.URL, body: []byte, headers: []string, file: ^os.File, upload_size: i64,
 ) -> (int, HTTP_Error) {
-	Host_State :: struct {on: bool, value: string}
-	host := Host_State{on = true, value = parsed.authority}
-	accept := Host_State{on = true, value = "*/*"}
+	Default :: struct {on: bool, value: string}
+	host := Default{on = true, value = parsed.authority}
+	accept := Default{on = true, value = "*/*"}
 	length_on := file != nil || method == "PUT" || method == "POST"
 	length_text: string
 	digits: [32]u8
@@ -651,24 +664,13 @@ buffered_http_encode :: proc(
 	} else if length_on {
 		length_text = strconv.write_int(digits[:], i64(len(body)), 10)
 	}
-	Custom :: struct {name, value: string, colon_only: bool}
-	custom: [http.MAX_HEADERS]Custom
+	custom: [http.MAX_HEADERS]http.Header
 	custom_count := 0
 	for header in headers {
-		colon := strings.index_byte(header, ':')
-		semi := strings.index_byte(header, ';')
-		if colon < 0 && semi < 0 do continue
-		name := header[:colon] if colon >= 0 else header[:semi]
+		name, value, suppress, present := buffered_http_header(header)
+		if !present do continue
 		if !http.header_name_valid(name) {
 			return 0, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
-		}
-		suppress := colon >= 0 && len(strings.trim(header[colon + 1:], " \t")) == 0
-		value := ""
-		colon_only := false
-		if colon < 0 {
-			colon_only = true
-		} else if !suppress {
-			value = strings.trim(header[colon + 1:], " \t")
 		}
 		if strings.equal_fold(name, "Host") {
 			host.on = !suppress
@@ -681,8 +683,7 @@ buffered_http_encode :: proc(
 			continue
 		}
 		if strings.equal_fold(name, "Content-Length") {
-			length_on = !suppress && (file != nil || method == "PUT" || method == "POST" || !suppress)
-			if suppress {length_on = false}
+			length_on = !suppress
 			if !suppress {length_text = value}
 			continue
 		}
@@ -690,51 +691,28 @@ buffered_http_encode :: proc(
 		if custom_count == len(custom) {
 			return 0, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
 		}
-		custom[custom_count] = {name, value, colon_only}
+		custom[custom_count] = {name = name, value = value}
 		custom_count += 1
 	}
 	target := parsed.target
 	prefix := ""
 	if target == "" || target[0] == '?' do prefix = "/"
-	used := 0
-	ok := false
-	parts := [?]string{method, " ", prefix, target, " HTTP/1.1\r\n"}
-	for part in parts {
-		used, ok = buffered_http_append(dst, used, part)
-		if !ok do return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
-	}
-	if host.on {
-		for part in ([?]string{"Host: ", host.value, "\r\n"}) {
-			used, ok = buffered_http_append(dst, used, part)
-			if !ok do return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
-		}
-	}
-	if accept.on {
-		for part in ([?]string{"Accept: ", accept.value, "\r\n"}) {
-			used, ok = buffered_http_append(dst, used, part)
-			if !ok do return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
-		}
-	}
+	w := Buffered_HTTP_Writer{dst = dst}
+	buffered_http_put(&w, method, " ", prefix, target, " HTTP/1.1\r\n")
+	if host.on do buffered_http_put(&w, "Host: ", host.value, "\r\n")
+	if accept.on do buffered_http_put(&w, "Accept: ", accept.value, "\r\n")
 	for item in custom[:custom_count] {
-		used, ok = buffered_http_append(dst, used, item.name)
-		if !ok do return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
-		if item.colon_only {
-			used, ok = buffered_http_append(dst, used, ":\r\n")
+		// Only the "Name;" form reaches here with an empty value.
+		if item.value == "" {
+			buffered_http_put(&w, item.name, ":\r\n")
 		} else {
-			for part in ([?]string{": ", item.value, "\r\n"}) {
-				used, ok = buffered_http_append(dst, used, part)
-				if !ok do return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
-			}
-		}
-		if !ok do return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
-	}
-	if length_on {
-		for part in ([?]string{"Content-Length: ", length_text, "\r\n"}) {
-			used, ok = buffered_http_append(dst, used, part)
-			if !ok do return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
+			buffered_http_put(&w, item.name, ": ", item.value, "\r\n")
 		}
 	}
-	used, ok = buffered_http_append(dst, used, "\r\n")
-	if !ok do return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
-	return used, {}
+	if length_on do buffered_http_put(&w, "Content-Length: ", length_text, "\r\n")
+	buffered_http_put(&w, "\r\n")
+	if w.overflow {
+		return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
+	}
+	return w.used, {}
 }
