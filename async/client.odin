@@ -252,7 +252,9 @@ client_enter :: proc(c:^Client)->(^Client_State,Client_Error) {
  if !network_state_retain(s) {return nil,{kind=.Closed}}
  sync.lock(&s.mu)
  if s.phase==.Disposing || s.producer_calls==max(int) {
-  sync.unlock(&s.mu);network_state_release(s);return nil,{kind=.Closed}
+  sync.unlock(&s.mu)
+  network_state_release(s)
+  return nil,{kind=.Closed}
  }
  s.producer_calls+=1
  sync.unlock(&s.mu)
@@ -260,7 +262,10 @@ client_enter :: proc(c:^Client)->(^Client_State,Client_Error) {
 }
 @(private)
 client_leave :: proc(s:^Client_State) {
- sync.lock(&s.mu);assert(s.producer_calls>0);s.producer_calls-=1;sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ assert(s.producer_calls>0)
+ s.producer_calls-=1
+ sync.unlock(&s.mu)
  // Closing coordinator may be waiting for this producer's physical disposal.
  _=signal.wake(s.coordinator.wake)
  network_state_release(s)
@@ -291,14 +296,16 @@ client_init :: proc(c:^Client,runtime:^runtime_async.Runtime,config:Client_Confi
  // Every callback target, Signal and registered reference exists before the
  // atomic scheduler publication; no fallible allocation follows publication.
  sync.lock(&s.mu)
- s.references+=u64(len(s.task_index));s.registered_tasks=len(s.task_index)
+ s.references+=u64(len(s.task_index))
+ s.registered_tasks=len(s.task_index)
  s.coordinator.registered=true
  for &actor in s.actors {actor.registered=true}
  sync.unlock(&s.mu)
  registration:=runtime_async.register_group(runtime,s.task_index)
  if registration.kind!=.None {
   sync.lock(&s.mu)
-  s.references-=u64(len(s.task_index));s.registered_tasks=0
+  s.references-=u64(len(s.task_index))
+  s.registered_tasks=0
   s.coordinator.registered=false
   for &actor in s.actors {actor.registered=false}
   sync.unlock(&s.mu)
@@ -370,7 +377,8 @@ resources_init :: proc(r:^Kernel_Resources,scope:scopes.Scope,backing:mem.Alloca
 }
 resources_destroy :: proc(r:^Kernel_Resources) {
  if r==nil || r.self!=r do return
- old:=r^;r^={}
+ old:=r^
+ r^={}
  charged.release(&old.binding)
  scopes.release_scope(&old.scope)
 }
@@ -482,11 +490,13 @@ profile_init :: proc(p:^Profile,config:Normalized_Config,allocator:mem.Allocator
  snapshot:=normalized
  if len(config.http.tls.root_cas)>0 {
   roots:=(cast([^]^x509.Certificate)raw_data(storage[roots_at:]))[:len(config.http.tls.root_cas)]
-  copy(roots,config.http.tls.root_cas);snapshot.http.tls.root_cas=roots
+  copy(roots,config.http.tls.root_cas)
+  snapshot.http.tls.root_cas=roots
  } else {snapshot.http.tls.root_cas=nil}
  if len(config.http.resolver.name_servers)>0 {
   servers:=(cast([^]net.Endpoint)raw_data(storage[servers_at:]))[:len(config.http.resolver.name_servers)]
-  copy(servers,config.http.resolver.name_servers);snapshot.http.resolver.name_servers=servers
+  copy(servers,config.http.resolver.name_servers)
+  snapshot.http.resolver.name_servers=servers
  } else {snapshot.http.resolver.name_servers=nil}
  copy(storage[name_at:name_at+len(config.http.tls.server_name)],config.http.tls.server_name)
  snapshot.http.tls.server_name=string(storage[name_at:name_at+len(config.http.tls.server_name)])
@@ -494,7 +504,9 @@ profile_init :: proc(p:^Profile,config:Normalized_Config,allocator:mem.Allocator
   offers:=(cast([^]string)raw_data(storage[offers_at:]))[:len(config.http.tls.alpn_protocols)]
   at:=text_at
   for offer,i in config.http.tls.alpn_protocols {
-   copy(storage[at:at+len(offer)],offer);offers[i]=string(storage[at:at+len(offer)]);at+=len(offer)
+   copy(storage[at:at+len(offer)],offer)
+   offers[i]=string(storage[at:at+len(offer)])
+   at+=len(offer)
   }
   snapshot.http.tls.alpn_protocols=offers
  } else {snapshot.http.tls.alpn_protocols=nil}
@@ -533,24 +545,54 @@ client_destination_alias :: proc(s:^Client_State,c:^Client,destination:^surf.Res
 }
 
 client_request_stage :: proc(c:^Client,handle:Request_Handle)->(Request_Stage,Client_Error) {
- s,error:=client_enter(c);if error.kind!=.None {return {},error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return {},error
+ }
+
+ defer client_leave(s)
  return kernel_stage(&s.kernel,handle)
 }
 client_poll :: proc(c:^Client)->(Completion,bool) {
- s,error:=client_enter(c);if error.kind!=.None {return {},false};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return {},false
+ }
+
+ defer client_leave(s)
  return kernel_poll(&s.kernel)
 }
 client_take :: proc(c:^Client,handle:Request_Handle,destination:^surf.Response)->Client_Error {
- s,error:=client_enter(c);if error.kind!=.None {return error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return error
+ }
+
+ defer client_leave(s)
  if destination==nil || client_destination_alias(s,c,destination) {return {kind=.Invalid_State}}
  return kernel_take(&s.kernel,handle,destination)
 }
 client_release :: proc(c:^Client,handle:Request_Handle)->Client_Error {
- s,error:=client_enter(c);if error.kind!=.None {return error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return error
+ }
+
+ defer client_leave(s)
  return kernel_release(&s.kernel,handle)
 }
 client_cancel :: proc(c:^Client,handle:Request_Handle)->Client_Error {
- s,error:=client_enter(c);if error.kind!=.None {return error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return error
+ }
+
+ defer client_leave(s)
  sync.lock(&s.mu)
  cause:=kernel_cancel(&s.kernel,handle)
  wake:=s.coordinator.wake
@@ -566,19 +608,27 @@ client_cancel :: proc(c:^Client,handle:Request_Handle)->Client_Error {
  return cause
 }
 client_refill_dns_ids :: proc(c:^Client,ids:[]u16)->Client_Error {
- s,error:=client_enter(c);if error.kind!=.None {return error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return error
+ }
+
+ defer client_leave(s)
  return network_dns_refill(s,ids)
 }
 client_stats :: proc(c:^Client)->(Client_Stats,bool) {
  s,error:=client_enter(c);if error.kind!=.None {return {},false};defer client_leave(s)
- sync.lock(&s.mu);sync.lock(&s.kernel.mu)
+ network_lock_both(s)
  stats:=s.kernel.counters
  stats.streaming=stream_api.bank_stats(s.stream_bank)
- stats.capacities=s.config.config.capacities;stats.tasks=s.registered_tasks
- stats.dns_ids=s.dns_count;stats.signal_cells=s.signal_cells
+ stats.capacities=s.config.config.capacities
+ stats.tasks=s.registered_tasks
+ stats.dns_ids=s.dns_count
+ stats.signal_cells=s.signal_cells
  for metadata in s.requests {if metadata.awaiting_ids {stats.dns_waiters+=1}}
  scope:=s.resources.scope
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  if scope!=(scopes.Scope{}) {stats.scope,_=scopes.snapshot(scope)}
  return stats,true
 }

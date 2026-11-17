@@ -23,7 +23,8 @@ aliases :: proc(cell:^Channel,destination:rawptr,size:int)->bool {
     range_overlap(destination,size,bank,size_of(Bank)) ||
     range_overlap(destination,size,raw_data(bank.cells),len(bank.cells)*size_of(Cell_Entry)) ||
     range_overlap(destination,size,raw_data(cell.output_storage),len(cell.output_storage)) {return true}
- sync.lock(&cell.mu);defer sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ defer sync.unlock(&cell.mu)
  if range_overlap(destination,size,raw_data(cell.head.header_storage),len(cell.head.header_storage)) ||
     range_overlap(destination,size,raw_data(cell.head.headers),len(cell.head.headers)*size_of(http.Header)) {return true}
  for chunk in cell.uploads {
@@ -77,8 +78,11 @@ bank_drop :: proc(bank: ^Bank) {
 
 bank_close :: proc(owner: ^^Bank) {
  if owner==nil || owner^==nil {return}
- bank:=owner^;owner^=nil
- sync.lock(&bank.mu);bank.closed=true;sync.unlock(&bank.mu)
+ bank:=owner^
+ owner^=nil
+ sync.lock(&bank.mu)
+ bank.closed=true
+ sync.unlock(&bank.mu)
  bank_drop(bank)
 }
 
@@ -123,7 +127,8 @@ bank_unclaim :: proc(bank:^Bank,index:int) {
 
 retain :: proc(cell:^Channel)->bool {
  if cell==nil {return false}
- sync.lock(&cell.mu);defer sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ defer sync.unlock(&cell.mu)
  if cell.references<1 || cell.references==max(int) {return false}
  cell.references+=1
  return true
@@ -140,7 +145,10 @@ release :: proc(cell:^Channel) {
  sync.unlock(&cell.mu)
  if !last {return}
  bank,index,lease:=cell.bank,cell.index,cell.lease
- sync.lock(&bank.mu);bank.cells[index].channel=nil;bank.cells[index].returning=true;sync.unlock(&bank.mu)
+ sync.lock(&bank.mu)
+ bank.cells[index].channel=nil
+ bank.cells[index].returning=true
+ sync.unlock(&bank.mu)
  notification:=cell.wake
  signal.release(&notification)
  for &chunk in cell.uploads {owned.destroy(&chunk)}
@@ -152,18 +160,26 @@ release :: proc(cell:^Channel) {
 }
 
 adopt_lease :: proc(cell:^Channel,source:^scopes.Lease) {
- sync.lock(&cell.mu);cell.lease=source^;source^={};sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ cell.lease=source^
+ source^={}
+ sync.unlock(&cell.mu)
 }
 
 set_notify :: proc(cell:^Channel,source:signal.Signal) {
  next,_:=signal.retain(source)
- sync.lock(&cell.mu);previous:=cell.wake;cell.wake=next;sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ previous:=cell.wake
+ cell.wake=next
+ sync.unlock(&cell.mu)
  signal.release(&previous)
 }
 
 @(private)
 notify :: proc(cell:^Channel) {
- sync.lock(&cell.mu);wake,_:=signal.retain(cell.wake);sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ wake,_:=signal.retain(cell.wake)
+ sync.unlock(&cell.mu)
  _=signal.wake(wake)
  signal.release(&wake)
 }
@@ -190,7 +206,8 @@ create_value :: proc($T:typeid,allocator:mem.Allocator)->(^T,mem.Allocator_Error
 }
 
 reserve_output :: proc(cell:^Channel)->(^Output,[]u8) {
- sync.lock(&cell.mu);defer sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ defer sync.unlock(&cell.mu)
  if cell.closed {return nil,nil}
  for &slot in cell.outputs[:cell.bank.limits.response_chunks] {
   if slot.state==.Free {slot.state=.Filling;return &slot,slot.storage}
@@ -200,10 +217,14 @@ reserve_output :: proc(cell:^Channel)->(^Output,[]u8) {
 
 publish_output :: proc(slot:^Output,count:int)->bool {
  cell:=slot.channel
- sync.lock(&cell.mu);defer sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ defer sync.unlock(&cell.mu)
  assert(slot.state==.Filling && count>=0 && count<=len(slot.storage))
  if cell.closed || count==0 {slot.state=.Free;return false}
- cell.sequence+=1;slot.sequence=cell.sequence;slot.used=count;slot.state=.Ready
+ cell.sequence+=1
+ slot.sequence=cell.sequence
+ slot.used=count
+ slot.state=.Ready
  return true
 }
 
@@ -211,7 +232,8 @@ abandon_output :: proc(slot:^Output) {
  if slot==nil {return}
  sync.lock(&slot.channel.mu)
  assert(slot.state==.Filling)
- slot.state=.Free;slot.used=0
+ slot.state=.Free
+ slot.used=0
  sync.unlock(&slot.channel.mu)
 }
 
@@ -225,7 +247,8 @@ next :: proc(cell:^Channel,destination:^owned.Chunk)->(Read_Status,Error) {
  }
  if selected!=nil {
   if cell.references==max(int) {sync.unlock(&cell.mu);return .Pending,{kind=.Capacity}}
-  selected.state=.Taken;cell.references+=1
+  selected.state=.Taken
+  cell.references+=1
   destination^={data=selected.storage[:selected.used],storage=selected.storage,
     release=output_release,user_data=selected}
   sync.unlock(&cell.mu)
@@ -240,10 +263,12 @@ next :: proc(cell:^Channel,destination:^owned.Chunk)->(Read_Status,Error) {
 
 @(private)
 output_release :: proc(storage:[]u8,data:rawptr) {
- slot:=cast(^Output)data;cell:=slot.channel
+ slot:=cast(^Output)data
+ cell:=slot.channel
  sync.lock(&cell.mu)
  assert(slot.state==.Taken && raw_data(storage)==raw_data(slot.storage) && len(storage)==len(slot.storage))
- slot.state=.Free;slot.used=0
+ slot.state=.Free
+ slot.used=0
  sync.unlock(&cell.mu)
  notify(cell)
  release(cell)
@@ -260,23 +285,30 @@ head_empty :: proc(head:^Head)->bool {
 }
 
 publish_head :: proc(cell:^Channel,response:^surf.Response,length:i64,encoding:Encoding)->bool {
- sync.lock(&cell.mu);defer sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ defer sync.unlock(&cell.mu)
  if cell.closed || cell.head_ready || cell.head_taken {return false}
  cell.header_bytes=len(response.header_storage)+len(response.headers)*size_of(http.Header)
- cell.head=response^;response^={}
- cell.wire_length=length;cell.encoding=encoding;cell.head_ready=true
+ cell.head=response^
+ response^={}
+ cell.wire_length=length
+ cell.encoding=encoding
+ cell.head_ready=true
  return true
 }
 
 take_head :: proc(cell:^Channel,destination:^Head)->Error {
  if destination==nil || aliases(cell,destination,size_of(Head)) || !head_empty(destination) {return {kind=.Invalid}}
- sync.lock(&cell.mu);defer sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ defer sync.unlock(&cell.mu)
  if cell.head_ready {
   if cell.references==max(int) {return {kind=.Capacity}}
   cell.references+=1
   destination^={response=cell.head,wire_content_length=cell.wire_length,
     delivery=cell.encoding,_owner=cell}
-  cell.head={};cell.head_ready=false;cell.head_taken=true
+  cell.head={}
+  cell.head_ready=false
+  cell.head_taken=true
   return {}
  }
  if cell.head_taken {return {kind=.Invalid}}
@@ -287,7 +319,8 @@ take_head :: proc(cell:^Channel,destination:^Head)->Error {
 
 head_destroy :: proc(head:^Head) {
  if head==nil {return}
- old:=head^;head^={}
+ old:=head^
+ head^={}
  surf.response_destroy(&old.response)
  if old._owner!=nil {sync.lock(&old._owner.mu);old._owner.header_bytes=0;sync.unlock(&old._owner.mu)}
  release(old._owner)
@@ -301,7 +334,9 @@ complete :: proc(cell:^Channel,error:surf.HTTP_Error) {
   cell.closed=true
   for &slot in cell.outputs {if slot.state==.Ready {slot.state=.Free;slot.used=0}}
  }
- notification:=cell.wake;cell.wake={}
+
+ notification:=cell.wake
+ cell.wake={}
  sync.unlock(&cell.mu)
  signal.release(&notification)
  stop_upload(cell)
@@ -311,27 +346,39 @@ release_request :: proc(cell:^Channel) {
  if cell==nil {return}
  sync.lock(&cell.mu)
  assert(!cell.request_released)
- cell.request_released=true;cell.closed=true
+ cell.request_released=true
+ cell.closed=true
  for &slot in cell.outputs {if slot.state==.Ready {slot.state=.Free;slot.used=0}}
- response:=cell.head;cell.head={};cell.head_ready=false
- notification:=cell.wake;cell.wake={}
+ response:=cell.head
+ cell.head={}
+ cell.head_ready=false
+ notification:=cell.wake
+ cell.wake={}
  sync.unlock(&cell.mu)
  signal.release(&notification)
  surf.response_destroy(&response)
- sync.lock(&cell.mu);if !cell.head_taken {cell.header_bytes=0};sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+
+ if !cell.head_taken {
+  cell.header_bytes=0
+ }
+
+ sync.unlock(&cell.mu)
  stop_upload(cell)
  release(cell)
 }
 
 is_closed :: proc(cell:^Channel)->bool {
- sync.lock(&cell.mu);defer sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ defer sync.unlock(&cell.mu)
  return cell.closed
 }
 
 bank_stats :: proc(bank:^Bank)->Stats {
  if bank==nil {return {}}
  result:Stats
- sync.lock(&bank.mu);defer sync.unlock(&bank.mu)
+ sync.lock(&bank.mu)
+ defer sync.unlock(&bank.mu)
  for entry in bank.cells {
   if !entry.reserved {continue}
   result.streams+=1
@@ -460,17 +507,20 @@ upload_submit :: proc(cell:^Channel,source:^owned.Chunk)->(Upload_Status,Error) 
  }
  sync.lock(&cell.mu)
  if cell.closed || cell.upload_finished || cell.upload_stopped {
-  sync.unlock(&cell.mu);return .Closed,{}
+  sync.unlock(&cell.mu)
+  return .Closed,{}
  }
  length,upload:=cell.options.upload_length.?
  if !upload {sync.unlock(&cell.mu);return .Invalid,{kind=.Invalid}}
  if u64(len(source.data))>u64(length)-cell.upload_received {
-  sync.unlock(&cell.mu);return .Limit_Exceeded,{}
+  sync.unlock(&cell.mu)
+  return .Limit_Exceeded,{}
  }
  bytes_limit:=limits.max_retained_bytes_per_stream-len(cell.output_storage)
  if cell.upload_queued+cell.upload_active==limits.upload_chunks ||
     len(source.storage)>bytes_limit-cell.upload_bytes {
-  sync.unlock(&cell.mu);return .Backpressure,{}
+  sync.unlock(&cell.mu)
+  return .Backpressure,{}
  }
  index:=(cell.upload_head+cell.upload_queued)%limits.upload_chunks
  assert(owned.move(&cell.uploads[index],source))
@@ -497,13 +547,15 @@ upload_finish :: proc(cell:^Channel,source_error:io.Error=nil)->Error {
 
 // The active write remains charged after this move and through its destructor.
 upload_take :: proc(cell:^Channel,destination:^owned.Chunk)->(bool,bool,surf.HTTP_Error) {
- sync.lock(&cell.mu);defer sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ defer sync.unlock(&cell.mu)
  if cell.upload_error.kind!=.None {return false,false,cell.upload_error}
  if cell.upload_queued>0 {
   assert(cell.upload_active==0)
   assert(owned.move(destination,&cell.uploads[cell.upload_head]))
   cell.upload_head=(cell.upload_head+1)%cell.bank.limits.upload_chunks
-  cell.upload_queued-=1;cell.upload_active+=1
+  cell.upload_queued-=1
+  cell.upload_active+=1
   return true,false,{}
  }
  return false,cell.upload_finished || cell.upload_stopped,{}
@@ -514,7 +566,8 @@ upload_release :: proc(cell:^Channel,chunk:^owned.Chunk) {
  owned.destroy(chunk)
  sync.lock(&cell.mu)
  assert(cell.upload_active==1 && cell.upload_bytes>=bytes)
- cell.upload_active=0;cell.upload_bytes-=bytes
+ cell.upload_active=0
+ cell.upload_bytes-=bytes
  sync.unlock(&cell.mu)
 }
 
@@ -526,16 +579,21 @@ stop_upload :: proc(cell:^Channel) {
  cell.upload_stopped=true
  for &chunk,i in cell.uploads {
   bytes+=len(chunk.storage)
-  discarded[i]=chunk;chunk={}
+  discarded[i]=chunk
+  chunk={}
  }
- cell.upload_queued=0;cell.upload_head=0
+ cell.upload_queued=0
+ cell.upload_head=0
  sync.unlock(&cell.mu)
  for &chunk in discarded {owned.destroy(&chunk)}
- sync.lock(&cell.mu);cell.upload_bytes-=bytes;sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ cell.upload_bytes-=bytes
+ sync.unlock(&cell.mu)
 }
 
 // Producer failure wakes the actor even while an accepted write is blocked.
 upload_failure :: proc(cell:^Channel)->surf.HTTP_Error {
- sync.lock(&cell.mu);defer sync.unlock(&cell.mu)
+ sync.lock(&cell.mu)
+ defer sync.unlock(&cell.mu)
  return cell.upload_error
 }

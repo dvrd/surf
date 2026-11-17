@@ -15,13 +15,24 @@ Http3_Body :: struct {body:[dynamic]u8,limit:int,allocation:mem.Allocator_Error}
 http3_body_write :: proc(data:rawptr,chunk:[]u8,final:bool)->(int,http3.Body_Status) {
  b:=cast(^Http3_Body)data
  if len(chunk)>b.limit-len(b.body){return 0,.Failed}
- n,e:=append(&b.body,..chunk);if e!=nil {b.allocation=e;return n,.Failed};return n,.Ready
+ n,e:=append(&b.body,..chunk)
+
+ if e!=nil {
+  b.allocation=e
+  return n,.Failed
+ }
+
+ return n,.Ready
 }
 @(private)
 http3_body_init :: proc(b:^Http3_Body,config:Config,allocator:mem.Allocator)->HTTP_Error {
- b.limit=config.max_body_size;if b.limit==0{b.limit=http.DEFAULT_MAX_BODY_SIZE}
+ b.limit=config.max_body_size
+ if b.limit==0{b.limit=http.DEFAULT_MAX_BODY_SIZE}
  if b.limit<0||b.limit>http.MAX_BODY_SIZE{return {kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}}
- body,e:=make([dynamic]u8,0,allocator);if e!=nil{return {kind=.Allocation_Failed,phase=.Configuration,allocation=e,write_effect=.Not_Sent}};b.body=body;return {}
+ body,e:=make([dynamic]u8,0,allocator)
+ if e!=nil{return {kind=.Allocation_Failed,phase=.Configuration,allocation=e,write_effect=.Not_Sent}}
+ b.body=body
+ return {}
 }
 
 // Fixed discovery table. A full slot replaces the oldest entry.
@@ -115,7 +126,9 @@ execute_http3 :: proc(
  aggregate:Http3_Body
  if e:=http3_body_init(&aggregate,config,allocator);e.kind!=.None{return {},e}
  defer delete(aggregate.body)
- sink:=http3.Body_Sink{data=&aggregate,write=http3_body_write};wire.body_sink=&sink;wire.max_response_bytes=aggregate.limit
+ sink:=http3.Body_Sink{data=&aggregate,write=http3_body_write}
+ wire.body_sink=&sink
+ wire.max_response_bytes=aggregate.limit
 	result: http3.Client_Result
 	if config.http3_pool != nil {
 		result = http3.pool_exchange_request(config.http3_pool, endpoint, url.host, wire, config.tls.root_cas, deadline)
@@ -130,7 +143,10 @@ execute_http3 :: proc(
 	}
  response,e:=http3_response(&result,allocator)
  if e.kind!=.None{return {},e}
- delete(response.body_storage);response.body_storage=aggregate.body;aggregate.body={};response.body=response.body_storage[:]
+ delete(response.body_storage)
+ response.body_storage=aggregate.body
+ aggregate.body={}
+ response.body=response.body_storage[:]
  return response,{}
 }
 
@@ -226,9 +242,11 @@ http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -
 	for i in 0..<result.header_count {
 		field, _ := http3.client_result_header(result, i)
 		copied := copy(storage[at:], field.name)
-		headers[i].name = string(storage[at:at+copied]); at += copied
+		headers[i].name = string(storage[at:at+copied])
+		at += copied
 		copied = copy(storage[at:], field.value)
-		headers[i].value = string(storage[at:at+copied]); at += copied
+		headers[i].value = string(storage[at:at+copied])
+		at += copied
 	}
  if trailer_error:=http3_response_trailers(&response,result,allocator);trailer_error.kind!=.None {response_destroy(&response);return {},trailer_error}
  return response, {}
@@ -350,8 +368,12 @@ http3_response_trailers :: proc(response: ^Response, result: ^http3.Client_Resul
 	at:=0
 	for i in 0..<result.trailer_count {
 		field,_:=http3.client_result_trailer(result,i)
-		n:=copy(storage[at:],field.name);fields[i].name=string(storage[at:at+n]);at+=n
-		n=copy(storage[at:],field.value);fields[i].value=string(storage[at:at+n]);at+=n
+		n:=copy(storage[at:],field.name)
+		fields[i].name=string(storage[at:at+n])
+		at+=n
+		n=copy(storage[at:],field.value)
+		fields[i].value=string(storage[at:at+n])
+		at+=n
 	}
 	return {}
 }
@@ -385,51 +407,106 @@ HTTP3_Tunnel :: struct {
 // share the same authenticated QUIC connection while tunnels remain open.
 websocket_http3_open :: proc(client:^HTTP_Client,tunnel:^HTTP3_Tunnel,connection:^WebSocket_Conn,url:string,config:WebSocket_Config,headers:[]http.Header=nil)->HTTP_Error {
  if client==nil || client._self!=client || tunnel==nil || tunnel.wire.owner!=nil || connection==nil || connection.phase!=.Uninitialized || client.config.http3_pool==nil {return {kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}}
- slot:=-1;for entry,i in client.http3_tunnels {if entry==nil {slot=i;break}};if slot<0 {return {kind=.Invalid_Config,phase=.Admission,write_effect=.Not_Sent}}
- parsed,pe:=http.url_parse(url);if pe.kind!=.None || !parsed.secure {return {kind=.Invalid_URL,phase=.Configuration,write_effect=.Not_Sent}}
- options:=config;options.host=parsed.authority;options.target=parsed.target;if options.target=="" {options.target="/"}
+ slot:=-1
+
+ for entry,i in client.http3_tunnels {
+  if entry==nil {
+   slot=i
+   break
+  }
+ }
+
+ if slot<0 {
+  return {kind=.Invalid_Config,phase=.Admission,write_effect=.Not_Sent}
+ }
+
+ parsed,pe:=http.url_parse(url)
+
+ if pe.kind!=.None || !parsed.secure {
+  return {kind=.Invalid_URL,phase=.Configuration,write_effect=.Not_Sent}
+ }
+
+ options:=config
+ options.host=parsed.authority
+ options.target=parsed.target
+
+ if options.target=="" {
+  options.target="/"
+ }
  stream:=WebSocket_Stream{data=tunnel,read=h3_tunnel_read,write=h3_tunnel_write,close=h3_tunnel_close,abort=h3_tunnel_abort,set_read_deadline=h3_tunnel_read_deadline,set_write_deadline=h3_tunnel_write_deadline}
  if websocket_client(connection,stream,options)!=.None {return {kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}}
- committed:=false;defer if !committed {connection^={};_=h3_tunnel_abort(tunnel)}
+ committed:=false
+ defer if !committed {
+  connection^={}
+  _=h3_tunnel_abort(tunnel)
+ }
  deadline:=websocket_tunnel_deadline(client.config,options.handshake_timeout)
- fields:[59]http3.Field;count:=1;fields[0]={name="sec-websocket-version",value="13"}
+ fields:[59]http3.Field
+ count:=1
+ fields[0]={name="sec-websocket-version",value="13"}
  if options.origin!="" {fields[count]={name="origin",value=options.origin};count+=1}
  protocols:[1024]u8
  offered,offered_fits:=websocket_protocols_join(protocols[:],options.subprotocols)
  if !offered_fits {return {kind=.Header_Limit}}
  if offered!="" {fields[count]={name="sec-websocket-protocol",value=offered};count+=1}
- names:[4096]u8;at:=0
+ names:[4096]u8
+ at:=0
  for header in headers {
   if count>=len(fields) {return {kind=.Header_Limit}}
   name,fits:=field_name_lower(names[:],&at,header.name)
   if !fits {return {kind=.Header_Limit}}
   if name=="sec-websocket-key" || name=="sec-websocket-accept" || name=="sec-websocket-version" || name=="sec-websocket-extensions" || name=="sec-websocket-protocol" || name=="origin" {return {kind=.Invalid_Header,phase=.Configuration,write_effect=.Not_Sent}}
-  fields[count]={name=name,value=header.value,never_indexed=name=="authorization" || name=="cookie"};count+=1
+  fields[count]={name=name,value=header.value,never_indexed=name=="authorization" || name=="cookie"}
+  count+=1
  }
  port:=http3_dial_port(client.config.alt_svc,parsed.host,parsed.port,time.now())
- endpoint,re:=http3_resolve(parsed.host,port,deadline,client.config.resolver);if re.kind!=.None {return re}
- tunnel.client=client;intrinsics.atomic_store(&client.cancel,0)
+ endpoint,re:=http3_resolve(parsed.host,port,deadline,client.config.resolver)
+
+ if re.kind!=.None {
+  return re
+ }
+
+ tunnel.client=client
+ intrinsics.atomic_store(&client.cancel,0)
  request:=http3.Client_Request{method="CONNECT",protocol="websocket",authority=parsed.authority,target=options.target,headers=fields[:count],qpack=client.config.http3_qpack,ecn=client.config.http3_ecn,client_credentials=client.config.tls.client_credentials,client_credential_lease=client.config.tls.client_credential_lease}
  e:=http3.pool_connect_open(client.config.http3_pool,endpoint,parsed.host,request,client.config.tls.root_cas,deadline,&tunnel.wire)
  if e!=.None {return http3_map_error(http3.Client_Result{error=e},deadline)}
- selected:="";seen:=false
+ selected:=""
+ seen:=false
  for field in tunnel.wire.headers[:tunnel.wire.header_count] {
   if strings.equal_fold(field.name,"sec-websocket-protocol") {if seen {return {kind=.Invalid_Header}};seen=true;selected=field.value}
   if strings.equal_fold(field.name,"sec-websocket-extensions") || strings.equal_fold(field.name,"sec-websocket-accept") {return {kind=.Invalid_Header}}
  }
  if seen && !websocket_subprotocol_accept(connection,options.subprotocols,selected) {return {kind=.Invalid_Header}}
- client.http3_tunnels[slot]=tunnel;connection.phase=.Open;committed=true;return {}
+ client.http3_tunnels[slot]=tunnel
+ connection.phase=.Open
+ committed=true
+ return {}
 }
 @(private)
 h3_tunnel_deadline :: proc(t:^HTTP3_Tunnel,write:bool)->time.Time {
- deadline:=t.read_deadline;if write {deadline=t.write_deadline};if deadline==(time.Time{}) {deadline=time.time_add(time.now(),effective_timeout(t.client.config))};return deadline
+ deadline:=t.read_deadline
+
+ if write {
+  deadline=t.write_deadline
+ }
+
+ if deadline==(time.Time{}) {
+  deadline=time.time_add(time.now(),effective_timeout(t.client.config))
+ }
+
+ return deadline
 }
 @(private)
 h3_tunnel_progress :: proc(t:^HTTP3_Tunnel,write:bool)->WebSocket_Stream_Error {
  if t.client==nil || t.wire.owner==nil {return {kind=.Invalid_Stream}}
  if h2_cancelled(&t.client.cancel) {http3.client_connect_abort(&t.wire);return {kind=.TCP_Failed,transport={kind=.Cancelled}}}
  e:=http3.client_connect_step(&t.wire,h3_tunnel_deadline(t,write))
- if e==.None {return {}};return {kind=.TCP_Failed,transport={kind=.Timeout if e==.Deadline else .Cancelled if e==.Cancelled else .Protocol_Failed}}
+ if e==.None {
+  return {}
+ }
+
+ return {kind=.TCP_Failed,transport={kind=.Timeout if e==.Deadline else .Cancelled if e==.Cancelled else .Protocol_Failed}}
 }
 @(private)
 h3_tunnel_read :: proc(data:rawptr,dst:[]u8)->(int,WebSocket_Stream_Error) {
@@ -442,7 +519,13 @@ h3_tunnel_read :: proc(data:rawptr,dst:[]u8)->(int,WebSocket_Stream_Error) {
 h3_tunnel_write :: proc(data:rawptr,src:[]u8)->(int,WebSocket_Stream_Error) {
  t:=cast(^HTTP3_Tunnel)data
  for {n,status:=http3.connect_write(&t.wire.stream,src);if status==.None {if e:=h3_tunnel_progress(t,true);e.kind!=.None {return n,e};return n,{}}
-  if status!=.Pending {return n,{kind=.TCP_Failed}};if e:=h3_tunnel_progress(t,true);e.kind!=.None {return 0,e}
+  if status!=.Pending {
+   return n,{kind=.TCP_Failed}
+  }
+
+  if e:=h3_tunnel_progress(t,true);e.kind!=.None {
+   return 0,e
+  }
  }
 }
 @(private)
@@ -451,11 +534,23 @@ h3_tunnel_abort :: proc(data:rawptr)->WebSocket_Stream_Error {t:=cast(^HTTP3_Tun
 h3_tunnel_unlink :: proc(t:^HTTP3_Tunnel) {if t.client!=nil {for &entry in t.client.http3_tunnels {if entry==t {entry=nil}}};t.client=nil}
 @(private)
 h3_tunnel_close :: proc(data:rawptr)->WebSocket_Stream_Error {
- t:=cast(^HTTP3_Tunnel)data;if t.wire.owner==nil {return {}}
- e:=http3.client_connect_finish(&t.wire,h3_tunnel_deadline(t,true));if e!=.None {_=h3_tunnel_abort(t);return {kind=.TCP_Failed}}
+ t:=cast(^HTTP3_Tunnel)data
+
+ if t.wire.owner==nil {
+  return {}
+ }
+
+ e:=http3.client_connect_finish(&t.wire,h3_tunnel_deadline(t,true))
+
+ if e!=.None {
+  _=h3_tunnel_abort(t)
+  return {kind=.TCP_Failed}
+ }
  // FIN is queued and the owning client retains its bounded stream state until
  // the peer FIN arrives; detach only this handle, never the QUIC connection.
- http3.client_connect_detach(&t.wire);h3_tunnel_unlink(t);return {}
+ http3.client_connect_detach(&t.wire)
+ h3_tunnel_unlink(t)
+ return {}
 }
 @(private)
 h3_tunnel_read_deadline :: proc(data:rawptr,deadline:time.Time)->WebSocket_Stream_Error {(cast(^HTTP3_Tunnel)data).read_deadline=deadline;return {}}

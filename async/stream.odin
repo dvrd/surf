@@ -14,7 +14,8 @@ import "core:mem/owned"
 
 @(private)
 session_stream_channel :: proc(a:^Session_Actor)->^stream_api.Channel {
- sync.lock(&a.owner.kernel.mu);defer sync.unlock(&a.owner.kernel.mu)
+ sync.lock(&a.owner.kernel.mu)
+ defer sync.unlock(&a.owner.kernel.mu)
  request:=admission_request_locked(&a.owner.kernel,a.request)
  if request==nil || request.stream==nil {return nil}
  assert(stream_api.retain(request.stream))
@@ -79,14 +80,16 @@ session_stream_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runtim
  if result.error.kind!=.None {
   error:=result.error
   if a.tls_initialized {error.tls_io=tls_api.async_failure(&a.tls)}
-  session_error(a,error);return .Yield
+  session_error(a,error)
+  return .Yield
  }
  if result.status!=.Done {
   if result.status!=.Waiting {return .Yield}
   sleep:=runtime_async.sleep_until_earlier(a.owner.runtime,a.cutoff)
   if sleep.kind==.None {return .Yield}
   if sleep.kind!=.Pending {
-   session_error(a,{kind=.IO_Failed,phase=.Cancellation,transport={kind=.Cancelled}});return .Yield
+   session_error(a,{kind=.IO_Failed,phase=.Cancellation,transport={kind=.Cancelled}})
+   return .Yield
   }
   return .Waiting
  }
@@ -94,7 +97,8 @@ session_stream_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runtim
  if exchange_api.stream_exchange_take_redirect(engine,&response) {
   if redirect_response(a,&response) {return .Yield}
   surf.response_destroy(&response)
-  session_error(a,{kind=.Invalid_Config,phase=.Protocol});return .Yield
+  session_error(a,{kind=.Invalid_Config,phase=.Protocol})
+  return .Yield
  }
  fresh,clock:=network_clock(a.owner)
  failure:surf.HTTP_Error
@@ -107,8 +111,10 @@ session_stream_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runtim
  }
  response.status=engine.status
  if failure.kind!=.None {
-  failure.status=engine.status;failure.write_effect=.Response_Received
-  session_error(a,failure);return .Yield
+  failure.status=engine.status
+  failure.write_effect=.Response_Received
+  session_error(a,failure)
+  return .Yield
  }
  if error:=network_assignment_finish(a,&response,{});error.kind!=.None {
   if error.kind!=.Pending {session_error(a,{kind=.Invalid_Config,phase=.Configuration})}
@@ -136,7 +142,13 @@ stream_client_error :: proc(cause:stream_api.Error)->Client_Error {
 
 client_submit_stream :: proc(c:^Client,request:http.Request,options:Stream_Options,
  deadline:runtime_async.Deadline={})->(Request_Handle,Client_Error) {
- s,error:=client_enter(c);if error.kind!=.None {return {},error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return {},error
+ }
+
+ defer client_leave(s)
  selected,selection:=submission_budget(s,deadline)
  if selection.kind!=.None {return {},selection}
  if s.stream_bank==nil {return {},{kind=.Invalid_Config}}
@@ -154,7 +166,8 @@ client_submit_stream :: proc(c:^Client,request:http.Request,options:Stream_Optio
 
 @(private)
 client_stream_ref :: proc(s:^Client_State,handle:Request_Handle)->(^stream_api.Channel,Client_Error) {
- sync.lock(&s.kernel.mu);defer sync.unlock(&s.kernel.mu)
+ sync.lock(&s.kernel.mu)
+ defer sync.unlock(&s.kernel.mu)
  request:=admission_request_locked(&s.kernel,handle)
  if request==nil {return nil,{kind=.Invalid_Handle}}
  if request.stream==nil || !stream_api.retain(request.stream) {return nil,{kind=.Invalid_State}}
@@ -162,36 +175,76 @@ client_stream_ref :: proc(s:^Client_State,handle:Request_Handle)->(^stream_api.C
 }
 
 client_stream_take_head :: proc(c:^Client,handle:Request_Handle,destination:^Stream_Head)->Client_Error {
- s,error:=client_enter(c);if error.kind!=.None {return error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return error
+ }
+
+ defer client_leave(s)
  if destination==nil || client_stream_destination_alias(s,c,destination,size_of(Stream_Head)) {return {kind=.Invalid_State}}
- cell,cause:=client_stream_ref(s,handle);if cause.kind!=.None {return cause}
+ cell,cause:=client_stream_ref(s,handle)
+
+ if cause.kind!=.None {
+  return cause
+ }
  defer stream_api.release(cell)
  return stream_client_error(stream_api.take_head(cell,destination))
 }
 
 client_stream_next :: proc(c:^Client,handle:Request_Handle,destination:^owned.Chunk)->(Stream_Read_Status,Client_Error) {
- s,error:=client_enter(c);if error.kind!=.None {return .Pending,error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return .Pending,error
+ }
+
+ defer client_leave(s)
  if destination==nil || client_stream_destination_alias(s,c,destination,size_of(owned.Chunk)) {return .Pending,{kind=.Invalid_State}}
- cell,cause:=client_stream_ref(s,handle);if cause.kind!=.None {return .Pending,cause}
+ cell,cause:=client_stream_ref(s,handle)
+
+ if cause.kind!=.None {
+  return .Pending,cause
+ }
  defer stream_api.release(cell)
  status,next:=stream_api.next(cell,destination)
  return status,stream_client_error(next)
 }
 
 client_upload_submit :: proc(c:^Client,handle:Request_Handle,source:^owned.Chunk)->(Upload_Submit_Status,Client_Error) {
- s,error:=client_enter(c);if error.kind!=.None {return .Closed,error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return .Closed,error
+ }
+
+ defer client_leave(s)
  if source==nil || client_stream_destination_alias(s,c,source,size_of(owned.Chunk)) {return .Invalid,{kind=.Invalid_State}}
  if gate:=client_upload_gate(s,handle);gate.kind!=.None {return .Closed,gate}
- cell,cause:=client_stream_ref(s,handle);if cause.kind!=.None {return .Invalid,cause}
+ cell,cause:=client_stream_ref(s,handle)
+
+ if cause.kind!=.None {
+  return .Invalid,cause
+ }
  defer stream_api.release(cell)
  status,next:=stream_api.upload_submit(cell,source)
  return status,stream_client_error(next)
 }
 
 client_upload_finish :: proc(c:^Client,handle:Request_Handle,source_error:io.Error=nil)->Client_Error {
- s,error:=client_enter(c);if error.kind!=.None {return error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return error
+ }
+
+ defer client_leave(s)
  if gate:=client_upload_gate(s,handle);gate.kind!=.None {return gate}
- cell,cause:=client_stream_ref(s,handle);if cause.kind!=.None {return cause}
+ cell,cause:=client_stream_ref(s,handle)
+
+ if cause.kind!=.None {
+  return cause
+ }
  defer stream_api.release(cell)
  return stream_client_error(stream_api.upload_finish(cell,source_error))
 }
@@ -217,7 +270,8 @@ client_stream_destination_alias :: proc(s:^Client_State,c:^Client,destination:ra
 client_upload_gate :: proc(s:^Client_State,handle:Request_Handle)->Client_Error {
  now,clock:=network_clock(s)
  if clock.kind!=.None {return clock}
- sync.lock(&s.kernel.mu);defer sync.unlock(&s.kernel.mu)
+ sync.lock(&s.kernel.mu)
+ defer sync.unlock(&s.kernel.mu)
  request:=admission_request_locked(&s.kernel,handle)
  if request==nil {return {kind=.Invalid_Handle}}
  if request.state!=.Queued && request.state!=.Active {return {kind=.Closed}}

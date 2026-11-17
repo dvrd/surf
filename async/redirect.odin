@@ -72,7 +72,8 @@ redirect_response :: proc(a:^Session_Actor,response:^surf.Response)->bool {
  // dispose any remainder before its next fresh deadline/cancellation barrier.
  surf.response_destroy(response)
  if cause.kind!=.None {
-  session_error(a,redirect_status_error(redirect_client_error(cause),status));return true
+  session_error(a,redirect_status_error(redirect_client_error(cause),status))
+  return true
  }
  now,clock:=network_clock(s)
  if clock.kind!=.None {session_error(a,redirect_client_error(clock));return true}
@@ -88,7 +89,9 @@ redirect_response :: proc(a:^Session_Actor,response:^surf.Response)->bool {
 @(private)
 redirect_closed_begin :: proc(a:^Session_Actor) {
  if a.redirect.phase!=.Ready {return}
- s:=a.owner;h:=a.redirect.request;status:=a.redirect.last_status
+ s:=a.owner
+ h:=a.redirect.request
+ status:=a.redirect.last_status
  if a.request==(Request_Handle{}) {return} // Begin already owns Returning.
  assert(a.request==h)
  primary:=a.error
@@ -99,7 +102,10 @@ redirect_closed_begin :: proc(a:^Session_Actor) {
   sync.lock(&s.mu)
   next,cause:=kernel_redirect_begin(&s.kernel,h,now)
   if cause.kind==.None {
-   disposal=next;s.returning_calls+=1;network_queue_forget_locked(s,h);a.request={}
+   disposal=next
+   s.returning_calls+=1
+   network_queue_forget_locked(s,h)
+   a.request={}
   } else {primary=redirect_client_error(cause)}
   sync.unlock(&s.mu)
  }
@@ -192,7 +198,8 @@ redirect_allocator_proc :: proc(data:rawptr,mode:mem.Allocator_Mode,size,alignme
     // A known base pointer authorizes only this recorded whole grant. Never
     // forward those sentinels or a caller-provided extent to the backing.
     if old_size!=0 && len(grant.storage)!=old_size || alignment!=0 && grant.alignment!=alignment {break}
-    old:=grant;grant={}
+    old:=grant
+    grant={}
     return state.backing.procedure(state.backing.data,.Free,0,old.alignment,raw_data(old.storage),len(old.storage),location)
    }
   }
@@ -222,14 +229,16 @@ redirect_allocator_init :: proc(state:^Redirect_Allocator,backing:mem.Allocator)
 redirect_allocator_detach :: proc(state:^Redirect_Allocator,storage:[]u8,alignment:int)->bool {
  for &grant in state.grants {
   if raw_data(grant.storage)==raw_data(storage) && len(grant.storage)==len(storage) && grant.alignment==alignment {
-   grant={};return true
+   grant={}
+   return true
   }
  }
  return false
 }
 @(private)
 redirect_allocator_destroy :: proc(state:^Redirect_Allocator) {
- old:=state^;state^={}
+ old:=state^
+ state^={}
  for grant in old.grants {
   if raw_data(grant.storage)!=nil {_,_=old.backing.procedure(old.backing.data,.Free,0,grant.alignment,raw_data(grant.storage),len(grant.storage))}
  }
@@ -253,7 +262,8 @@ redirect_cutoff_locked :: proc(k:^Kernel,r:^Request_Slot,now:runtime_async.Deadl
 // remains in the accepted request until final success/failure, across all hops.
 kernel_redirect_begin :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadline)->(Request_Disposal,Client_Error) {
  if k==nil || k.self!=k {return {},{kind=.Invalid_State}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  r:=admission_request_locked(k,h)
  if r==nil {return {},{kind=.Invalid_Handle}}
  if r.state!=.Active || r.error.kind!=.None || !completion_empty(&r.response) || r.completion_queued ||
@@ -273,9 +283,17 @@ kernel_redirect_begin :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadl
  // release cannot retire that origin or invoke any allocator callback.
  assert(error.kind==.None && detached.origin.slot==0)
  disposal:=Request_Disposal{request=h,returning_to=.Preparing,input=r.input,origin=detached}
- r.input={};r.origin={};r.state=.Returning;r.returning_to=.Preparing;r.stage=.Redirecting
- k.counters.active_requests-=1;k.returning+=1;k.counters.returning_requests+=1;k.references+=1
- k.dispatch_dirty=true;k.idle_dirty=true
+ r.input={}
+ r.origin={}
+ r.state=.Returning
+ r.returning_to=.Preparing
+ r.stage=.Redirecting
+ k.counters.active_requests-=1
+ k.returning+=1
+ k.counters.returning_requests+=1
+ k.references+=1
+ k.dispatch_dirty=true
+ k.idle_dirty=true
  return disposal,{}
 }
 
@@ -284,7 +302,8 @@ kernel_redirect_begin :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadl
 // never recycle the request generation or append an intermediate completion.
 kernel_redirect_ready :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadline)->Client_Error {
  if k==nil || k.self!=k {return {kind=.Invalid_State}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  r:=admission_request_locked(k,h)
  if r==nil {return {kind=.Invalid_Handle}}
  if r.state!=.Returning || r.returning_to!=.Preparing || r.stage!=.Redirecting ||
@@ -292,10 +311,14 @@ kernel_redirect_ready :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadl
     r.error.kind!=.None || r.completion_queued || k.returning<1 || k.counters.returning_requests<1 ||
     k.references<=1 || k.preparing==max(int) || k.counters.preparing_requests==max(int) {return {kind=.Invalid_State}}
  if error:=redirect_cutoff_locked(k,r,now);error.kind!=.None {return error}
- r.state=.Preparing;r.returning_to=.Free
+ r.state=.Preparing
+ r.returning_to=.Free
  // Redirecting distinguishes an already accepted Preparing ticket from an
  // original producer reservation; only the accepted form may use Fail below.
- k.returning-=1;k.counters.returning_requests-=1;k.preparing+=1;k.counters.preparing_requests+=1
+ k.returning-=1
+ k.counters.returning_requests-=1
+ k.preparing+=1
+ k.counters.preparing_requests+=1
  k.dispatch_dirty=true
  return {}
 }
@@ -306,7 +329,8 @@ kernel_redirect_ready :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadl
 kernel_redirect_fail :: proc(k:^Kernel,h:Request_Handle,primary:surf.HTTP_Error)->(Request_Disposal,Client_Error) {
  if k==nil || k.self!=k {return {},{kind=.Invalid_State}}
  if primary.kind==.None {return {},{kind=.Invalid_Config}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  r:=admission_request_locked(k,h)
  if r==nil {return {},{kind=.Invalid_Handle}}
  returning:=r.state==.Returning && r.returning_to==.Preparing
@@ -325,13 +349,23 @@ kernel_redirect_fail :: proc(k:^Kernel,h:Request_Handle,primary:surf.HTTP_Error)
    assert(error.kind==.None)
    disposal.origin=origin
   }
-  k.preparing-=1;k.counters.preparing_requests-=1;k.returning+=1;k.counters.returning_requests+=1
+  k.preparing-=1
+  k.counters.preparing_requests-=1
+  k.returning+=1
+  k.counters.returning_requests+=1
  }
  // Preparing and Returning both already own one Kernel bookkeeping reference.
  // Transfer it to terminal Returning without adding or dropping another one.
- r.input={};r.origin={};r.session={};r.lease={};r.error=primary
- r.state=.Returning;r.returning_to=.Completed;r.stage=.Retiring
- k.dispatch_dirty=true;k.idle_dirty=true
+ r.input={}
+ r.origin={}
+ r.session={}
+ r.lease={}
+ r.error=primary
+ r.state=.Returning
+ r.returning_to=.Completed
+ r.stage=.Retiring
+ k.dispatch_dirty=true
+ k.idle_dirty=true
  return disposal,{}
 }
 
@@ -347,7 +381,7 @@ redirect_dispose :: proc(s:^Client_State,disposal:^Request_Disposal) {
 @(private)
 redirect_live_error :: proc(a:^Session_Actor,h:Request_Handle,now:runtime_async.Deadline)->surf.HTTP_Error {
  s:=a.owner
- sync.lock(&s.mu);sync.lock(&s.kernel.mu)
+ network_lock_both(s)
  r:=admission_request_locked(&s.kernel,h)
  result:surf.HTTP_Error
  if r==nil || now.epoch!=r.deadline.epoch || now.at<=0 {result={kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}
@@ -355,13 +389,14 @@ redirect_live_error :: proc(a:^Session_Actor,h:Request_Handle,now:runtime_async.
  } else if s.phase!=.Published || s.kernel.closed || r.cancel_requested || runtime_async.cancelled(&a.task) {
   result={kind=.IO_Failed,transport={kind=.Cancelled},phase=.Cancellation,write_effect=.Not_Sent}
  }
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  return result
 }
 
 @(private)
 redirect_terminal :: proc(a:^Session_Actor,error:surf.HTTP_Error) {
- s:=a.owner;h:=a.redirect.request
+ s:=a.owner
+ h:=a.redirect.request
  primary:=redirect_status_error(error,a.redirect.last_status)
  assert(primary.kind!=.None)
  // Snapshot scalar custody before destruction clears the move-only target.
@@ -374,19 +409,24 @@ redirect_terminal :: proc(a:^Session_Actor,error:surf.HTTP_Error) {
  sync.unlock(&s.mu)
  for {
   redirect_dispose(s,&disposal)
-  now,clock:=network_clock(s);assert(clock.kind==.None)
-  next,done,finish:=kernel_cleanup_finish(&s.kernel,h,now);assert(finish.kind==.None)
+  now,clock:=network_clock(s)
+  assert(clock.kind==.None)
+  next,done,finish:=kernel_cleanup_finish(&s.kernel,h,now)
+  assert(finish.kind==.None)
   disposal=next
   if done {break}
  }
  sync.lock(&s.mu)
- assert(s.returning_calls>0);s.returning_calls-=1;network_queue_changed_locked(s)
+ assert(s.returning_calls>0)
+ s.returning_calls-=1
+ network_queue_changed_locked(s)
  sync.unlock(&s.mu)
 }
 
 @(private)
 redirect_requeue :: proc(a:^Session_Actor) {
- s:=a.owner;h:=a.redirect.request
+ s:=a.owner
+ h:=a.redirect.request
  now,clock:=network_clock(s)
  if clock.kind!=.None {redirect_terminal(a,redirect_client_error(clock));return}
  if error:=redirect_live_error(a,h,now);error.kind!=.None {redirect_terminal(a,error);return}
@@ -405,12 +445,15 @@ redirect_requeue :: proc(a:^Session_Actor) {
  sync.lock(&s.mu)
  metadata:=&s.requests[int(h.slot)-1]
  assert(metadata.generation==h.generation)
- metadata.redirects=a.redirect.next_hop;metadata.last_status=a.redirect.last_status
+ metadata.redirects=a.redirect.next_hop
+ metadata.last_status=a.redirect.last_status
  commit:=network_queue_committed_locked(s,{request=h},&a.redirect.input,fresh)
  if commit.kind==.None {
   assert(a.redirect.input.storage==nil && a.redirect.origin.storage==nil)
   a.redirect={}
-  assert(s.returning_calls>0);s.returning_calls-=1;network_queue_changed_locked(s)
+  assert(s.returning_calls>0)
+  s.returning_calls-=1
+  network_queue_changed_locked(s)
  }
  sync.unlock(&s.mu)
  if commit.kind!=.None {redirect_terminal(a,redirect_client_error(commit));return}
@@ -492,7 +535,8 @@ redirect_prepare :: proc(target:^Redirect_Handoff,profile:^Profile,handle:Reques
  base,parse_error:=http.url_parse(current.url)
  if parse_error.kind!=.None {return {kind=.Request_Error,http={kind=parse_error.kind}}}
  target.phase=.Preparing
- consumed:=response^;response^={}
+ consumed:=response^
+ response^={}
  checked:Redirect_Allocator
  input:Request_Owner
  origin:Prepared_Origin
@@ -512,7 +556,8 @@ redirect_prepare :: proc(target:^Redirect_Handoff,profile:^Profile,handle:Reques
  url,error:=surf.execute_redirect(&consumed,current,base,profile.config.http,redirects,temporary)
  if checked.failure.kind!=.None {return redirect_preparation_error(checked.failure,status)}
  if error.kind!=.None {return redirect_preparation_error({kind=.Request_Error,http=error},status)}
- next:=current;next.url=url
+ next:=current
+ next.url=url
  cloned,clone_error:=request_clone(next,allocator)
  if clone_error.kind!=.None {return redirect_preparation_error(clone_error,status)}
  input=cloned
@@ -523,7 +568,8 @@ redirect_prepare :: proc(target:^Redirect_Handoff,profile:^Profile,handle:Reques
 // Detach the exact whole grant before replacing its allocator with permanent
 // provenance. Temporary cleanup then owns only the helper's surviving URL.
  assert(redirect_allocator_detach(&checked,prepared.storage,1))
- prepared.allocator=allocator;origin=prepared
+ prepared.allocator=allocator
+ origin=prepared
  success=true
  return {}
 }
@@ -533,7 +579,8 @@ redirect_prepare :: proc(target:^Redirect_Handoff,profile:^Profile,handle:Reques
 // free; that callback may destroy/free the public handoff header itself.
 redirect_handoff_destroy :: proc(target:^Redirect_Handoff) {
  if target==nil || target.phase==.Preparing {return}
- old:=target^;target^={}
+ old:=target^
+ target^={}
  request_owner_destroy(&old.input)
  origin_destroy(&old.origin)
 }

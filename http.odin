@@ -84,7 +84,8 @@ Response :: struct {
 }
 response_destroy :: proc(response: ^Response) {
 	if response == nil do return
-	old := response^; response^ = {}
+	old := response^
+	response^ = {}
 	if old.allocator.procedure != nil {
 		delete(old.trailers,old.allocator)
  delete(old.trailer_storage,old.allocator)
@@ -988,19 +989,23 @@ redirect_path_normalize :: proc(dst: []u8, target: string) -> int {
 	at := 0
 	for len(path) > 0 {
 		if strings.has_prefix(path, "../") {
-			path = path[3:]; continue
+			path = path[3:]
+			continue
 		}
 
 		if strings.has_prefix(path, "./") {
-			path = path[2:]; continue
+			path = path[2:]
+			continue
 		}
 
 		if strings.has_prefix(path, "/./") {
-			path = path[2:]; continue
+			path = path[2:]
+			continue
 		}
 
 		if path == "/." {
-			path = "/"; continue
+			path = "/"
+			continue
 		}
 
 		if strings.has_prefix(path, "/../") || path == "/.." {
@@ -1134,7 +1139,8 @@ budget_begin :: proc(
 		else do ctx.coverage = retained
 	}
 	if failure.kind != .None {
-		budget_cleanup(&ctx); return {}, {}, failure
+		budget_cleanup(&ctx)
+		return {}, {}, failure
 	}
 	return ctx, allocator, {}
 }
@@ -1175,7 +1181,8 @@ budget_error :: proc(reason: resources.Error) -> HTTP_Error {
 }
 @(private)
 budget_cleanup :: proc(ctx: ^Budget_Context) {
-	old := ctx^; ctx^ = {}
+	old := ctx^
+	ctx^ = {}
 	if old.temporary_initialized do mem.dynamic_arena_destroy(&old.temporary)
 	charged.release(&old.binding)
 	resources.release_scope(&old.coverage)

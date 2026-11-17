@@ -70,7 +70,8 @@ pool_select_locked :: proc(k:^Kernel,key:Origin_Key,now:i64,allow_new:bool)->(Po
  }
  new_session:=false
  if allow_new && session_index==0 && selected.sessions<k.config.capacities.connections_per_origin && k.session_free_count>0 {
-  session_index=k.session_free[k.session_free_count-1];new_session=true
+  session_index=k.session_free[k.session_free_count-1]
+  new_session=true
  }
  waiting:=session_index==0
  if waiting && selected.waiters>=k.config.capacities.waiters_per_origin {return {},{kind=.Capacity}}
@@ -95,7 +96,8 @@ pool_reserve_policy :: proc(k:^Kernel,preparing:Preparing_Request,origin:^Prepar
  if origin==nil || origin.key.profile_id!=k.profile.owner_id || origin.key.port==0 || len(origin.key.host)==0 ||
     len(origin.storage)!=len(origin.key.host) || raw_data(origin.storage)!=raw_data(origin.key.host) ||
     origin.allocator.procedure==nil || now<0 {return {},{kind=.Invalid_Config}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  if k.closed {return {},{kind=.Closed}}
  request:=pool_request_locked(k,preparing.request)
  if request==nil {return {},{kind=.Invalid_Handle}}
@@ -107,14 +109,18 @@ pool_reserve_policy :: proc(k:^Kernel,preparing:Preparing_Request,origin:^Prepar
  origin_handle:=selection.origin
  selected:=&k.origins[int(origin_handle.slot)-1]
  if selection.new_origin {
-  selected.state=.Occupied;selected.owner=origin^;origin^={}
-  k.origin_free_count-=1;k.counters.origins+=1
+  selected.state=.Occupied
+  selected.owner=origin^
+  origin^={}
+  k.origin_free_count-=1
+  k.counters.origins+=1
  }
  assert(kernel_origin_retain_locked(k,origin_handle,.Request).kind==.None)
  assert(kernel_origin_retain_locked(k,origin_handle,.Preparing).kind==.None)
  request.origin=origin_handle
  reservation:=Pool_Reservation{request=preparing.request,origin=origin_handle,waiting=selection.waiting}
- k.dispatch_dirty=true;k.idle_dirty=true
+ k.dispatch_dirty=true
+ k.idle_dirty=true
  if selection.waiting {assert(kernel_origin_retain_locked(k,origin_handle,.Waiter).kind==.None);return reservation,{}}
  session_index:=selection.session.slot
  session:=&k.sessions[int(session_index)-1]
@@ -126,7 +132,9 @@ pool_reserve_policy :: proc(k:^Kernel,preparing:Preparing_Request,origin:^Prepar
   session^={generation=generation,state=.Free,created_at=now,origin=origin_handle}
  }
  if previous==.Idle {k.counters.idle_connections-=1}
- session.reserved_from=previous;session.state=.Reserved;session.request=preparing.request
+ session.reserved_from=previous
+ session.state=.Reserved
+ session.request=preparing.request
  k.counters.reserved_connections+=1
  reservation.session={slot=session_index,generation=session.generation}
  request.session=reservation.session
@@ -136,7 +144,8 @@ pool_reserve_policy :: proc(k:^Kernel,preparing:Preparing_Request,origin:^Prepar
 pool_session_state :: proc(k:^Kernel,handle:Cell_Handle,state:Session_State,now:i64)->Client_Error {
  if k==nil || k.self!=k {return {kind=.Invalid_State}}
  if now<0 {return {kind=.Invalid_Config}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  session:=pool_session_locked(k,handle)
  if session==nil {return {kind=.Invalid_Handle}}
  previous:=session.state
@@ -149,7 +158,8 @@ pool_session_state :: proc(k:^Kernel,handle:Cell_Handle,state:Session_State,now:
   // Transport close can begin before the active request's terminal cleanup.
  } else {return {kind=.Invalid_State}}
  session.state=state
- k.dispatch_dirty=true;k.idle_dirty=true
+ k.dispatch_dirty=true
+ k.idle_dirty=true
  if state==.Idle {session.idle_since=now}
  if previous==.Connecting {k.counters.connecting_connections-=1}
  if previous==.Busy {k.counters.active_connections-=1}
@@ -173,7 +183,8 @@ pool_retire :: proc(k:^Kernel,handle:Cell_Handle)->Client_Error {
  // Keep this session and Kernel alive until all physical origin cleanup returns.
  session.state=.Returning
  k.references+=1
- k.dispatch_dirty=true;k.idle_dirty=true
+ k.dispatch_dirty=true
+ k.idle_dirty=true
  sync.unlock(&k.mu)
  origin_ticket:=disposal.origin
  origin_disposal_destroy(&disposal)
@@ -185,10 +196,15 @@ pool_retire :: proc(k:^Kernel,handle:Cell_Handle)->Client_Error {
  generation:=session.generation
  session^={generation=generation,state=.Retired}
  if generation!=max(u64) {
-  session.generation+=1;session.state=.Free
-  k.session_free[k.session_free_count]=handle.slot;k.session_free_count+=1
+  session.generation+=1
+  session.state=.Free
+  k.session_free[k.session_free_count]=handle.slot
+  k.session_free_count+=1
  }
- k.counters.retiring_connections-=1;k.references-=1;k.dispatch_dirty=true;k.idle_dirty=true
+ k.counters.retiring_connections-=1
+ k.references-=1
+ k.dispatch_dirty=true
+ k.idle_dirty=true
  if k.counters.close_count!=max(u64) {k.counters.close_count+=1}
  sync.unlock(&k.mu)
  return {}
@@ -238,10 +254,14 @@ network_dns_refill :: proc(s:^Client_State,ids:[]u16)->Client_Error {
  if !network_state_retain(s) {return {kind=.Closed}}
  sync.lock(&s.mu)
  if s.phase==.Closing || s.phase==.Disposing {
-  sync.unlock(&s.mu);network_state_release(s);return {kind=.Closed}
+  sync.unlock(&s.mu)
+  network_state_release(s)
+  return {kind=.Closed}
  }
  if len(ids)>len(s.dns_ids)-s.dns_count {
-  sync.unlock(&s.mu);network_state_release(s);return {kind=.Capacity}
+  sync.unlock(&s.mu)
+  network_state_release(s)
+  return {kind=.Capacity}
  }
  for value,index in ids {s.dns_ids[(s.dns_head+s.dns_count+index)%len(s.dns_ids)]=value}
  s.dns_count+=len(ids)
@@ -260,12 +280,14 @@ network_dns_refill :: proc(s:^Client_State,ids:[]u16)->Client_Error {
 network_dns_reserve :: proc(s:^Client_State,maximum:int)->(DNS_ID_Block,Client_Error) {
  if !network_valid(s) {return {},{kind=.Invalid_State}}
  if maximum<1 || maximum>DNS_IDS_PER_QUERY {return {},{kind=.Invalid_Config}}
- sync.lock(&s.mu);defer sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ defer sync.unlock(&s.mu)
  if s.phase==.Closing || s.phase==.Disposing {return {},{kind=.Closed}}
  if s.dns_count==0 {return {},{kind=.Pending}}
  result:=DNS_ID_Block{count=min(maximum,s.dns_count)}
  for i in 0..<result.count {
-  result.values[i]=s.dns_ids[s.dns_head];s.dns_ids[s.dns_head]=0
+  result.values[i]=s.dns_ids[s.dns_head]
+  s.dns_ids[s.dns_head]=0
   s.dns_head=(s.dns_head+1)%len(s.dns_ids)
  }
  s.dns_count-=result.count
@@ -277,7 +299,8 @@ network_dns_reserve :: proc(s:^Client_State,maximum:int)->(DNS_ID_Block,Client_E
 // cleared variable is harmless; scalar copies do not authorize draw reuse.
 network_dns_burn :: proc(s:^Client_State,block:^DNS_ID_Block) {
  if block==nil {return}
- count:=block.count;block^={}
+ count:=block.count
+ block^={}
  if !network_valid(s) || count<0 || count>DNS_IDS_PER_QUERY {return}
  sync.lock(&s.mu)
  network_saturate(&s.dns_draws_burned,u64(count))
@@ -505,7 +528,8 @@ network_queue_claim_budget :: proc(s:^Client_State,preparing:Preparing_Request,o
  metadata:=Request_Network{generation=preparing.request.generation,query_budget_left=total_queries_remaining}
  address:=net.parse_address(origin.key.host)
  if address!=nil {
-  metadata.prepared_addresses[0]={address=address,port=int(origin.key.port)};metadata.prepared_address_count=1
+  metadata.prepared_addresses[0]={address=address,port=int(origin.key.port)}
+  metadata.prepared_address_count=1
  } else {
   metadata.needs_dns=true
   // Prepared resolver storage is immutable while this retained State lives.
@@ -525,7 +549,9 @@ network_queue_claim_budget :: proc(s:^Client_State,preparing:Preparing_Request,o
  request:=pool_request_locked(&s.kernel,preparing.request)
  if request==nil {sync.unlock(&s.kernel.mu);sync.unlock(&s.mu);return {},{kind=.Invalid_Handle}}
  if request.state!=.Preparing || request.origin.slot!=0 || request.session.slot!=0 || request.cancel_requested {
-  sync.unlock(&s.kernel.mu);sync.unlock(&s.mu);return {},{kind=.Invalid_State}
+  sync.unlock(&s.kernel.mu)
+  sync.unlock(&s.mu)
+  return {},{kind=.Invalid_State}
  }
  selection,selection_error:=pool_select_locked(&s.kernel,origin.key,now,false)
  sync.unlock(&s.kernel.mu)
@@ -545,7 +571,9 @@ network_queue_claim_budget :: proc(s:^Client_State,preparing:Preparing_Request,o
   sync.lock(&s.mu)
  }
  if s.phase==.Closing || s.phase==.Disposing {
-  sync.unlock(&s.mu);network_dns_burn(s,&block);return {},{kind=.Closed}
+  sync.unlock(&s.mu)
+  network_dns_burn(s,&block)
+  return {},{kind=.Closed}
  }
  reservation,error:=pool_reserve_policy(&s.kernel,preparing,origin,now,!metadata.needs_dns || block.count>0)
  if error.kind!=.None {sync.unlock(&s.mu);network_dns_burn(s,&block);return {},error}
@@ -635,8 +663,12 @@ pool_assign_locked :: proc(k:^Kernel,origin:Cell_Handle,session_index:u32,now:i6
  }
  session.reserved_from=.Free
  request.state=.Active
- k.counters.queued_requests-=1;k.counters.active_requests+=1
- k.dispatch_origin={};k.dispatch_session_cursor=0;k.dispatch_dirty=true;k.idle_dirty=true
+ k.counters.queued_requests-=1
+ k.counters.active_requests+=1
+ k.dispatch_origin={}
+ k.dispatch_session_cursor=0
+ k.dispatch_dirty=true
+ k.idle_dirty=true
  return {request=handle,session={slot=session_index,generation=session.generation}}
 }
 
@@ -645,17 +677,20 @@ pool_assign_locked :: proc(k:^Kernel,origin:Cell_Handle,session_index:u32,now:i6
 pool_dispatch :: proc(k:^Kernel,work:int,now:i64)->(Assignment,int,Client_Error) {
  if k==nil || k.self!=k {return {},0,{kind=.Invalid_State}}
  if work<1 || work>MAX_WORK_PER_RESUME || now<0 {return {},0,{kind=.Invalid_Config}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  if k.closed {return {},0,{kind=.Closed}}
  used:=0
  for used<work {
   if k.dispatch_origin.slot==0 {
    if k.dispatch_remaining==0 {
     if !k.dispatch_dirty {return {},used,{}}
-    k.dispatch_dirty=false;k.dispatch_remaining=len(k.origins)
+    k.dispatch_dirty=false
+    k.dispatch_remaining=len(k.origins)
    }
    index:=int(k.dispatch_cursor)%len(k.origins)
-   k.dispatch_cursor=u32((index+1)%len(k.origins));k.dispatch_remaining-=1
+   k.dispatch_cursor=u32((index+1)%len(k.origins))
+   k.dispatch_remaining-=1
    used+=1
    origin:=&k.origins[index]
    if origin.state!=.Occupied {continue}
@@ -667,10 +702,13 @@ pool_dispatch :: proc(k:^Kernel,work:int,now:i64)->(Assignment,int,Client_Error)
   origin:=&k.origins[int(origin_handle.slot)-1]
   if origin.state!=.Occupied || origin.generation!=origin_handle.generation {
    // A preceding API retired this origin; advancing metadata costs no scan.
-   k.dispatch_origin={};continue
+   k.dispatch_origin={}
+   continue
   }
   if int(k.dispatch_session_cursor)<len(k.sessions) {
-   index:=int(k.dispatch_session_cursor);k.dispatch_session_cursor+=1;used+=1
+   index:=int(k.dispatch_session_cursor)
+   k.dispatch_session_cursor+=1
+   used+=1
    session:=&k.sessions[index]
    if session.origin!=origin_handle {continue}
    if session.state==.Reserved {
@@ -697,7 +735,8 @@ pool_dispatch :: proc(k:^Kernel,work:int,now:i64)->(Assignment,int,Client_Error)
    session^={generation=generation,origin=origin_handle,created_at=now}
    return pool_assign_locked(k,origin_handle,index,now,true),used,{}
   }
-  k.dispatch_origin={};k.dispatch_session_cursor=0
+  k.dispatch_origin={}
+  k.dispatch_session_cursor=0
  }
  if k.dispatch_origin.slot==0 && k.dispatch_remaining==0 && !k.dispatch_dirty {return {},used,{}}
  return {},used,{kind=.Pending}
@@ -712,14 +751,19 @@ pool_deadline :: proc(start,duration:i64)->i64 {
 pool_idle_candidate :: proc(k:^Kernel,work:int,now:i64)->(Cell_Handle,int,Client_Error) {
  if k==nil || k.self!=k {return {},0,{kind=.Invalid_State}}
  if work<1 || work>MAX_WORK_PER_RESUME || now<0 {return {},0,{kind=.Invalid_Config}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  if k.idle_remaining==0 {
-  k.idle_remaining=len(k.sessions);k.idle_deadline=0;k.idle_dirty=false
+  k.idle_remaining=len(k.sessions)
+  k.idle_deadline=0
+  k.idle_dirty=false
  }
  used:=0
  for used<work {
   index:=int(k.idle_cursor)%len(k.sessions)
-  k.idle_cursor=u32((index+1)%len(k.sessions));k.idle_remaining-=1;used+=1
+  k.idle_cursor=u32((index+1)%len(k.sessions))
+  k.idle_remaining-=1
+  used+=1
   session:=&k.sessions[index]
   if session.state==.Idle {
    if k.closed || pool_expired(session,k,now) {return {slot=u32(index+1),generation=session.generation},used,{}}
@@ -730,7 +774,9 @@ pool_idle_candidate :: proc(k:^Kernel,work:int,now:i64)->(Cell_Handle,int,Client
    if !k.idle_dirty {return {},used,{}}
    // A mutation behind this cursor may already have consumed its external wake.
    // Recompute the entire deadline before allowing the coordinator to park.
-   k.idle_remaining=len(k.sessions);k.idle_deadline=0;k.idle_dirty=false
+   k.idle_remaining=len(k.sessions)
+   k.idle_deadline=0
+   k.idle_dirty=false
   }
  }
  return {},used,{kind=.Pending}

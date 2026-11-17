@@ -39,7 +39,9 @@ websocket_http2_open :: proc(client:^HTTP_Client,tunnel:^HTTP2_Tunnel,conn:^WebS
  intrinsics.atomic_store(&client.cancel,0)
  parsed,pe:=http.url_parse(url)
  if pe.kind!=.None || !parsed.secure {return {kind=.Invalid_URL,phase=.Configuration,write_effect=.Not_Sent}}
- options:=config;options.host=parsed.authority;options.target=parsed.target
+ options:=config
+ options.host=parsed.authority
+ options.target=parsed.target
  if options.target=="" {options.target="/"}
  stream:=WebSocket_Stream{data=tunnel,read=h2_tunnel_read,write=h2_tunnel_write,close=h2_tunnel_close,abort=h2_tunnel_abort,
   set_read_deadline=h2_tunnel_read_deadline,set_write_deadline=h2_tunnel_write_deadline}
@@ -47,22 +49,29 @@ websocket_http2_open :: proc(client:^HTTP_Client,tunnel:^HTTP2_Tunnel,conn:^WebS
  success:=false
  defer if !success {conn^={}}
  fields:[64]hpack.Field
- fields[0]={":method","CONNECT",false};fields[1]={":protocol","websocket",false}
- fields[2]={":scheme","https",false};fields[3]={":authority",parsed.authority,false};fields[4]={":path",options.target,false}
- fields[5]={"sec-websocket-version","13",false};count:=6
+ fields[0]={":method","CONNECT",false}
+ fields[1]={":protocol","websocket",false}
+ fields[2]={":scheme","https",false}
+ fields[3]={":authority",parsed.authority,false}
+ fields[4]={":path",options.target,false}
+ fields[5]={"sec-websocket-version","13",false}
+ count:=6
  if options.origin!="" {fields[count]={"origin",options.origin,false};count+=1}
  protocols:[1024]u8
  if len(options.subprotocols)>0 {
   offered,fits:=websocket_protocols_join(protocols[:],options.subprotocols)
   if !fits {return {kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
-  fields[count]={"sec-websocket-protocol",offered,false};count+=1
+  fields[count]={"sec-websocket-protocol",offered,false}
+  count+=1
  }
- names:[4096]u8;name_n:=0
+ names:[4096]u8
+ name_n:=0
  for header in headers {
   if count==len(fields) {return {kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
   name,fits:=field_name_lower(names[:],&name_n,header.name)
   if !fits {return {kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
-  fields[count]={name,header.value,name=="authorization"||name=="cookie"};count+=1
+  fields[count]={name,header.value,name=="authorization"||name=="cookie"}
+  count+=1
  }
  if _,e:=h2.headers_validate(fields[:count],.Request,{max_fields=64,max_list_bytes=8192,extended_connect_enabled=true});e.kind!=.None {
   return {kind=.Invalid_Header,phase=.Configuration,write_effect=.Not_Sent}
@@ -75,7 +84,14 @@ websocket_http2_open :: proc(client:^HTTP_Client,tunnel:^HTTP2_Tunnel,conn:^WebS
  if !reused {if e=h2_boot(lane,deadline,&client.cancel);e.kind!=.None {return e}}
  allowed,_,valid:=h2.connection_connect_protocol(&lane.engine)
  if !valid || !allowed {return {kind=.Invalid_Config,phase=.Protocol,write_effect=.Not_Sent}}
- index:=-1;for slot,i in lane.tunnels {if slot==nil {index=i;break}}
+ index:=-1
+
+ for slot,i in lane.tunnels {
+  if slot==nil {
+   index=i
+   break
+  }
+ }
  if index<0 {return {kind=.Invalid_Config,phase=.Admission,write_effect=.Not_Sent}}
  handle,opened:=h2.connection_open(&lane.engine,fields[:count],false)
  if opened.kind!=.None {return h2_map_error(opened,.Not_Sent,0)}
@@ -95,33 +111,51 @@ websocket_http2_open :: proc(client:^HTTP_Client,tunnel:^HTTP2_Tunnel,conn:^WebS
  }
  if extension,_:=response_header(&tunnel._response,"sec-websocket-extensions");extension!="" {return {kind=.Invalid_Header,phase=.Protocol,write_effect=.Response_Received}}
  response_destroy(&tunnel._response)
- conn.phase=.Open;tunnel._read_deadline={};tunnel._write_deadline={};success=true
+ conn.phase=.Open
+ tunnel._read_deadline={}
+ tunnel._write_deadline={}
+ success=true
  return {}
 }
 
 @(private)
 h2_tunnel_find :: proc(lane:^HTTP_Lane,handle:h2.Stream_Handle)->^HTTP2_Tunnel {
- for stream in lane.tunnels {if stream!=nil && stream._handle==handle {return stream}};return nil
+ for stream in lane.tunnels {
+  if stream!=nil && stream._handle==handle {
+   return stream
+  }
+ }
+
+ return nil
 }
 @(private)
 h2_tunnel_event :: proc(lane:^HTTP_Lane,event:h2.Event_View)->(handled,taken:bool,error:HTTP_Error) {
  #partial switch value in event.payload {
  case h2.Headers_Event:
-  stream:=h2_tunnel_find(lane,value.stream);if stream==nil {return false,false,{}}
+  stream:=h2_tunnel_find(lane,value.stream)
+
+  if stream==nil {
+   return false,false,{}
+  }
   if value.summary.status<200 {return true,false,{}}
   if stream._status!=0 || value.kind==.Trailers {stream._closed=true;stream._reset=true;return true,false,{}}
   stream._status=int(value.summary.status)
-  job:=H2_Job{status=stream._status};e:=h2_copy_headers(&job,value.summary.fields,lane.allocator);stream._response=job.response
+  job:=H2_Job{status=stream._status}
+  e:=h2_copy_headers(&job,value.summary.fields,lane.allocator)
+  stream._response=job.response
   stream._ended=value.end_stream
   return true,false,e
  case h2.Data_Event:
   stream:=h2_tunnel_find(lane,value.stream)
   if stream==nil {if h2_tunnel_retired(lane,value.stream) {return true,false,{}};return false,false,{}}
   if stream._count==len(stream._inputs) {_=h2.connection_reset(&lane.engine,value.stream,.Cancel);stream._closed=true;stream._reset=true;return true,false,{}}
-  at:=(stream._head+stream._count)%len(stream._inputs);entry:=&stream._inputs[at]
+  at:=(stream._head+stream._count)%len(stream._inputs)
+  entry:=&stream._inputs[at]
   e:=h2.connection_data_take(&lane.engine,event.token,&entry.owner)
   if e.kind!=.None {return true,false,h2_map_error(e,.Response_Received,stream._status)}
-  entry.credit=value.consumption;stream._count+=1;stream._ended=stream._ended||value.end_stream
+  entry.credit=value.consumption
+  stream._count+=1
+  stream._ended=stream._ended||value.end_stream
   return true,true,{}
  case h2.Stream_End_Event:
   if h2_tunnel_retired(lane,value.stream) {return true,false,{}}
@@ -148,11 +182,24 @@ h2_tunnel_progress :: proc(stream:^HTTP2_Tunnel,read:bool,force_read:bool=false)
  if de:=tls.set_deadline(lane.tls,deadline);de.kind!=.None {return {kind=.IO_Failed,phase=.Deadline,write_effect=.Response_Received,transport=de}}
  if h2_cancelled(&stream._client.cancel) {return {kind=.IO_Failed,phase=.Cancellation,write_effect=.Response_Received}}
  empty:[0]H2_Job
- _,e:=h2_service(lane,empty[:]);if e.kind!=.None {return e}
- _,e=h2_write_all(lane,empty[:]);if e.kind!=.None {return e}
+ _,e:=h2_service(lane,empty[:])
+
+ if e.kind!=.None {
+  return e
+ }
+
+ _,e=h2_write_all(lane,empty[:])
+
+ if e.kind!=.None {
+  return e
+ }
  if opening && stream._status!=0 {return {}}
  if !read || !force_read && stream._count>0 || stream._ended || stream._closed || stream._status!=0 && stream._status!=200 {return {}}
- n,re:=h2_read(lane);if re.kind!=.None {return re}
+ n,re:=h2_read(lane)
+
+ if re.kind!=.None {
+  return re
+ }
  return h2_feed(lane,empty[:],lane.read_buf[:n])
 }
 @(private)
@@ -164,13 +211,18 @@ h2_tunnel_read :: proc(data:rawptr,destination:[]u8)->(int,WebSocket_Stream_Erro
    if e:=h2_tunnel_progress(stream,true);e.kind!=.None {return 0,h2_tunnel_stream_error(e)}
   }
   if stream._count==0 {return 0,{kind=.TCP_Failed if stream._reset else .EOF}}
-  entry:=&stream._inputs[stream._head];bytes,ok:=h2.incoming_data_bytes(&entry.owner)
+  entry:=&stream._inputs[stream._head]
+  bytes,ok:=h2.incoming_data_bytes(&entry.owner)
   if !ok {return 0,{kind=.Invalid_Stream}}
-  n:=copy(destination,bytes[entry.offset:]);entry.offset+=n
+  n:=copy(destination,bytes[entry.offset:])
+  entry.offset+=n
   if n>0 {_=h2.connection_consume(&stream._lane.engine,entry.credit,u32(n))}
   if entry.offset==len(bytes) {
    if len(bytes)==0 {_=h2.connection_discard(&stream._lane.engine,entry.credit)}
-   h2.incoming_data_destroy(&entry.owner);entry^={};stream._head=(stream._head+1)%len(stream._inputs);stream._count-=1
+   h2.incoming_data_destroy(&entry.owner)
+   entry^={}
+   stream._head=(stream._head+1)%len(stream._inputs)
+   stream._count-=1
   }
   if n>0 {return n,{}}
  }
@@ -196,12 +248,16 @@ h2_tunnel_detach :: proc(stream:^HTTP2_Tunnel) {
  if lane==nil {return}
  for &entry in stream._inputs {
   if entry.credit!=(h2.Data_Token{}) {_=h2.connection_discard(&lane.engine,entry.credit)}
-  h2.incoming_data_destroy(&entry.owner);entry={}
+  h2.incoming_data_destroy(&entry.owner)
+  entry={}
  }
  response_destroy(&stream._response)
  for &slot in lane.tunnels {if slot==stream {slot=nil;break}}
  for &slot in lane.closed_tunnels {if slot=={} {slot=stream._handle;break}}
- stream._lane=nil;stream._client=nil;stream._closed=true;stream._count=0
+ stream._lane=nil
+ stream._client=nil
+ stream._closed=true
+ stream._count=0
 }
 @(private)
 h2_tunnel_abort :: proc(data:rawptr)->WebSocket_Stream_Error {
@@ -234,7 +290,13 @@ h2_tunnel_write_deadline :: proc(data:rawptr,deadline:time.Time)->WebSocket_Stre
 
 @(private)
 h2_tunnel_retired :: proc(lane:^HTTP_Lane,handle:h2.Stream_Handle)->bool {
- for retired in lane.closed_tunnels {if retired==handle {return true}};return false
+ for retired in lane.closed_tunnels {
+  if retired==handle {
+   return true
+  }
+ }
+
+ return false
 }
 @(private)
 h2_tunnel_reap :: proc(lane:^HTTP_Lane) {

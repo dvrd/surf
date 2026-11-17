@@ -80,7 +80,8 @@ network_coordinator_complete :: proc(s:^Client_State,handle:Request_Handle,error
   }
  }
  sync.lock(&s.mu)
- assert(s.returning_calls>0);s.returning_calls-=1
+ assert(s.returning_calls>0)
+ s.returning_calls-=1
  network_queue_changed_locked(s)
  sync.unlock(&s.mu)
  return failure
@@ -93,7 +94,8 @@ network_coordinator_request_step :: proc(s:^Client_State,now:runtime_async.Deadl
  sync.lock(&s.mu)
  if s.coordinator.scan_remaining==0 {sync.unlock(&s.mu);return false}
  index:=int(s.coordinator.request_cursor)%len(s.requests)
- s.coordinator.request_cursor=u32((index+1)%len(s.requests));s.coordinator.scan_remaining-=1
+ s.coordinator.request_cursor=u32((index+1)%len(s.requests))
+ s.coordinator.scan_remaining-=1
  sync.lock(&s.kernel.mu)
  request:=&s.kernel.requests[index]
  handle:=Request_Handle{owner_id=s.kernel.owner_id,slot=u32(index+1),generation=request.generation}
@@ -113,7 +115,7 @@ network_coordinator_request_step :: proc(s:^Client_State,now:runtime_async.Deadl
   next:=&s.coordinator.next_deadline
   if next.at==0 || request.deadline.at<next.at {next^=request.deadline}
  }
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  network_coordinator_wake(notification)
  if complete {
   error:=surf.HTTP_Error{kind=.Deadline_Failed,phase=.Deadline,write_effect=.Not_Sent}
@@ -126,35 +128,55 @@ network_coordinator_request_step :: proc(s:^Client_State,now:runtime_async.Deadl
 
 // One request metadata cell and at most one finite16-ID transfer. Only the
 // unassigned origin FIFO head is unparked; no later waiter bypasses that head.
+// Lock order: s.mu, then s.kernel.mu. Release in reverse.
+@(private)
+network_lock_both :: proc(s:^Client_State) {
+ sync.lock(&s.mu)
+ sync.lock(&s.kernel.mu)
+}
+
+@(private)
+network_unlock_both :: proc(s:^Client_State) {
+ sync.unlock(&s.kernel.mu)
+ sync.unlock(&s.mu)
+}
+
 @(private)
 network_coordinator_dns_step :: proc(s:^Client_State)->bool {
  sync.lock(&s.mu)
  index:=int(s.coordinator.dns_cursor)%len(s.requests)
  s.coordinator.dns_cursor=u32((index+1)%len(s.requests))
  sync.lock(&s.kernel.mu)
- request:=&s.kernel.requests[index];metadata:=&s.requests[index]
+ request:=&s.kernel.requests[index]
+ metadata:=&s.requests[index]
  handle:=Request_Handle{owner_id=s.kernel.owner_id,slot=u32(index+1),generation=request.generation}
  origin:=admission_origin_locked(&s.kernel,request.origin)
  eligible:=s.phase==.Published && request.state==.Queued && request.session.slot==0 && !request.cancel_requested &&
   metadata.generation==request.generation && metadata.awaiting_ids && metadata.ids.count==0 && metadata.query_budget_left>0 &&
   origin!=nil && origin.queue_head==handle.slot
  maximum:=min(DNS_IDS_PER_QUERY,metadata.query_budget_left)
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  if !eligible {return false}
  block,error:=network_dns_reserve(s,maximum)
  if error.kind!=.None {return false}
  installed:=false
- sync.lock(&s.mu);sync.lock(&s.kernel.mu)
- request=admission_request_locked(&s.kernel,handle);metadata=&s.requests[index]
+ network_lock_both(s)
+ request=admission_request_locked(&s.kernel,handle)
+ metadata=&s.requests[index]
  if s.phase==.Published && request!=nil && request.state==.Queued && request.session.slot==0 && !request.cancel_requested &&
     metadata.generation==handle.generation && metadata.awaiting_ids && metadata.ids.count==0 {
   origin=admission_origin_locked(&s.kernel,request.origin)
   if origin!=nil && origin.queue_head==handle.slot {
-   metadata.ids=block;block={};metadata.awaiting_ids=false;request.stage=.Queued
-   s.kernel.dispatch_dirty=true;network_queue_changed_locked(s);installed=true
+   metadata.ids=block
+   block={}
+   metadata.awaiting_ids=false
+   request.stage=.Queued
+   s.kernel.dispatch_dirty=true
+   network_queue_changed_locked(s)
+   installed=true
   }
  }
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  network_dns_burn(s,&block)
  return installed
 }
@@ -178,7 +200,7 @@ network_coordinator_dispatch_step :: proc(s:^Client_State,now:i64)->bool {
 
 @(private)
 network_coordinator_idle_step :: proc(s:^Client_State,now:i64)->bool {
- sync.lock(&s.mu);sync.lock(&s.kernel.mu)
+ network_lock_both(s)
  needs_scan:=s.kernel.idle_dirty || s.kernel.idle_remaining>0 || (s.kernel.idle_deadline>0 && now>=s.kernel.idle_deadline)
  sync.unlock(&s.kernel.mu)
  if !needs_scan {sync.unlock(&s.mu);return true}
@@ -187,11 +209,12 @@ network_coordinator_idle_step :: proc(s:^Client_State,now:i64)->bool {
  if candidate.slot!=0 {
   assert(pool_session_state(&s.kernel,candidate,.Retiring,now).kind==.None)
   actor:=&s.actors[int(candidate.slot)-1]
-  actor.command.retire=true;notification=actor.wake
+  actor.command.retire=true
+  notification=actor.wake
  }
  sync.lock(&s.kernel.mu)
  stable:=s.kernel.idle_remaining==0 && !s.kernel.idle_dirty
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  network_coordinator_wake(notification)
  return error.kind!=.Pending && candidate.slot==0 && stable
 }
@@ -221,7 +244,7 @@ network_coordinator_resume :: proc(data:rawptr)->runtime_async.Resume_Result {
   dispatch_stable=network_coordinator_dispatch_step(s,now.at)
   idle_stable=network_coordinator_idle_step(s,now.at)
  }
- sync.lock(&s.mu);sync.lock(&s.kernel.mu)
+ network_lock_both(s)
  closing:=s.phase==.Closing || s.kernel.closed
  done:=closing && s.kernel.preparing==0 && s.kernel.returning==0 && s.kernel.counters.queued_requests==0 &&
   s.kernel.counters.active_requests==0 && s.kernel.counters.reserved_connections==0 &&
@@ -234,7 +257,7 @@ network_coordinator_resume :: proc(data:rawptr)->runtime_async.Resume_Result {
  }
  if !closing && lifetime.epoch!=0 && (deadline.at==0 || lifetime.at<deadline.at) {deadline=lifetime}
  runtime:=s.runtime
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  if done {return .Done}
  if closing || !scanned || !dispatch_stable || !idle_stable {return .Yield}
  if deadline.at>0 {
@@ -255,7 +278,9 @@ network_coordinator_done :: proc(data:rawptr) {
  coordinator:=cast(^Coordinator_State)data
  if coordinator==nil || !network_valid(coordinator.owner) {return}
  s:=coordinator.owner
- sync.lock(&s.mu);drained:=coordinator.done;sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ drained:=coordinator.done
+ sync.unlock(&s.mu)
  network_task_done(s,0,drained)
 }
 
@@ -338,7 +363,9 @@ kernel_reserve :: proc(k:^Kernel,deadline:runtime_async.Deadline,lease:^scopes.L
   }
   if scopes.cost_of(lease^)!=(scopes.Cost{streams=1}) || scopes.phase_of(lease^)!=.None {return {},{kind=.Invalid_Config}}
  }
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  if k.closed {return {},{kind=.Closed}}
  if k.request_free_count==0 {return {},{kind=.Capacity}}
  if k.request_free_count<0 || k.request_free_count>len(k.request_free) || k.references<1 || k.references==max(int) || k.preparing==max(int) {return {},{kind=.Invalid_State}}
@@ -347,9 +374,14 @@ kernel_reserve :: proc(k:^Kernel,deadline:runtime_async.Deadline,lease:^scopes.L
  r:=&k.requests[int(index)-1]
  if r.state!=.Free || r.generation==0 {return {},{kind=.Invalid_State}}
  generation:=r.generation
- r^={generation=generation,state=.Preparing,stage=.Queued,deadline=selected,lease=lease^};lease^={}
- k.request_free_count-=1;k.request_free[k.request_free_count]=0
- k.preparing+=1;k.references+=1;k.counters.preparing_requests+=1;k.dispatch_dirty=true
+ r^={generation=generation,state=.Preparing,stage=.Queued,deadline=selected,lease=lease^}
+ lease^={}
+ k.request_free_count-=1
+ k.request_free[k.request_free_count]=0
+ k.preparing+=1
+ k.references+=1
+ k.counters.preparing_requests+=1
+ k.dispatch_dirty=true
  return {request={owner_id=k.owner_id,slot=index,generation=generation}},{}
 }
 
@@ -357,7 +389,8 @@ kernel_commit :: proc(k:^Kernel,p:Preparing_Request,input:^Request_Owner,now:run
  if k==nil || k.self!=k {return {kind=.Invalid_State}}
  url,validation:=admission_input(k,input)
  if validation.kind!=.None {return validation}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  r:=admission_request_locked(k,p.request)
  if r==nil {return {kind=.Invalid_Handle}}
  if r.state!=.Preparing {return {kind=.Invalid_State}}
@@ -387,8 +420,15 @@ kernel_commit :: proc(k:^Kernel,p:Preparing_Request,input:^Request_Owner,now:run
   if o.queue_tail!=0 {k.requests[int(o.queue_tail)-1].queue_next=p.request.slot} else {o.queue_head=p.request.slot}
   o.queue_tail=p.request.slot
  }
- r.input=input^;input^={};r.state=.Queued;r.stage=.Queued
- k.preparing-=1;k.references-=1;k.counters.preparing_requests-=1;k.counters.queued_requests+=1;k.dispatch_dirty=true
+ r.input=input^
+ input^={}
+ r.state=.Queued
+ r.stage=.Queued
+ k.preparing-=1
+ k.references-=1
+ k.counters.preparing_requests-=1
+ k.counters.queued_requests+=1
+ k.dispatch_dirty=true
  return {}
 }
 
@@ -421,7 +461,8 @@ admission_detach_claim_locked :: proc(k:^Kernel,h:Request_Handle,r:^Request_Slot
  if r.session.slot==0 {
   if o.waiters<1 {return {kind=.Invalid_State}}
   if r.state==.Queued {if error:=admission_unlink_waiter_locked(k,h.slot,r,o);error.kind!=.None {return error}}
-  disposal,error:=kernel_origin_release_locked(k,r.origin,.Waiter);assert(error.kind==.None && disposal.origin.slot==0)
+  disposal,error:=kernel_origin_release_locked(k,r.origin,.Waiter)
+  assert(error.kind==.None && disposal.origin.slot==0)
  } else {
   if u64(r.session.slot)>u64(len(k.sessions)) {return {kind=.Invalid_State}}
   s:=&k.sessions[int(r.session.slot)-1]
@@ -431,12 +472,17 @@ admission_detach_claim_locked :: proc(k:^Kernel,h:Request_Handle,r:^Request_Slot
    if s.reserved_from==.Free && (o.sessions<1 || s.generation!=max(u64) && k.session_free_count>=len(k.session_free)) {return {kind=.Invalid_State}}
    k.counters.reserved_connections-=1
    if s.reserved_from==.Idle {
-    s.state=.Idle;s.reserved_from=.Free;s.request={};k.counters.idle_connections+=1;k.idle_dirty=true
+    s.state=.Idle
+    s.reserved_from=.Free
+    s.request={}
+    k.counters.idle_connections+=1
+    k.idle_dirty=true
    } else {
     index,generation:=r.session.slot,s.generation
     s^={generation=generation,state=.Retired}
     if generation!=max(u64) {s.generation+=1;s.state=.Free;k.session_free[k.session_free_count]=index;k.session_free_count+=1}
-    disposal,error:=kernel_origin_release_locked(k,r.origin,.Session);assert(error.kind==.None && disposal.origin.slot==0)
+    disposal,error:=kernel_origin_release_locked(k,r.origin,.Session)
+    assert(error.kind==.None && disposal.origin.slot==0)
    }
   } else if r.state==.Active && (s.state==.Connecting || s.state==.Busy || s.state==.Retiring) {
    s.request={}
@@ -450,7 +496,8 @@ admission_detach_claim_locked :: proc(k:^Kernel,h:Request_Handle,r:^Request_Slot
 
 kernel_rollback :: proc(k:^Kernel,p:Preparing_Request)->(Request_Disposal,Client_Error) {
  if k==nil || k.self!=k {return {},{kind=.Invalid_State}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  r:=admission_request_locked(k,p.request)
  if r==nil {return {},{kind=.Invalid_Handle}}
  if r.state!=.Preparing || k.preparing<1 || k.references<=1 || k.references==max(int) {return {},{kind=.Invalid_State}}
@@ -458,16 +505,29 @@ kernel_rollback :: proc(k:^Kernel,p:Preparing_Request)->(Request_Disposal,Client
  result:=Request_Disposal{request=p.request,returning_to=.Free,input=r.input,response=r.response,lease=r.lease,stream=r.stream}
  r.stream=nil
  if r.origin.slot!=0 {
-  disposal,error:=kernel_origin_release_locked(k,r.origin,.Request);assert(error.kind==.None);result.origin=disposal
+  disposal,error:=kernel_origin_release_locked(k,r.origin,.Request)
+  assert(error.kind==.None)
+  result.origin=disposal
  }
- r.input={};r.response={};r.lease={};r.origin={};r.state=.Returning;r.returning_to=.Free;r.stage=.Retiring
- k.preparing-=1;k.counters.preparing_requests-=1;k.returning+=1;k.counters.returning_requests+=1;k.dispatch_dirty=true
+ r.input={}
+ r.response={}
+ r.lease={}
+ r.origin={}
+ r.state=.Returning
+ r.returning_to=.Free
+ r.stage=.Retiring
+ k.preparing-=1
+ k.counters.preparing_requests-=1
+ k.returning+=1
+ k.counters.returning_requests+=1
+ k.dispatch_dirty=true
  return result,{}
 }
 
 kernel_cancel :: proc(k:^Kernel,h:Request_Handle)->Client_Error {
  if k==nil || k.self!=k {return {kind=.Invalid_State}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  r:=admission_request_locked(k,h)
  if r==nil {return {kind=.Invalid_Handle}}
  if r.state==.Completed {return {}}
@@ -479,8 +539,11 @@ kernel_cancel :: proc(k:^Kernel,h:Request_Handle)->Client_Error {
 
 kernel_close :: proc(k:^Kernel)->Client_Error {
  if k==nil || k.self!=k {return {kind=.Invalid_State}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
- k.closed=true;k.dispatch_dirty=true;k.idle_dirty=true
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
+ k.closed=true
+ k.dispatch_dirty=true
+ k.idle_dirty=true
  for &r in k.requests {
   if r.state==.Preparing || r.state==.Queued || r.state==.Active || r.state==.Returning && r.returning_to==.Completed {
    if !r.cancel_requested {r.cancel_requested=true;if k.counters.cancel_count!=max(u64) {k.counters.cancel_count+=1}}
@@ -490,7 +553,8 @@ kernel_close :: proc(k:^Kernel)->Client_Error {
 }
 kernel_stage :: proc(k:^Kernel,h:Request_Handle)->(Request_Stage,Client_Error) {
  if k==nil || k.self!=k {return {},{kind=.Invalid_State}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  r:=admission_request_locked(k,h)
  if r==nil {return {},{kind=.Invalid_Handle}}
  return r.stage,{}
@@ -589,19 +653,25 @@ network_prepare :: proc(runtime:^runtime_async.Runtime,config:Normalized_Config,
   if entropy:=runtime_async.prepare_dns_ids(s.dns_ids);entropy.kind!=.None {return nil,{kind=.Runtime_Error,runtime=entropy}}
   s.dns_count=len(s.dns_ids)
  }
- s.coordinator.owner=s;s.coordinator.task.data=&s.coordinator;s.task_index[0]=&s.coordinator.task
+ s.coordinator.owner=s
+ s.coordinator.task.data=&s.coordinator
+ s.task_index[0]=&s.coordinator.task
  wake,ready:=signal.create(runtime,&s.coordinator.task)
  if !ready {return nil,{kind=.Allocation_Failed,http={kind=.Allocation_Failed,allocation=.Out_Of_Memory}}}
- s.coordinator.wake=wake;s.signal_cells+=1
+ s.coordinator.wake=wake
+ s.signal_cells+=1
  for &actor,index in s.actors {
-  actor.owner=s;actor.index=u32(index+1);actor.task.data=&actor
+  actor.owner=s
+  actor.index=u32(index+1)
+  actor.task.data=&actor
   s.task_index[index+1]=&actor.task
   if init:=exchange_api.exchange_init(&actor.exchange,{body_limit=config.response_body_limit},s.resources.allocator);init.kind!=.None {
    return nil,{kind=.Invalid_Config,http=init}
   }
   notification,created:=signal.create(runtime,&actor.task)
   if !created {return nil,{kind=.Allocation_Failed,http={kind=.Allocation_Failed,allocation=.Out_Of_Memory}}}
-  actor.wake=notification;s.signal_cells+=1
+  actor.wake=notification
+  s.signal_cells+=1
  }
  // Synchronous preparation may have taken time or raced Scope.close. No
  // expired/closed constructor is published merely because its first check won.
@@ -610,7 +680,8 @@ network_prepare :: proc(runtime:^runtime_async.Runtime,config:Normalized_Config,
  if probe:=network_scope_probe(s.resources.scope);probe.kind!=.None {return nil,probe}
  source,managed:=charged.allocator_scope(s.resources.allocator)
  if managed {if probe:=network_scope_probe(source);probe.kind!=.None {return nil,probe}}
- s.last_clock=now;s.producer_calls=0
+ s.last_clock=now
+ s.producer_calls=0
  success=true
  return s,{}
 }
@@ -622,9 +693,11 @@ network_cleanup_storage :: proc(s:^Client_State) {
  assert(network_valid(s))
  s.phase=.Disposing
  if s.kernel.self==&s.kernel {assert(kernel_destroy(&s.kernel).kind==.None)}
- signal.detach(s.coordinator.wake);signal.release(&s.coordinator.wake)
+ signal.detach(s.coordinator.wake)
+ signal.release(&s.coordinator.wake)
  for &actor in s.actors {
-  signal.detach(actor.wake);signal.release(&actor.wake)
+  signal.detach(actor.wake)
+  signal.release(&actor.wake)
   if actor.exchange._self==&actor.exchange {assert(exchange_api.exchange_destroy(&actor.exchange).kind==.None)}
  }
  stream_api.bank_close(&s.stream_bank)
@@ -632,12 +705,18 @@ network_cleanup_storage :: proc(s:^Client_State) {
  profile_destroy(&s.profile)
  allocator:=s.resources.allocator
  actors,requests,tasks,ids:=s.actors,s.requests,s.task_index,s.dns_ids
- s.actors=nil;s.requests=nil;s.task_index=nil;s.dns_ids=nil
- kernel_free_array(actors,allocator);kernel_free_array(requests,allocator)
- kernel_free_array(tasks,allocator);kernel_free_array(ids,allocator)
+ s.actors=nil
+ s.requests=nil
+ s.task_index=nil
+ s.dns_ids=nil
+ kernel_free_array(actors,allocator)
+ kernel_free_array(requests,allocator)
+ kernel_free_array(tasks,allocator)
+ kernel_free_array(ids,allocator)
  resources_destroy(&s.resources)
  backing:=s.backing
- s.backing={};s.self=nil
+ s.backing={}
+ s.self=nil
  kernel_free(backing.storage,align_of(Client_State),backing.allocator)
  scopes.release(&backing.lease)
 }
@@ -646,16 +725,21 @@ network_dispose_prepared :: proc(s:^Client_State)->Client_Error {
  if !network_valid(s) {return {kind=.Invalid_State}}
  sync.lock(&s.mu)
  if s.phase!=.Constructing || s.references!=1 || !s.base_owned || s.registered_tasks!=0 || s.producer_calls!=0 || s.returning_calls!=0 {
-  sync.unlock(&s.mu);return {kind=.Pending}
+  sync.unlock(&s.mu)
+  return {kind=.Pending}
  }
  // Kernel destroy is a no-mutation rejection when live children remain. Mark
  // this private State unavailable before any arbitrary raw destructor callback.
  s.phase=.Disposing
  sync.unlock(&s.mu)
  if error:=kernel_destroy(&s.kernel);error.kind!=.None {
-  sync.lock(&s.mu);s.phase=.Constructing;sync.unlock(&s.mu);return error
+  sync.lock(&s.mu)
+  s.phase=.Constructing
+  sync.unlock(&s.mu)
+  return error
  }
- s.base_owned=false;s.references=0
+ s.base_owned=false
+ s.references=0
  network_cleanup_storage(s)
  return {}
 }
@@ -671,20 +755,24 @@ completion_queue_unlink_locked :: proc(k:^Kernel,index:u32,r:^Request_Slot) {
  previous,next:=r.completion_previous,r.completion_next
  if previous==0 {k.completion_head=next} else {k.requests[int(previous)-1].completion_next=next}
  if next==0 {k.completion_tail=previous} else {k.requests[int(next)-1].completion_previous=previous}
- r.completion_previous,r.completion_next=0,0;r.completion_queued=false
+ r.completion_previous,r.completion_next=0,0
+ r.completion_queued=false
 }
 @(private)
 completion_queue_append_locked :: proc(k:^Kernel,index:u32,r:^Request_Slot) {
  assert(!r.completion_queued)
- r.completion_previous=k.completion_tail;r.completion_next=0
+ r.completion_previous=k.completion_tail
+ r.completion_next=0
  if k.completion_tail==0 {k.completion_head=index} else {k.requests[int(k.completion_tail)-1].completion_next=index}
- k.completion_tail=index;r.completion_queued=true
+ k.completion_tail=index
+ r.completion_queued=true
 }
 
 kernel_begin_complete :: proc(k:^Kernel,h:Request_Handle,response:^surf.Response,error:surf.HTTP_Error)->(Request_Disposal,Client_Error) {
  if k==nil || k.self!=k {return {},{kind=.Invalid_State}}
  if response==nil || admission_alias(k,response,size_of(surf.Response)) {return {},{kind=.Invalid_Config}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  r:=admission_request_locked(k,h)
  if r==nil {return {},{kind=.Invalid_Handle}}
  if r.state!=.Queued && r.state!=.Active {return {},{kind=.Pending}}
@@ -692,15 +780,25 @@ kernel_begin_complete :: proc(k:^Kernel,h:Request_Handle,response:^surf.Response
  if cause:=admission_detach_claim_locked(k,h,r);cause.kind!=.None {return {},cause}
  result:=Request_Disposal{request=h,returning_to=.Completed,input=r.input,lease=r.lease}
  if error.kind!=.None && r.stream!=nil {
-  assert(stream_api.retain(r.stream));result.stream_finish=r.stream;result.stream_error=error
+  assert(stream_api.retain(r.stream))
+  result.stream_finish=r.stream
+  result.stream_error=error
  }
  // A primary failure stays authoritative. Even an accidentally supplied owned
  // Response on that path must be detached and physically released, not hidden.
  if error.kind==.None {r.response=response^} else {result.response=response^;r.response={}}
- response^={};r.input={};r.lease={};r.error=error
+ response^={}
+ r.input={}
+ r.lease={}
+ r.error=error
  if r.state==.Queued {k.counters.queued_requests-=1} else {k.counters.active_requests-=1}
- r.state=.Returning;r.returning_to=.Completed;r.stage=.Retiring
- k.returning+=1;k.references+=1;k.counters.returning_requests+=1;k.dispatch_dirty=true
+ r.state=.Returning
+ r.returning_to=.Completed
+ r.stage=.Retiring
+ k.returning+=1
+ k.references+=1
+ k.counters.returning_requests+=1
+ k.dispatch_dirty=true
  return result,{}
 }
 
@@ -716,7 +814,8 @@ completion_late_failure :: proc(k:^Kernel,r:^Request_Slot,now:runtime_async.Dead
 
 kernel_cleanup_finish :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadline)->(Request_Disposal,bool,Client_Error) {
  if k==nil || k.self!=k {return {},false,{kind=.Invalid_State}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  r:=admission_request_locked(k,h)
  if r==nil {return {},false,{kind=.Invalid_Handle}}
  if r.state!=.Returning || (r.returning_to!=.Free && r.returning_to!=.Completed) || k.returning<1 || k.references<=1 {return {},false,{kind=.Invalid_State}}
@@ -726,14 +825,20 @@ kernel_cleanup_finish :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadl
    if error.kind!=.None {
     disposal:=Request_Disposal{request=h,returning_to=.Completed,response=r.response}
     if r.stream!=nil {assert(stream_api.retain(r.stream));disposal.stream_finish=r.stream;disposal.stream_error=error}
-    r.response={};r.error=error
+    r.response={}
+    r.error=error
     // Keep the same Returning reference and withhold publication until the
     // detached successful payload's final physical free has returned.
     return disposal,false,{}
    }
   }
-  r.state=.Completed;r.stage=.Completed;r.returning_to=.Free
-  k.returning-=1;k.references-=1;k.counters.returning_requests-=1;k.counters.completed_requests+=1
+  r.state=.Completed
+  r.stage=.Completed
+  r.returning_to=.Free
+  k.returning-=1
+  k.references-=1
+  k.counters.returning_requests-=1
+  k.counters.completed_requests+=1
   if (r.error.kind==.Deadline_Failed || r.error.phase==.Deadline) && k.counters.deadline_count!=max(u64) {k.counters.deadline_count+=1}
   completion_queue_append_locked(k,h.slot,r)
   return {},true,{}
@@ -743,16 +848,22 @@ kernel_cleanup_finish :: proc(k:^Kernel,h:Request_Handle,now:runtime_async.Deadl
  generation:=r.generation
  r^={generation=generation,state=.Retired}
  if generation!=max(u64) {
-  r.generation+=1;r.state=.Free
-  k.request_free[k.request_free_count]=h.slot;k.request_free_count+=1
+  r.generation+=1
+  r.state=.Free
+  k.request_free[k.request_free_count]=h.slot
+  k.request_free_count+=1
  }
- k.returning-=1;k.references-=1;k.counters.returning_requests-=1;k.dispatch_dirty=true
+ k.returning-=1
+ k.references-=1
+ k.counters.returning_requests-=1
+ k.dispatch_dirty=true
  return {},true,{}
 }
 
 kernel_poll :: proc(k:^Kernel)->(Completion,bool) {
  if k==nil || k.self!=k {return {},false}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  index:=k.completion_head
  if index==0 || u64(index)>u64(len(k.requests)) {return {},false}
  r:=&k.requests[int(index)-1]
@@ -779,9 +890,19 @@ completion_detach_locked :: proc(k:^Kernel,h:Request_Handle,r:^Request_Slot)->(R
   result.origin=disposal
  }
  completion_queue_unlink_locked(k,h.slot,r)
- r.origin={};r.session={};r.input={};r.response={};r.lease={}
- r.state=.Returning;r.returning_to=.Free;r.stage=.Retiring
- k.references+=1;k.returning+=1;k.counters.returning_requests+=1;k.counters.completed_requests-=1;k.dispatch_dirty=true
+ r.origin={}
+ r.session={}
+ r.input={}
+ r.response={}
+ r.lease={}
+ r.state=.Returning
+ r.returning_to=.Free
+ r.stage=.Retiring
+ k.references+=1
+ k.returning+=1
+ k.counters.returning_requests+=1
+ k.counters.completed_requests-=1
+ k.dispatch_dirty=true
  return result,{}
 }
 @(private)
@@ -810,7 +931,8 @@ kernel_take :: proc(k:^Kernel,h:Request_Handle,destination:^surf.Response)->Clie
  saved:=r.response
  disposal,error:=completion_detach_locked(k,h,r)
  if error.kind!=.None {sync.unlock(&k.mu);return error}
- destination^=saved;disposal.response={}
+ destination^=saved
+ disposal.response={}
  sync.unlock(&k.mu)
  return completion_dispose_and_finish(k,h,&disposal)
 }
@@ -834,7 +956,13 @@ client_drained_locked :: proc(s:^Client_State,own_call:bool)->bool {
   s.kernel.preparing==0 && s.kernel.returning==0 && s.kernel.counters.active_requests==0 && s.kernel.counters.queued_requests==0
 }
 client_close :: proc(c:^Client)->Client_Error {
- s,error:=client_enter(c);if error.kind!=.None {return error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return error
+ }
+
+ defer client_leave(s)
  network_close_state(s)
  sync.lock(&s.mu)
  runtime:=s.runtime
@@ -848,30 +976,30 @@ client_close :: proc(c:^Client)->Client_Error {
    for index in 0..<len(s.task_index) {network_task_done(s,index,false)}
   } else if retirement.kind!=.Already_Started && retirement.kind!=.Not_Registered {return {kind=.Runtime_Error,runtime=retirement}}
  }
- sync.lock(&s.mu);sync.lock(&s.kernel.mu)
+ network_lock_both(s)
  drained:=client_drained_locked(s,true)
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  if !drained {return {kind=.Pending}}
  return {}
 }
 client_quiescent :: proc(c:^Client)->bool {
  s,error:=client_enter(c);if error.kind!=.None {return false};defer client_leave(s)
- sync.lock(&s.mu);sync.lock(&s.kernel.mu)
+ network_lock_both(s)
  drained:=client_drained_locked(s,true)
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  return drained
 }
 client_destroy :: proc(c:^Client)->Client_Error {
  if c==nil || c._self!=c || c._state==nil {return {kind=.Invalid_State}}
  s:=cast(^Client_State)c._state
  if !network_valid(s) {return {kind=.Invalid_State}}
- sync.lock(&s.mu);sync.lock(&s.kernel.mu)
+ network_lock_both(s)
  ready:=client_drained_locked(s,false) && s.references==1 && s.base_owned && s.kernel.references==1 &&
   s.kernel.counters.completed_requests==0 && s.kernel.counters.origins==0 &&
   s.kernel.counters.reserved_connections==0 && s.kernel.counters.connecting_connections==0 &&
   s.kernel.counters.active_connections==0 && s.kernel.counters.idle_connections==0 && s.kernel.counters.retiring_connections==0
  if ready {s.base_owned=false;c^={}}
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+ network_unlock_both(s)
  if !ready {return {kind=.Pending}}
  // Final backing callback may physically free the public header. Locals only.
  network_state_release(s)
@@ -893,11 +1021,20 @@ client_rollback :: proc(s:^Client_State,preparing:Preparing_Request) {
  next,done,finish:=kernel_cleanup_finish(&s.kernel,preparing.request,now)
  assert(finish.kind==.None && done)
  request_disposal_destroy(&next)
- sync.lock(&s.mu);s.returning_calls-=1;network_queue_changed_locked(s);sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ s.returning_calls-=1
+ network_queue_changed_locked(s)
+ sync.unlock(&s.mu)
 }
 
 client_submit :: proc(c:^Client,request:http.Request,deadline:runtime_async.Deadline={})->(Request_Handle,Client_Error) {
- s,error:=client_enter(c);if error.kind!=.None {return {},error};defer client_leave(s)
+ s,error:=client_enter(c)
+
+ if error.kind!=.None {
+  return {},error
+ }
+
+ defer client_leave(s)
  selected,cause:=submission_budget(s,deadline)
  if cause.kind!=.None {return {},cause}
  return client_submit_state(s,request,selected,nil)
@@ -909,7 +1046,9 @@ client_submit_state :: proc(s:^Client_State,request:http.Request,selected:Submis
  defer if stream!=nil {stream_api.release_request(stream)}
  now,cutoff:=selected.now,selected.cutoff
  if stream!=nil {
-  sync.lock(&s.mu);published:=s.phase==.Published;sync.unlock(&s.mu)
+  sync.lock(&s.mu)
+  published:=s.phase==.Published
+  sync.unlock(&s.mu)
   if !published {return {},{kind=.Closed}}
   fresh,clock:=network_clock(s)
   if clock.kind!=.None {return {},clock}
@@ -939,7 +1078,9 @@ client_submit_state :: proc(s:^Client_State,request:http.Request,selected:Submis
   sync.lock(&s.kernel.mu)
   slot:=admission_request_locked(&s.kernel,preparing.request)
   assert(slot!=nil)
-  slot.stream=stream;stream_api.adopt_lease(stream,&slot.lease);stream=nil
+  slot.stream=stream
+  stream_api.adopt_lease(stream,&slot.lease)
+  stream=nil
   sync.unlock(&s.kernel.mu)
  }
  committed:=false
@@ -968,7 +1109,9 @@ Submission_Budget :: struct {now,cutoff:runtime_async.Deadline}
 // Select the immutable total cutoff before validation or any owned allocation.
 @(private)
 submission_budget :: proc(s:^Client_State,deadline:runtime_async.Deadline)->(Submission_Budget,Client_Error) {
- sync.lock(&s.mu);published:=s.phase==.Published;sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ published:=s.phase==.Published
+ sync.unlock(&s.mu)
  if !published {return {},{kind=.Closed}}
  now,clock:=network_clock(s)
  if clock.kind!=.None {return {},clock}

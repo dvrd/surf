@@ -75,7 +75,8 @@ exchange_begin :: proc(x:^Exchange,stream:net.Async_Connection,request:http.Requ
      _stream=stream,_budget=budget,_notify=notify,_method=request.method,
      _request_head_used=count,_request_body=request.body}
  copy(x._request_head[:count],header[:count])
- x._read.owner=x;x._write.owner=x
+ x._read.owner=x
+ x._write.owner=x
  x._read.operation={callback=exchange_operation_done,user_data=&x._read}
  x._write.operation={callback=exchange_operation_done,user_data=&x._write}
  return {}
@@ -84,7 +85,8 @@ exchange_begin :: proc(x:^Exchange,stream:net.Async_Connection,request:http.Requ
 @(private)
 exchange_fail :: proc(x:^Exchange,error:surf.HTTP_Error) {
  if x._failure.kind==.None {x._failure=error}
- x._reuse_eligible=false;x._phase=.Draining
+ x._reuse_eligible=false
+ x._phase=.Draining
 }
 @(private)
 exchange_error :: proc(x:^Exchange)->surf.HTTP_Error {
@@ -162,7 +164,9 @@ exchange_drive :: proc(x:^Exchange,now:i64,cancelled:bool,work:int)->Drive_Resul
    if !exchange_drain(x) {step=.Waiting;break}
    // Commit before disposal: arbitrary frees may destroy the public owner.
    error:=exchange_error(x)
-   x._failure=error;x._phase=.Done;x._request_body=nil
+   x._failure=error
+   x._phase=.Done
+   x._request_body=nil
    disposal:surf.Response
    if error.kind!=.None {disposal=x._response;x._response={}} else {
     x._response.body=x._response.body_storage[:]
@@ -175,11 +179,13 @@ exchange_drive :: proc(x:^Exchange,now:i64,cancelled:bool,work:int)->Drive_Resul
   }
   if step==.Barrier {
    result:=Drive_Result{status=.Progress,work_used=used,error=exchange_error(x)}
-   x._busy=false;return result
+   x._busy=false
+   return result
   }
   if step==.Waiting {
    result:=Drive_Result{status=.Waiting,work_used=used,error=exchange_error(x)}
-   x._busy=false;return result
+   x._busy=false
+   return result
   }
  }
  result:=Drive_Result{status=.Progress,work_used=used,error=exchange_error(x)}
@@ -197,7 +203,9 @@ exchange_take :: proc(x:^Exchange,destination:^surf.Response)->surf.HTTP_Error {
  if !exchange_quiescent(x) || x._phase!=.Done {return exchange_pending_error()}
  if x._failure.kind!=.None {return x._failure}
  if x._result_taken || !exchange_response_empty(destination) {return {kind=.Invalid_Config}}
- destination^=x._response;x._response={};x._result_taken=true
+ destination^=x._response
+ x._response={}
+ x._result_taken=true
  return {}
 }
 exchange_reset :: proc(x:^Exchange)->surf.HTTP_Error {
@@ -263,7 +271,8 @@ exchange_aliases :: proc(x:^Exchange,request:http.Request)->bool {
 exchange_copy_head :: proc(x:^Exchange)->surf.HTTP_Error {
  storage,error:=exchange_grant(x._response_head_used,1,x._allocator)
  if error.kind!=.None {return error}
- x._response.header_storage=storage;x._response.allocator=x._allocator
+ x._response.header_storage=storage
+ x._response.allocator=x._allocator
  copy(storage,x._response_head[:x._response_head_used])
  head,_,decoded:=h1.response_header_decode(storage)
  if decoded.kind!=.None {return surf.http_protocol_error(decoded)}
@@ -271,7 +280,8 @@ exchange_copy_head :: proc(x:^Exchange)->surf.HTTP_Error {
  if allocation.kind!=.None {return allocation}
  if head.header_count>0 {
   headers:=(cast([^]http.Header)raw_data(descriptors))[:head.header_count]
-  copy(headers,head.headers[:head.header_count]);x._response.headers=headers
+  copy(headers,head.headers[:head.header_count])
+  x._response.headers=headers
  }
  x._response.status=head.status
  x._response.body_storage.allocator=x._allocator
@@ -329,7 +339,8 @@ exchange_fill :: proc(x:^Exchange)->Exchange_Step {
   x._read.ready=false
   result:=x._read.result
   if result.count<0 || result.count>len(x._read_buffer) {exchange_fail(x,{kind=.IO_Failed,transport={kind=.Invalid_Count},phase=.Read});return .Continue}
-  x._read_at=0;x._read_used=result.count
+  x._read_at=0
+  x._read_used=result.count
   if result.err.kind==.Peer_Closed {x._peer_eof=true}
   if result.count>0 {return .Continue}
   if result.err.kind==.None {exchange_fail(x,{kind=.No_Progress,phase=.Read});return .Continue}
@@ -342,7 +353,9 @@ exchange_fill :: proc(x:^Exchange)->Exchange_Step {
   } else {exchange_fail(x,{kind=.IO_Failed,transport=error,phase=.Read})}
   return .Continue
  }
- x._read.result={};x._read.cancel_requested=false;x._read.accepted=true
+ x._read.result={}
+ x._read.cancel_requested=false
+ x._read.accepted=true
  error=net.async_read(x._stream,&x._read.operation,x._read_buffer[:],x._budget.wall)
  if error.kind!=.None {x._read.accepted=false;exchange_fail(x,{kind=.IO_Failed,transport=error,phase=.Read});return .Continue}
  return .Waiting
@@ -357,7 +370,8 @@ exchange_head_step :: proc(x:^Exchange)->Exchange_Step {
  for x._read_at<x._read_used {
   if x._response_head_used==len(x._response_head) {exchange_fail(x,{kind=.Header_Oversized,phase=.Protocol});return .Continue}
   x._response_head[x._response_head_used]=x._read_buffer[x._read_at]
-  x._response_head_used+=1;x._read_at+=1
+  x._response_head_used+=1
+  x._read_at+=1
   n:=x._response_head_used
   if n<4 || x._response_head[n-4]!=13 || x._response_head[n-3]!=10 || x._response_head[n-2]!=13 || x._response_head[n-1]!=10 {continue}
   head,_,error:=h1.response_header_decode(x._response_head[:n])
@@ -367,13 +381,16 @@ exchange_head_step :: proc(x:^Exchange)->Exchange_Step {
    if head.status==101 {exchange_fail(x,{kind=.Invalid_Status,phase=.Protocol});return .Continue}
    x._informational+=1
    if x._informational>x._options.informational_limit {exchange_fail(x,{kind=.Too_Many_Informational,phase=.Protocol});return .Continue}
-   x._response_head_used=0;continue
+   x._response_head_used=0
+   continue
   }
   h1.response_apply_method(&head,x._method)
   allowed,reuse_error:=h1.response_reuse_allowed(&head,http.method_text(x._method))
   if reuse_error.kind!=.None {exchange_fail(x,surf.http_protocol_error(reuse_error));return .Continue}
   if head.framing==.Length && head.content_length>u64(x._options.body_limit) {exchange_fail(x,{kind=.Body_Oversized,phase=.Body_Limit});return .Continue}
-  x._head=head;x._reuse_eligible=allowed;x._phase=.Copying_Head
+  x._head=head
+  x._reuse_eligible=allowed
+  x._phase=.Copying_Head
   return .Continue
  }
  return .Continue
@@ -400,7 +417,8 @@ exchange_body_step :: proc(x:^Exchange)->Exchange_Step {
   if cap(body)>0 {storage=raw_data(body)[:cap(body)]}
   consumed,written,done,error:=h1.chunk_decoder_feed(&x._chunk,source,storage[len(body):])
   raw:=cast(^mem.Raw_Dynamic_Array)&x._response.body_storage
-  raw.len+=written;x._read_at+=consumed
+  raw.len+=written
+  x._read_at+=consumed
   if error.kind!=.None {exchange_fail(x,surf.http_protocol_error(error));return .Continue}
   if done {return exchange_body_finished(x)}
   if consumed==0 && written==0 && len(source)>0 {
@@ -437,7 +455,8 @@ stream_exchange_begin :: proc(x:^Stream_Exchange,stream:net.Async_Connection,
  x^={channel=cell,tx=.Head,redirects=redirects}
  if error:=exchange_init(&x.base,{body_limit=int(options.max_encoded_bytes)},allocator);error.kind!=.None {return error}
  if error:=exchange_begin(&x.base,stream,request,budget,notify);error.kind!=.None {return error}
- copy(x.base._request_head[:],head[:count]);x.base._request_head_used=count
+ copy(x.base._request_head[:],head[:count])
+ x.base._request_head_used=count
  // RX is enabled after the independent TX head finishes.
  x.base._phase=.Reading_Head
  return {}
@@ -451,7 +470,8 @@ stream_encoding :: proc(x:^Stream_Exchange)->surf.HTTP_Error {
  count:=0
  for field in x.base._response.headers {
   if strings.equal_fold(field.name,"Content-Encoding") {
-   coding=strings.trim(field.value," \t");count+=1
+   coding=strings.trim(field.value," \t")
+   count+=1
   }
  }
  if count==0 || count==1 && strings.equal_fold(coding,"identity") {return {}}
@@ -478,9 +498,11 @@ stream_copy_head :: proc(x:^Stream_Exchange)->Exchange_Step {
   error:=h1.chunk_decoder_init(&x.base._chunk,x.channel.options.max_encoded_bytes)
   if error.kind!=.None {exchange_fail(&x.base,surf.http_protocol_error(error));return .Continue}
  }
- x.base._phase=.Reading_Body;x.head_pending=true
+ x.base._phase=.Reading_Body
+ x.head_pending=true
  if x.tx!=.Done && x.tx!=.Stopped {
-  x.early_response=true;x.base._reuse_eligible=false
+  x.early_response=true
+  x.base._reuse_eligible=false
  }
  return .Barrier // Header allocations require a fresh owner clock before publication.
 }
@@ -506,9 +528,11 @@ stream_exchange_drive :: proc(x:^Stream_Exchange,now:i64,cancelled:bool,work:int
    if !exchange_drain(base) {base._busy=false;return {status=.Waiting,work_used=used,error=exchange_error(base)}}
    if x.upload.release!=nil || x.upload.allocator.procedure!=nil {
     channel.upload_release(x.channel,&x.upload)
-    base._busy=false;return {status=.Progress,work_used=used,error=exchange_error(base)}
+    base._busy=false
+    return {status=.Progress,work_used=used,error=exchange_error(base)}
    }
-   base._failure=exchange_error(base);base._phase=.Done
+   base._failure=exchange_error(base)
+   base._phase=.Done
    base._busy=false
    return {status=.Done,work_used=used,error=base._failure}
   }
@@ -531,11 +555,13 @@ stream_exchange_drive :: proc(x:^Stream_Exchange,now:i64,cancelled:bool,work:int
   if rx==.Barrier {base._busy=false;return {status=.Progress,work_used=used}}
   if base._failure.kind!=.None {continue}
   if x.rx_done && (x.tx==.Done || x.tx==.Stopped) && !base._read.accepted && !base._write.accepted {
-   base._phase=.Done;base._busy=false
+   base._phase=.Done
+   base._busy=false
    return {status=.Done,work_used=used,reuse_eligible=base._reuse_eligible}
   }
   if tx==.Waiting && rx==.Waiting {
-   base._busy=false;return {status=.Waiting,work_used=used}
+   base._busy=false
+   return {status=.Waiting,work_used=used}
   }
  }
  base._busy=false
@@ -555,7 +581,8 @@ stream_exchange_destroy :: proc(x:^Stream_Exchange)->surf.HTTP_Error {
 stream_exchange_take_redirect :: proc(x:^Stream_Exchange,destination:^surf.Response)->bool {
  if !stream_exchange_quiescent(x) || !x.private_response || x.base._failure.kind!=.None ||
     !exchange_response_empty(destination) {return false}
- destination^=x.base._response;x.base._response={}
+ destination^=x.base._response
+ x.base._response={}
  return true
 }
 
@@ -563,14 +590,18 @@ stream_exchange_take_redirect :: proc(x:^Stream_Exchange,destination:^surf.Respo
 stream_entity_step :: proc(x:^Stream_Exchange)->Exchange_Step {
  if x.encoded_at<x.encoded_used || x.entity_done {return .Continue}
  base:=&x.base
- x.encoded_at=0;x.encoded_used=0
+ x.encoded_at=0
+ x.encoded_used=0
  if base._head.framing==.None || base._head.framing==.Length && base._body_remaining==0 {
-  x.entity_done=true;return .Continue
+  x.entity_done=true
+  return .Continue
  }
  if base._read_at==base._read_used {
   step:=exchange_fill(base)
   if base._phase==.Draining && base._failure.kind==.None {
-   x.entity_done=true;base._phase=.Reading_Body;return .Continue
+   x.entity_done=true
+   base._phase=.Reading_Body
+   return .Continue
   }
   if step!=.Continue || base._failure.kind!=.None {return step}
  }
@@ -591,9 +622,11 @@ stream_entity_step :: proc(x:^Stream_Exchange)->Exchange_Step {
  }
  base._read_at+=consumed
  if u64(produced)>x.channel.options.max_encoded_bytes-x.encoded_total {
-  exchange_fail(base,{kind=.Body_Oversized,phase=.Body_Limit});return .Continue
+  exchange_fail(base,{kind=.Body_Oversized,phase=.Body_Limit})
+  return .Continue
  }
- x.encoded_total+=u64(produced);x.encoded_used=produced
+ x.encoded_total+=u64(produced)
+ x.encoded_used=produced
  return .Continue
 }
 
@@ -606,14 +639,16 @@ stream_publish_head :: proc(x:^Stream_Exchange)->Exchange_Step {
  for field in x.base._response.headers {
   if strings.equal_fold(field.name,"Content-Length") {
    if x.base._head.content_length>u64(max(i64)) {
-    exchange_fail(&x.base,{kind=.Invalid_Content_Length,phase=.Protocol});return .Continue
+    exchange_fail(&x.base,{kind=.Invalid_Content_Length,phase=.Protocol})
+    return .Continue
    }
    length=i64(x.base._head.content_length)
   }
  }
  encoding:=channel.Encoding.Decoded_Gzip if x.decoded else channel.Encoding.Wire
  if !channel.publish_head(x.channel,&x.base._response,length,encoding) {
-  exchange_fail(&x.base,{kind=.IO_Failed,transport={kind=.Cancelled},phase=.Cancellation});return .Continue
+  exchange_fail(&x.base,{kind=.IO_Failed,transport={kind=.Cancelled},phase=.Cancellation})
+  return .Continue
  }
  x.base._response.status=x.status
  return .Continue
@@ -646,17 +681,21 @@ stream_body_step :: proc(x:^Stream_Exchange,work:^int)->Exchange_Step {
   decoded:=gzip.decoder_step(&x.decoder,source,destination,x.entity_done,max(1,work^))
   work^=max(0,work^-decoded.work)
   if decoded.err!=.None {
-   exchange_fail(&x.base,{kind=.Content_Decoding_Failed,decoding=decoded.err,phase=.Decode});return .Continue
+   exchange_fail(&x.base,{kind=.Content_Decoding_Failed,decoding=decoded.err,phase=.Decode})
+   return .Continue
   }
-  x.encoded_at+=decoded.consumed;produced=decoded.produced
+  x.encoded_at+=decoded.consumed
+  produced=decoded.produced
   if decoded.status==.Done {x.rx_done=true}
   if output==nil && !x.private_response && decoded.status==.Need_Output {return .Waiting}
  } else {
   produced=min(len(source),len(destination))
   if u64(produced)>x.channel.options.max_decoded_bytes-x.delivered_total {
-   exchange_fail(&x.base,{kind=.Body_Oversized,phase=.Body_Limit});return .Continue
+   exchange_fail(&x.base,{kind=.Body_Oversized,phase=.Body_Limit})
+   return .Continue
   }
-  copy(destination[:produced],source[:produced]);x.encoded_at+=produced
+  copy(destination[:produced],source[:produced])
+  x.encoded_at+=produced
   if x.entity_done && x.encoded_at==x.encoded_used {x.rx_done=true}
  }
  x.delivered_total+=u64(produced)
@@ -696,19 +735,23 @@ Stream_Exchange :: struct {
 @(private)
 stream_write_ready :: proc(x:^Stream_Exchange)->Exchange_Step {
  base:=&x.base
- result:=base._write.result;base._write.ready=false
+ result:=base._write.result
+ base._write.ready=false
  if result.count<0 || result.count>x.write_requested {
-  exchange_fail(base,{kind=.IO_Failed,transport={kind=.Invalid_Count},phase=.Write});return .Continue
+  exchange_fail(base,{kind=.IO_Failed,transport={kind=.Invalid_Count},phase=.Write})
+  return .Continue
  }
  base._written+=u64(result.count)
  if x.tx==.Head {base._request_head_at+=result.count}
  else if x.tx==.Body {base._request_body_at+=result.count}
  else if x.tx==.Upload {x.upload_at+=result.count}
  if result.err.kind!=.None && !(x.early_response && result.err.kind==.Cancelled) {
-  exchange_fail(base,{kind=.IO_Failed,transport=result.err,phase=.Write});return .Continue
+  exchange_fail(base,{kind=.IO_Failed,transport=result.err,phase=.Write})
+  return .Continue
  }
  if result.count==0 && result.err.kind==.None {
-  exchange_fail(base,{kind=.No_Progress,phase=.Write});return .Continue
+  exchange_fail(base,{kind=.No_Progress,phase=.Write})
+  return .Continue
  }
  return .Continue
 }
@@ -750,7 +793,9 @@ stream_write_step :: proc(x:^Stream_Exchange)->Exchange_Step {
  if x.tx==.Body && base._request_body_at==len(base._request_body) {x.tx=.Done;return .Continue}
  if x.tx==.Upload && x.upload_at==len(x.upload.data) {
   if x.upload.release!=nil || x.upload.allocator.procedure!=nil {
-   channel.upload_release(x.channel,&x.upload);x.upload_at=0;return .Barrier
+   channel.upload_release(x.channel,&x.upload)
+   x.upload_at=0
+   return .Barrier
   }
   taken,finished,error:=channel.upload_take(x.channel,&x.upload)
   if error.kind!=.None {exchange_fail(base,error);return .Continue}
@@ -769,7 +814,9 @@ stream_write_step :: proc(x:^Stream_Exchange)->Exchange_Step {
  }
  source=source[:min(len(source),READ_BUFFER_SIZE)]
  x.write_requested=len(source)
- base._write.result={};base._write.cancel_requested=false;base._write.accepted=true
+ base._write.result={}
+ base._write.cancel_requested=false
+ base._write.accepted=true
  error:=net.async_write(base._stream,&base._write.operation,source,base._budget.wall)
  if error.kind!=.None {base._write.accepted=false;exchange_fail(base,{kind=.IO_Failed,transport=error,phase=.Write});return .Continue}
  return .Waiting
@@ -869,7 +916,9 @@ Exchange :: struct {
 exchange_operation_done :: proc(op:^net.Async_Operation) {
  state:=cast(^Operation_State)op.user_data
  x:=state.owner
- state.result=op.result;state.accepted=false;state.ready=true
+ state.result=op.result
+ state.accepted=false
+ state.ready=true
  notify:=x._notify
  if notify.wake!=nil {notify.wake(notify.data)}
  // Notification may reenter its owner; no operation/Exchange access follows.
@@ -877,7 +926,8 @@ exchange_operation_done :: proc(op:^net.Async_Operation) {
 @(private)
 exchange_write_result :: proc(x:^Exchange)->surf.HTTP_Error {
  if !x._write.ready {return {}}
- result:=x._write.result;x._write.ready=false
+ result:=x._write.result
+ x._write.ready=false
  head:=x._request_head_at<x._request_head_used
  expected:=x._request_head_used-x._request_head_at if head else min(READ_BUFFER_SIZE,len(x._request_body)-x._request_body_at)
  if result.count<0 || result.count>expected {return {kind=.IO_Failed,transport={kind=.Invalid_Count},phase=.Write}}
@@ -895,16 +945,23 @@ exchange_write_step :: proc(x:^Exchange)->Exchange_Step {
  }
  if x._phase==.Writing_Head && x._request_head_at==x._request_head_used {x._phase=.Writing_Body}
  if x._phase==.Writing_Body && x._request_body_at==len(x._request_body) {
-  x._request_body=nil;x._phase=.Reading_Head;return .Continue
+  x._request_body=nil
+  x._phase=.Reading_Head
+  return .Continue
  }
  source:[]u8
  if x._phase==.Writing_Head {source=x._request_head[x._request_head_at:x._request_head_used]} else {
-  start:=x._request_body_at;source=x._request_body[start:start+min(READ_BUFFER_SIZE,len(x._request_body)-start)]
+  start:=x._request_body_at
+  source=x._request_body[start:start+min(READ_BUFFER_SIZE,len(x._request_body)-start)]
  }
- x._write.result={};x._write.cancel_requested=false;x._write.accepted=true
+ x._write.result={}
+ x._write.cancel_requested=false
+ x._write.accepted=true
  error:=net.async_write(x._stream,&x._write.operation,source,x._budget.wall)
  if error.kind!=.None {
-  x._write.accepted=false;exchange_fail(x,{kind=.IO_Failed,transport=error,phase=.Write});return .Continue
+  x._write.accepted=false
+  exchange_fail(x,{kind=.IO_Failed,transport=error,phase=.Write})
+  return .Continue
  }
  return .Waiting
 }

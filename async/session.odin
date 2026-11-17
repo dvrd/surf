@@ -27,8 +27,10 @@ session_notify_coordinator :: proc(a:^Session_Actor) {_=signal.wake(a.owner.coor
 @(private)
 session_borrow :: proc(a:^Session_Actor)->(http.Request,Origin_Key,Client_Error) {
  s:=a.owner
- sync.lock(&s.mu);defer sync.unlock(&s.mu)
- sync.lock(&s.kernel.mu);defer sync.unlock(&s.kernel.mu)
+ sync.lock(&s.mu)
+ defer sync.unlock(&s.mu)
+ sync.lock(&s.kernel.mu)
+ defer sync.unlock(&s.kernel.mu)
  request:=admission_request_locked(&s.kernel,a.request)
  if request==nil || request.state!=.Active || request.session!=a.model {return {},{},{kind=.Invalid_Handle}}
  origin:=admission_origin_locked(&s.kernel,request.origin)
@@ -38,16 +40,20 @@ session_borrow :: proc(a:^Session_Actor)->(http.Request,Origin_Key,Client_Error)
 @(private)
 session_stopping :: proc(a:^Session_Actor)->bool {
  s:=a.owner
- sync.lock(&s.mu);closing:=s.phase==.Closing || s.phase==.Disposing;sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ closing:=s.phase==.Closing || s.phase==.Disposing
+ sync.unlock(&s.mu)
  return closing || runtime_async.cancelled(&a.task)
 }
 @(private)
 session_cancelled :: proc(a:^Session_Actor)->bool {
  s:=a.owner
- sync.lock(&s.mu);defer sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ defer sync.unlock(&s.mu)
  if s.phase==.Closing || s.phase==.Disposing || a.command.cancel || a.command.retire {return true}
  if a.request==(Request_Handle{}) {return false}
- sync.lock(&s.kernel.mu);defer sync.unlock(&s.kernel.mu)
+ sync.lock(&s.kernel.mu)
+ defer sync.unlock(&s.kernel.mu)
  request:=admission_request_locked(&s.kernel,a.request)
  return request==nil || request.cancel_requested || s.kernel.closed
 }
@@ -69,10 +75,12 @@ session_error :: proc(a:^Session_Actor,error:surf.HTTP_Error) {
 @(private)
 session_before_http :: proc(a:^Session_Actor,now:runtime_async.Deadline)->bool {
  if session_cancelled(a) || runtime_async.cancelled(&a.task) {
-  session_error(a,{kind=.IO_Failed,transport={kind=.Cancelled},phase=.Cancellation,write_effect=.Not_Sent});return false
+  session_error(a,{kind=.IO_Failed,transport={kind=.Cancelled},phase=.Cancellation,write_effect=.Not_Sent})
+  return false
  }
  if now.at>=a.cutoff.at {
-  session_error(a,{kind=.Deadline_Failed,transport={kind=.Timeout},phase=.Deadline,write_effect=.Not_Sent});return false
+  session_error(a,{kind=.Deadline_Failed,transport={kind=.Timeout},phase=.Deadline,write_effect=.Not_Sent})
+  return false
  }
  return true
 }
@@ -88,15 +96,19 @@ session_take_cancelled_mailbox :: proc(a:^Session_Actor) {
  sync.lock(&s.kernel.mu)
  request:=admission_request_locked(&s.kernel,assignment.request)
  if request!=nil && request.state==.Active && request.session==assignment.session && assignment.session.slot==a.index {
-  a.request=assignment.request;a.model=assignment.session;a.cutoff=request.deadline
+  a.request=assignment.request
+  a.model=assignment.session
+  a.cutoff=request.deadline
   a.command.pending=false
  }
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+
+ network_unlock_both(s)
 }
 
 network_assignment_finish :: proc(a:^Session_Actor,response:^surf.Response,error:surf.HTTP_Error)->Client_Error {
  if !session_valid(a) || a.request==(Request_Handle{}) || response==nil {return {kind=.Invalid_State}}
- s:=a.owner;handle:=a.request
+ s:=a.owner
+ handle:=a.request
  sync.lock(&s.mu)
  sync.lock(&s.kernel.mu)
  request:=admission_request_locked(&s.kernel,handle)
@@ -128,7 +140,8 @@ network_assignment_finish :: proc(a:^Session_Actor,response:^surf.Response,error
   sync.unlock(&s.kernel.mu)
   if failure.kind!=.None && a.transport_initialized && !a.close_done {
    if a.error.kind==.None {a.error=failure}
-   a.phase=.Retiring;return {kind=.Pending}
+   a.phase=.Retiring
+   return {kind=.Pending}
   }
   next,done,finish:=kernel_cleanup_finish(&s.kernel,handle,now)
   if finish.kind!=.None {return finish}
@@ -143,12 +156,14 @@ network_assignment_finish :: proc(a:^Session_Actor,response:^surf.Response,error
    sync.unlock(&s.kernel.mu)
    if a.error.kind==.None {a.error=failure}
    if a.transport_initialized && !a.close_done {a.phase=.Retiring;return {kind=.Pending}}
-   disposal={};continue
+   disposal={}
+   continue
   }
   break
  }
  sync.lock(&s.mu)
- assert(s.returning_calls>0);s.returning_calls-=1
+ assert(s.returning_calls>0)
+ s.returning_calls-=1
  network_queue_changed_locked(s)
  sync.unlock(&s.mu)
  a.request={}
@@ -165,17 +180,25 @@ session_assign :: proc(a:^Session_Actor)->runtime_async.Resume_Result {
   if a.request!=(Request_Handle{}) {
    failure:=error.http
    if failure.kind==.None {failure={kind=.IO_Failed,transport={kind=.Cancelled},phase=.Cancellation,write_effect=.Not_Sent}}
-   session_error(a,failure);return .Yield
+   session_error(a,failure)
+   return .Yield
   }
   return .Waiting
  }
- a.request=snapshot.assignment.request;a.model=snapshot.assignment.session
- a.cutoff=snapshot.cutoff;a.setup_cutoff=snapshot.setup_cutoff;a.secure=snapshot.secure
- a.ids=snapshot.ids;a.prepared_addresses=snapshot.addresses;a.prepared_address_count=snapshot.address_count;a.prepared_address_at=0
+ a.request=snapshot.assignment.request
+ a.model=snapshot.assignment.session
+ a.cutoff=snapshot.cutoff
+ a.setup_cutoff=snapshot.setup_cutoff
+ a.secure=snapshot.secure
+ a.ids=snapshot.ids
+ a.prepared_addresses=snapshot.addresses
+ a.prepared_address_count=snapshot.address_count
+ a.prepared_address_at=0
  // A waiter may have reserved IDs before a healthy Idle became available.
  // Reuse needs no query; burn that moved block instead of overwriting it later.
  if a.transport_initialized {network_dns_burn(a.owner,&a.ids)}
- a.error={};a.phase=.Assigned
+ a.error={}
+ a.phase=.Assigned
  return .Yield
 }
 
@@ -189,7 +212,8 @@ session_exchange_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runt
  if result.error.kind!=.None {
   error:=result.error
   if a.tls_initialized {error.tls_io=tls_api.async_failure(&a.tls)}
-  session_error(a,error);return .Yield
+  session_error(a,error)
+  return .Yield
  }
  if result.status!=.Done {return .Waiting if result.status==.Waiting else .Yield}
  response:surf.Response
@@ -204,13 +228,17 @@ session_exchange_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runt
   if failure.kind==.None && fresh.at>=a.cutoff.at {failure={kind=.Deadline_Failed,phase=.Deadline}}
  }
  if failure.kind!=.None {
-  failure.status=response.status;failure.write_effect=.Response_Received
+  failure.status=response.status
+  failure.write_effect=.Response_Received
   surf.response_destroy(&response)
-  session_error(a,failure);return .Yield
+  session_error(a,failure)
+  return .Yield
  }
  if redirect_response(a,&response) {return .Yield}
  if error:=network_assignment_finish(a,&response,{});error.kind!=.None {
-  surf.response_destroy(&response);session_error(a,{kind=.Invalid_Config,phase=.Configuration});return .Yield
+  surf.response_destroy(&response)
+  session_error(a,{kind=.Invalid_Config,phase=.Configuration})
+  return .Yield
  }
  if reset:=exchange_api.exchange_reset(&a.exchange);reset.kind!=.None {session_error(a,reset);return .Yield}
  return session_finish_reuse(a,result.reuse_eligible)
@@ -234,7 +262,8 @@ session_finish_reuse :: proc(a:^Session_Actor,eligible:bool)->runtime_async.Resu
   sync.unlock(&a.owner.mu)
   if idle {session_notify_coordinator(a);return .Waiting}
  }
- a.phase=.Retiring;return .Yield
+ a.phase=.Retiring
+ return .Yield
 }
 
 network_session_resume :: proc(data:rawptr)->runtime_async.Resume_Result {return session_resume(cast(^Session_Actor)data,false)}
@@ -267,14 +296,15 @@ session_publish_stage :: proc(a:^Session_Actor) {
  case .Prepared,.Idle,.Done:return
  }
  s:=a.owner
- sync.lock(&s.mu);sync.lock(&s.kernel.mu)
+ network_lock_both(s)
  request:=admission_request_locked(&s.kernel,h)
  model:=pool_session_locked(&s.kernel,a.model)
  if request!=nil && request.state==.Active && request.session==a.model && a.model.slot==a.index &&
     model!=nil && model.request==h {
   request.stage=stage
  }
- sync.unlock(&s.kernel.mu);sync.unlock(&s.mu)
+
+ network_unlock_both(s)
 }
 
 @(private)
@@ -306,7 +336,10 @@ session_resume :: proc(a:^Session_Actor,force:bool)->runtime_async.Resume_Result
  result:runtime_async.Resume_Result
  switch a.phase {
  case .Prepared,.Idle:
-  sync.lock(&a.owner.mu);pending:=a.command.pending;retire:=a.command.retire;sync.unlock(&a.owner.mu)
+  sync.lock(&a.owner.mu)
+  pending:=a.command.pending
+  retire:=a.command.retire
+  sync.unlock(&a.owner.mu)
   if pending {result=session_assign(a)} else if retire || stopping {a.phase=.Retiring;result=.Yield} else {a.phase=.Idle;result=.Waiting}
  case .Assigned:
   if !session_before_http(a,now) {result=.Yield} else if a.transport_initialized {result=session_reuse(a)} else {result=session_dial_begin(a)}
@@ -343,7 +376,8 @@ session_mark_retiring :: proc(a:^Session_Actor) {
  if a.model.slot==0 {return}
  now,_:=network_clock(a.owner)
  k:=&a.owner.kernel
- sync.lock(&a.owner.mu);defer sync.unlock(&a.owner.mu)
+ sync.lock(&a.owner.mu)
+ defer sync.unlock(&a.owner.mu)
  sync.lock(&k.mu)
  model:=pool_session_locked(k,a.model)
  state:=Session_State.Free
@@ -362,11 +396,27 @@ session_reset_io :: proc(a:^Session_Actor) {
  session_stream_dispose(a)
  assert(exchange_api.exchange_reset(&a.exchange).kind==.None)
  network_dns_burn(a.owner,&a.ids)
- a.executor={};a.transport={};a.tls={};a.handshake={};a.close={};a.query={};a.dial={}
- a.cutoff={};a.setup_cutoff={};a.request={}
- a.prepared_address_count=0;a.prepared_address_at=0;a.dns_server_count=0
- a.secure=false;a.executor_initialized=false;a.transport_initialized=false;a.tls_initialized=false
- a.handshake_started=false;a.handshake_done=false;a.close_started=false;a.close_done=false
+ a.executor={}
+ a.transport={}
+ a.tls={}
+ a.handshake={}
+ a.close={}
+ a.query={}
+ a.dial={}
+ a.cutoff={}
+ a.setup_cutoff={}
+ a.request={}
+ a.prepared_address_count=0
+ a.prepared_address_at=0
+ a.dns_server_count=0
+ a.secure=false
+ a.executor_initialized=false
+ a.transport_initialized=false
+ a.tls_initialized=false
+ a.handshake_started=false
+ a.handshake_done=false
+ a.close_started=false
+ a.close_done=false
  a.error={}
 }
 
@@ -445,7 +495,8 @@ session_handshake_done :: proc(op:^tls_api.Async_Handshake_Operation) {
 session_tls_begin :: proc(a:^Session_Actor)->runtime_async.Resume_Result {
  _,origin,borrow:=session_borrow(a)
  if borrow.kind!=.None {session_error(a,{kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent});return .Yield}
- config:=a.owner.profile.config.http.tls;config.server_name=origin.host
+ config:=a.owner.profile.config.http.tls
+ config.server_name=origin.host
  timeout:=config.handshake_timeout
  if timeout==0 {timeout=10*time.Second}
  now,clock:=network_clock(a.owner)
@@ -453,14 +504,17 @@ session_tls_begin :: proc(a:^Session_Actor)->runtime_async.Resume_Result {
  a.setup_cutoff.at=min(a.setup_cutoff.at,now.at+min(i64(timeout),max(i64)-now.at))
  if cap:=adapter.set_request_budget(&a.executor,a.setup_cutoff);cap.kind!=.None {session_error(a,session_runtime_error(cap,.TLS));return .Yield}
  if init:=tls_api.async_client(&a.tls,adapter.stream(&a.transport),adapter.executor(&a.executor),config,a.owner.resources.allocator);init!=.None {
-  session_error(a,{kind=.TLS_Failed,tls_dial={kind=.Invalid_Config,config=init},phase=.TLS,write_effect=.Not_Sent});return .Yield
+  session_error(a,{kind=.TLS_Failed,tls_dial={kind=.Invalid_Config,config=init},phase=.TLS,write_effect=.Not_Sent})
+  return .Yield
  }
  a.tls_initialized=true
  a.handshake={callback=session_handshake_done,user_data=a}
  if error:=tls_api.async_handshake(&a.tls,&a.handshake,adapter.wall_budget(&a.executor));error.kind!=.None {
-  session_error(a,{kind=.TLS_Failed,transport=error,phase=.TLS,write_effect=.Not_Sent});return .Yield
+  session_error(a,{kind=.TLS_Failed,transport=error,phase=.TLS,write_effect=.Not_Sent})
+  return .Yield
  }
- a.handshake_started=true;a.phase=.Handshaking
+ a.handshake_started=true
+ a.phase=.Handshaking
  return .Yield
 }
 @(private)
@@ -469,7 +523,8 @@ session_tls_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runtime_a
  if now.at>=a.setup_cutoff.at {session_error(a,{kind=.Deadline_Failed,phase=.Deadline,transport={kind=.Timeout},write_effect=.Not_Sent});return .Yield}
  if !a.handshake_done {return .Waiting}
  if a.handshake.err.kind!=.None {
-  session_error(a,{kind=.TLS_Failed,transport=a.handshake.err,tls_dial={kind=.Handshake_Failed,handshake=a.handshake.result},tls_io=tls_api.async_failure(&a.tls),phase=.TLS,write_effect=.Not_Sent});return .Yield
+  session_error(a,{kind=.TLS_Failed,transport=a.handshake.err,tls_dial={kind=.Handshake_Failed,handshake=a.handshake.result},tls_io=tls_api.async_failure(&a.tls),phase=.TLS,write_effect=.Not_Sent})
+  return .Yield
  }
  state:=tls_api.async_idle_state(&a.tls)
  if state==.Busy {return .Yield}
@@ -489,7 +544,8 @@ session_reuse :: proc(a:^Session_Actor)->runtime_async.Resume_Result {
  observed,error:=adapter.probe_stream(&a.transport)
  if error.kind!=.None {session_error(a,session_runtime_error(error,.Read));return .Yield}
  if observed!=.Empty {
-  session_error(a,{kind=.IO_Failed,transport={kind=.Peer_Closed if observed==.Closed else .Protocol_Failed},phase=.Read,write_effect=.Not_Sent});return .Yield
+  session_error(a,{kind=.IO_Failed,transport={kind=.Peer_Closed if observed==.Closed else .Protocol_Failed},phase=.Read,write_effect=.Not_Sent})
+  return .Yield
  }
  return session_begin_exchange(a,false)
 }
@@ -510,12 +566,15 @@ session_begin_exchange :: proc(a:^Session_Actor,fresh:bool)->runtime_async.Resum
  budget:=exchange_api.Budget{at=a.cutoff.at,wall=adapter.wall_budget(&a.executor)}
  if cell:=session_stream_channel(a);cell!=nil {
   if error:=session_stream_begin(a,cell,stream,request,budget);error.kind!=.None {
-   session_error(a,error);return .Yield
+   session_error(a,error)
+   return .Yield
   }
-  a.phase=.Exchanging;return .Yield
+  a.phase=.Exchanging
+  return .Yield
  }
  if error:=exchange_api.exchange_begin(&a.exchange,stream,request,budget,{data=a,wake=session_notify});error.kind!=.None {
-  session_error(a,error);return .Yield
+  session_error(a,error)
+  return .Yield
  }
  a.phase=.Exchanging
  return .Yield
@@ -579,14 +638,16 @@ session_dial_begin :: proc(a:^Session_Actor)->runtime_async.Resume_Result {
  if a.prepared_address_count>0 {
   error:=session_numeric_begin(a)
   if error.status!=.Success {session_error(a,session_dns_error(error));return .Yield}
-  a.phase=.Connecting;return .Yield
+  a.phase=.Connecting
+  return .Yield
  }
  servers,ready:=net.resolver_snapshot_name_servers(&a.owner.resolver)
  if !ready || len(servers)==0 || a.ids.count==0 {session_error(a,{kind=.Dial_Failed,phase=.DNS,network=net.Resolve_Error.Unable_To_Resolve,write_effect=.Not_Sent});return .Yield}
  a.dns_server_count=copy(a.dns_servers[:],servers)
  error:=session_query_begin(a,origin.host,int(origin.port),.A_Only)
  if error.status!=.Success {session_error(a,session_dns_error(error));return .Yield}
- a.phase=.Resolving_A;return .Yield
+ a.phase=.Resolving_A
+ return .Yield
 }
 
 @(private)
@@ -595,31 +656,40 @@ session_dial_step :: proc(a:^Session_Actor,now:runtime_async.Deadline)->runtime_
  if now.at>=a.setup_cutoff.at {session_error(a,{kind=.Deadline_Failed,transport={kind=.Timeout},phase=.Deadline,write_effect=.Not_Sent});return .Yield}
  socket,status,error:=runtime_async.finish_dns_connect(&a.dial)
  if status!=.Done {return status}
- _=runtime_async.close_dns_connect(&a.dial);_=runtime_async.close_dns(&a.query)
+ _=runtime_async.close_dns_connect(&a.dial)
+ _=runtime_async.close_dns(&a.query)
  network_dns_burn(a.owner,&a.ids)
  if error.status!=.Success {
   if a.phase==.Connecting && a.prepared_address_at+1<a.prepared_address_count && error.status!=.Timeout && error.status!=.Cancelled {
-   a.prepared_address_at+=1;a.query={};a.dial={}
+   a.prepared_address_at+=1
+   a.query={}
+   a.dial={}
    if next:=session_numeric_begin(a);next.status==.Success {return .Yield} else {error=next}
   } else if a.phase==.Resolving_A && error.status!=.Timeout && error.status!=.Cancelled && error.status!=.Limit && session_dns_block(a) {
    _,origin,borrow:=session_borrow(a)
    if borrow.kind==.None {
-    a.query={};a.dial={}
+    a.query={}
+    a.dial={}
     next:=session_query_begin(a,origin.host,int(origin.port),.AAAA_Only)
     if next.status==.Success {a.phase=.Resolving_AAAA;return .Yield}
     error=next
    }
   }
-  session_error(a,session_dns_error(error));return .Yield
+  session_error(a,session_dns_error(error))
+  return .Yield
  }
  // Socket ownership transfers immediately into the actor's adapter; no raw
  // Socket needs to be retained in the frozen actor schema.
  if init:=adapter.init_executor(&a.executor,a.owner.runtime,&a.task,a.owner.config.config.lifetime);init.kind!=.None {
-  _=runtime_async.close(socket);session_error(a,session_runtime_error(init,.Connect));return .Yield
+  _=runtime_async.close(socket)
+  session_error(a,session_runtime_error(init,.Connect))
+  return .Yield
  }
  a.executor_initialized=true
  if init:=adapter.init_transport(&a.transport,&a.executor,socket);init.kind!=.None {
-  _=runtime_async.close(socket);session_error(a,session_runtime_error(init,.Connect));return .Yield
+  _=runtime_async.close(socket)
+  session_error(a,session_runtime_error(init,.Connect))
+  return .Yield
  }
  a.transport_initialized=true
  if cap:=adapter.set_request_budget(&a.executor,a.setup_cutoff);cap.kind!=.None {session_error(a,session_runtime_error(cap,.Connect));return .Yield}
@@ -651,12 +721,15 @@ request_clone :: proc(request:http.Request,allocator:mem.Allocator)->(Request_Ow
  at:=len(request.headers)*size_of(http.Header)
  result.request.headers=(cast([^]http.Header)raw_data(storage))[:len(request.headers)]
  n:=copy(storage[at:],request.url)
- result.request.url=cast(string)storage[at:at+n];at+=n
+ result.request.url=cast(string)storage[at:at+n]
+ at+=n
  for field,index in request.headers {
   n=copy(storage[at:],field.name)
-  result.request.headers[index].name=cast(string)storage[at:at+n];at+=n
+  result.request.headers[index].name=cast(string)storage[at:at+n]
+  at+=n
   n=copy(storage[at:],field.value)
-  result.request.headers[index].value=cast(string)storage[at:at+n];at+=n
+  result.request.headers[index].value=cast(string)storage[at:at+n]
+  at+=n
  }
  n=copy(storage[at:],request.body)
  result.request.body=storage[at:at+n]
@@ -664,7 +737,8 @@ request_clone :: proc(request:http.Request,allocator:mem.Allocator)->(Request_Ow
 }
 request_owner_destroy :: proc(owner:^Request_Owner) {
  if owner==nil do return
- old:=owner^;owner^={}
+ old:=owner^
+ owner^={}
  kernel_free(old.storage,align_of(http.Header),old.allocator)
 }
 
@@ -715,7 +789,8 @@ kernel_init :: proc(k:^Kernel,profile:^Profile,resources:^Kernel_Resources)->Cli
 @(private)
 kernel_free_arrays :: proc(k:^Kernel) {
  // Locals only after clearing the owner: arbitrary backing frees may reenter.
- old:=k^;k^={}
+ old:=k^
+ k^={}
  kernel_free_array(old.requests,old.allocator)
  kernel_free_array(old.origins,old.allocator)
  kernel_free_array(old.sessions,old.allocator)
@@ -740,12 +815,14 @@ kernel_destroy :: proc(k:^Kernel)->Client_Error {
 // Only the scalar cleanup tickets survive, copied separately by the caller.
 origin_disposal_destroy :: proc(disposal:^Origin_Disposal) {
  if disposal==nil do return
- old:=disposal^;disposal^={}
+ old:=disposal^
+ disposal^={}
  kernel_free(old.owner.storage,1,old.owner.allocator)
 }
 request_disposal_destroy :: proc(disposal:^Request_Disposal) {
  if disposal==nil do return
- old:=disposal^;disposal^={}
+ old:=disposal^
+ disposal^={}
  if old.stream_finish!=nil {stream_api.complete(old.stream_finish,old.stream_error);stream_api.release(old.stream_finish)}
  stream_api.release_request(old.stream)
  request_owner_destroy(&old.input)
@@ -798,13 +875,15 @@ kernel_origin_release_locked :: proc(k:^Kernel,origin:Cell_Handle,reference:Orig
  counter^-=1
  if slot.requests!=0 || slot.sessions!=0 || slot.preparing!=0 || slot.waiters!=0 {return {},{}}
  result:=Origin_Disposal{origin=origin,owner=slot.owner}
- slot.owner={};slot.state=.Returning
+ slot.owner={}
+ slot.state=.Returning
  k.references+=1
  return result,{}
 }
 kernel_origin_cleanup_finish :: proc(k:^Kernel,origin:Cell_Handle)->Client_Error {
  if k==nil || k.self!=k {return {kind=.Invalid_State}}
- sync.lock(&k.mu);defer sync.unlock(&k.mu)
+ sync.lock(&k.mu)
+ defer sync.unlock(&k.mu)
  slot:=kernel_origin_cell_locked(k,origin)
  if slot==nil || slot.state!=.Returning {return {kind=.Invalid_Handle}}
  if slot.requests!=0 || slot.sessions!=0 || slot.preparing!=0 || slot.waiters!=0 ||
@@ -813,8 +892,10 @@ kernel_origin_cleanup_finish :: proc(k:^Kernel,origin:Cell_Handle)->Client_Error
  generation:=slot.generation
  slot^={generation=generation,state=.Retired}
  if generation!=max(u64) {
-  slot.generation+=1;slot.state=.Free
-  k.origin_free[k.origin_free_count]=origin.slot;k.origin_free_count+=1
+  slot.generation+=1
+  slot.state=.Free
+  k.origin_free[k.origin_free_count]=origin.slot
+  k.origin_free_count+=1
  }
  k.counters.origins-=1
  k.references-=1
@@ -823,9 +904,11 @@ kernel_origin_cleanup_finish :: proc(k:^Kernel,origin:Cell_Handle)->Client_Error
 
 network_state_retain :: proc(s:^Client_State)->bool {
  if !network_valid(s) {return false}
- sync.lock(&s.mu);defer sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ defer sync.unlock(&s.mu)
  if s.phase==.Disposing || s.references==0 || s.references==max(u64) {return false}
- s.references+=1;return true
+ s.references+=1
+ return true
 }
 network_state_release :: proc(s:^Client_State) {
  if !network_valid(s) {return}
@@ -843,7 +926,8 @@ network_state_release :: proc(s:^Client_State) {
 
 network_clock :: proc(s:^Client_State)->(runtime_async.Deadline,Client_Error) {
  if !network_valid(s) {return {},{kind=.Invalid_State}}
- sync.lock(&s.mu);defer sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ defer sync.unlock(&s.mu)
  if s.phase==.Disposing || s.registered_tasks==0 || s.runtime==nil {return {},{kind=.Closed}}
  now:=runtime_async.deadline_after(s.runtime,0)
  if now.epoch!=s.runtime_epoch || now.at<=0 {return {},{kind=.Invalid_State}}
@@ -857,11 +941,13 @@ network_assignment_take :: proc(actor:^Session_Actor)->(Session_Assignment,Clien
  if actor==nil || !network_valid(actor.owner) {return {},{kind=.Invalid_State}}
  s:=actor.owner
  if actor.index==0 || u64(actor.index)>u64(len(s.actors)) || actor!=&s.actors[int(actor.index)-1] {return {},{kind=.Invalid_Handle}}
- sync.lock(&s.mu);defer sync.unlock(&s.mu)
+ sync.lock(&s.mu)
+ defer sync.unlock(&s.mu)
  if s.phase!=.Published {return {},{kind=.Closed}}
  if !actor.command.pending {return {},{kind=.Pending}}
  assignment:=actor.command.assignment
- sync.lock(&s.kernel.mu);defer sync.unlock(&s.kernel.mu)
+ sync.lock(&s.kernel.mu)
+ defer sync.unlock(&s.kernel.mu)
  request:=admission_request_locked(&s.kernel,assignment.request)
  if request==nil || request.state!=.Active || request.session!=assignment.session ||
     assignment.session.slot!=actor.index || assignment.session.generation==0 {return {},{kind=.Invalid_Handle}}
@@ -887,7 +973,9 @@ network_assignment_take :: proc(actor:^Session_Actor)->(Session_Assignment,Clien
  result:=Session_Assignment{assignment=assignment,request=request.input.request,cutoff=request.deadline,
   setup_cutoff=setup,secure=origin.owner.key.secure,host=origin.owner.key.host,port=origin.owner.key.port,
   ids=metadata.ids,addresses=metadata.prepared_addresses,address_count=metadata.prepared_address_count}
- metadata.query_budget_left-=metadata.ids.count;metadata.ids={};metadata.awaiting_ids=false
+ metadata.query_budget_left-=metadata.ids.count
+ metadata.ids={}
+ metadata.awaiting_ids=false
  actor.command.pending=false
  return result,{}
 }
@@ -932,17 +1020,24 @@ network_task_done :: proc(s:^Client_State,actor_index:int,owner_drained:bool) {
  detached:^bool
  notification:signal.Signal
  if actor_index==0 {
-  registered=&s.coordinator.registered;done=&s.coordinator.done;detached=&s.coordinator.detached;notification=s.coordinator.wake
+  registered=&s.coordinator.registered
+  done=&s.coordinator.done
+  detached=&s.coordinator.detached
+  notification=s.coordinator.wake
  } else {
   actor:=&s.actors[actor_index-1]
-  registered=&actor.registered;done=&actor.done;detached=&actor.detached;notification=actor.wake
+  registered=&actor.registered
+  done=&actor.done
+  detached=&actor.detached
+  notification=actor.wake
  }
  if !registered^ {sync.unlock(&s.mu);return}
  assert(s.registered_tasks>0 && s.references>1)
  if !owner_drained {
   for actor in s.actors {assert(!actor.executor_initialized && !actor.transport_initialized && !actor.tls_initialized && !actor.handshake_started && !actor.close_started)}
  }
- registered^=false;done^=true
+ registered^=false
+ done^=true
  s.phase=.Closing
  cleanup:=!owner_drained && !s.unstarted_cleanup_started
  if cleanup {s.unstarted_cleanup_started=true}
@@ -950,7 +1045,9 @@ network_task_done :: proc(s:^Client_State,actor_index:int,owner_drained:bool) {
  signal.detach(notification)
  if cleanup {
   network_unstarted_cancel(s)
-  sync.lock(&s.mu);s.unstarted_cleanup_done=true;sync.unlock(&s.mu)
+  sync.lock(&s.mu)
+  s.unstarted_cleanup_done=true
+  sync.unlock(&s.mu)
  }
  sync.lock(&s.mu)
  detached^=true

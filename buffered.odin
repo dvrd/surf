@@ -106,7 +106,8 @@ buffered_http_execute_managed :: proc(
 	if !result.transport_ok do return
 	copied, ae := make([]byte, reply.used, output)
 	if ae != nil {
-		result = buffered_http_copy_error(result, ae); return
+		result = buffered_http_copy_error(result, ae)
+		return
 	}
 	copy(copied, reply.data[:reply.used])
 	return copied, result
@@ -181,7 +182,8 @@ buffered_http_execute_owned :: proc(
 	if !result.transport_ok do return
 	copied, ae := buffered_http_owned_copy(&reply, result.status, output)
 	if ae != nil {
-		result = buffered_http_copy_error(result, ae); return
+		result = buffered_http_copy_error(result, ae)
+		return
 	}
 	response = copied
 	budget_response(&ctx, &response)
@@ -242,26 +244,32 @@ buffered_http_validate :: proc(
 	}
 	parsed, parse_error := http.url_parse(url)
 	if parse_error.kind != .None {
-		error.kind = parse_error.kind; return error
+		error.kind = parse_error.kind
+		return error
 	}
 	if !allow_http && !parsed.secure {
-		error.kind = .Insecure_URL; return error
+		error.kind = .Insecure_URL
+		return error
 	}
 	if !http.header_name_valid(method) {
-		error.kind = .Invalid_Method; return error
+		error.kind = .Invalid_Method
+		return error
 	}
 	if timeout_ms <= 0 || timeout_ms > 120000 || upload_size < 0 do return error
 	if managed && len(headers) > http.MAX_HEADERS {
-		error.kind = .Header_Limit; return error
+		error.kind = .Header_Limit
+		return error
 	}
 	bytes := 0
 	for header in headers {
 		if strings.contains_any(header, "\r\n\x00") {
-			error.kind = .Invalid_Header; return error
+			error.kind = .Invalid_Header
+			return error
 		}
 		if managed {
 			if len(header) > http.MAX_HEADER_SIZE - bytes {
-				error.kind = .Header_Oversized; return error
+				error.kind = .Header_Oversized
+				return error
 			}
 			bytes += len(header)
 		}
@@ -285,7 +293,8 @@ buffered_http_perform :: proc(
 	// The provider fixture fails the first temporary allocation before any socket.
 	_, allocation_error := strings.clone_to_cstring(url, context.temp_allocator)
 	if allocation_error != nil {
-		result.error = buffered_http_allocation_error(allocation_error); return
+		result.error = buffered_http_allocation_error(allocation_error)
+		return
 	}
 	parsed, parse_error := http.url_parse(url)
 	if parse_error.kind != .None {
@@ -337,7 +346,8 @@ buffered_http_perform :: proc(
 	if !parsed.secure {
 		socket, setup_error := bounded_socket(parsed, config, connection_setup_deadline(config, total))
 		if setup_error.kind != .None {
-			result.error = setup_error; return
+			result.error = setup_error
+			return
 		}
 		defer net.close(socket)
 		tcp := net.TCP_Connection{socket = socket}
@@ -354,7 +364,8 @@ buffered_http_perform :: proc(
 	}
 	connection, setup_error := http_tls_connect(parsed, config, total, context.allocator, nil)
 	if setup_error.kind != .None {
-		result.error = buffered_tcp_timeout(setup_error); return
+		result.error = buffered_tcp_timeout(setup_error)
+		return
 	}
 	defer {
 		tls_api.abort(connection)

@@ -145,7 +145,9 @@ http_client_multiplex :: proc(c: ^HTTP_Client, requests: []http.Request, results
 	for &result in results {result = {}}
  if c.config.http3 {
   if len(requests)!=1 {return {kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}}
-  config:=c.config;config._http3_cancel=http_client_h3_cancelled;config._http3_cancel_data=c
+  config:=c.config
+  config._http3_cancel=http_client_h3_cancelled
+  config._http3_cancel_data=c
   results[0].response,results[0].error=execute(requests[0],config,allocator)
   return results[0].error
  }
@@ -303,7 +305,8 @@ http_lane_prepare :: proc(c: ^HTTP_Client, url: http.URL, deadline: time.Time) -
 		break
 	}
 	if lane == nil {return nil, false, {kind = .Invalid_Config, phase = .Admission, write_effect = .Not_Sent}}
-	lane.identity=identity;identity={}
+	lane.identity=identity
+	identity={}
 	settings:=c.config
 	if lane.identity.store!=nil {settings.tls.client_credential_lease=&lane.identity.lease}
 	connection, dial_error := http_tls_connect(url, settings, deadline, c.allocator, &c.dials)
@@ -1092,12 +1095,14 @@ http_identity_acquire :: proc(config:tls_api.Config)->(HTTP_Client_Identity,HTTP
   if config.client_credential_lease!=nil {return {},{kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}}
   return identity,{}
  }
- lease:credential_store.Lease;e:credential_store.Error
+ lease:credential_store.Lease
+ e:credential_store.Error
  if config.client_credential_lease!=nil {lease,e=credential_store.retain(identity.store,config.client_credential_lease^)} else {lease,e=credential_store.acquire(identity.store)}
  if e.kind!=.None {return {},{kind=.TLS_Failed,phase=.TLS,write_effect=.Not_Sent}}
  generation,ge:=credential_store.lease_generation(identity.store,lease)
  if ge.kind!=.None {_=credential_store.release(identity.store,&lease);return {},{kind=.TLS_Failed,phase=.TLS,write_effect=.Not_Sent}}
- identity.lease=lease;identity.generation=generation
+ identity.lease=lease
+ identity.generation=generation
  return identity,{}
 }
 @(private)
@@ -1116,7 +1121,13 @@ http_tls_config_equal :: proc(a,b:tls_api.Config)->bool {
 }
 @(private)
 http_lane_has_tunnels :: proc(lane:^HTTP_Lane)->bool {
- for tunnel in lane.tunnels {if tunnel!=nil {return true}};return false
+ for tunnel in lane.tunnels {
+  if tunnel!=nil {
+   return true
+  }
+ }
+
+ return false
 }
 
 // Matches the maximum accepted HTTP_Origin_Limits.max_streams. Closed request
@@ -1148,7 +1159,8 @@ h2_retired_requests_reap :: proc(lane: ^HTTP_Lane) -> bool {
 		if handle == {} {continue}
 		error := h2.connection_reap(&lane.engine, handle)
 		if error.kind == .None || error.kind == .Invalid_Input {
-			handle = {}; progress = true
+			handle = {}
+			progress = true
 		} else if error.kind != .Invalid_State {
 			lane.reusable = false
 		}
