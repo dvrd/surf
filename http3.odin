@@ -84,15 +84,9 @@ execute_http3 :: proc(
 	names: [http.MAX_HEADER_SIZE]u8
 	names_n := 0
 	for header, i in request.headers {
-		if len(header.name) > len(names)-names_n {return {}, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}}
-		at := names_n
-		for character, j in header.name {
-			lower := character
-			if lower >= 'A' && lower <= 'Z' {lower += 32}
-			names[at+j] = u8(lower)
-		}
-		names_n += len(header.name)
-		fields[i] = {name = string(names[at:names_n]), value = header.value}
+		name, fits := field_name_lower(names[:], &names_n, header.name)
+		if !fits {return {}, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}}
+		fields[i] = {name = name, value = header.value}
 	}
 	wire := http3.Client_Request{
  session_cache=config.tls.session_cache,
@@ -106,16 +100,11 @@ execute_http3 :: proc(
 		max_response_bytes = config.max_body_size,
 	}
  if config.http3_early_data!=nil {policy_request:=request;wire.early_data=config.http3_early_data(&policy_request)}
- trailer_fields:[32]http3.Field
- trailer_names:[4096]u8;trailer_bytes:=0
- if len(request.trailers)>len(trailer_fields) {return {},{kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
- for field,i in request.trailers {
-  if len(field.name)>len(trailer_names)-trailer_bytes {return {},{kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
-  start:=trailer_bytes
-  for character,j in field.name {lower:=character;if lower>='A'&&lower<='Z' {lower+=32};trailer_names[start+j]=u8(lower)}
-  trailer_bytes+=len(field.name);trailer_fields[i]={name=string(trailer_names[start:trailer_bytes]),value=field.value}
- }
- wire.trailers=trailer_fields[:len(request.trailers)]
+	trailer_fields: [32]http3.Field
+	trailer_names: [4096]u8
+	trailers, trailers_fit := http3_trailer_fields(&trailer_fields, &trailer_names, request.trailers)
+	if !trailers_fit {return {}, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}}
+	wire.trailers = trailers
 	source: HTTP3_Upload
 	wire_source: http3.Upload_Source
 	if upload != nil {
@@ -301,6 +290,11 @@ alt_svc_lookup :: proc(cache: ^Alt_Svc_Cache, host: string, now: time.Time, orig
 }
 
 @(private)
+is_digit :: proc(c: rune) -> bool {
+	return c >= '0' && c <= '9'
+}
+
+@(private)
 alt_svc_h3 :: proc(value: string) -> (port, ma: int, ok: bool) {
 	at := strings.index(value, "h3=\"")
 	if at < 0 do return
@@ -313,7 +307,7 @@ alt_svc_h3 :: proc(value: string) -> (port, ma: int, ok: bool) {
 	}
 	if len(token) == 0 do return
 	for rune in token {
-		if rune < '0' || rune > '9' do return
+		if !is_digit(rune) do return
 		port = port * 10 + int(rune - '0')
 		if port > 65535 do return 0, 0, false
 	}
@@ -322,7 +316,7 @@ alt_svc_h3 :: proc(value: string) -> (port, ma: int, ok: bool) {
 	loc := strings.index(tail, "ma=")
 	if loc < 0 do return
 	for rune in tail[loc + 3:] {
-		if rune < '0' || rune > '9' do break
+		if !is_digit(rune) do break
 		ma = ma * 10 + int(rune - '0')
 		if ma > ALT_SVC_MAX_AGE {
 			ma = ALT_SVC_MAX_AGE
@@ -363,16 +357,23 @@ http3_response_trailers :: proc(response: ^Response, result: ^http3.Client_Resul
 }
 
 @(private)
-http3_request_trailers_valid :: proc(headers:[]http.Header)->bool {
- if len(headers)>32 {return false}
- fields:[32]http3.Field;names:[4096]u8;at:=0
- for field,i in headers {
-  if len(field.name)>len(names)-at {return false}
-  start:=at
-  for character,j in field.name {lower:=character;if lower>='A'&&lower<='Z' {lower+=32};names[start+j]=u8(lower)}
-  at+=len(field.name);fields[i]={name=string(names[start:at]),value=field.value}
- }
- return http3.trailers_check(fields[:len(headers)]).kind==.None
+http3_request_trailers_valid :: proc(headers: []http.Header) -> bool {
+	fields: [32]http3.Field
+	names: [4096]u8
+	lowered, fits := http3_trailer_fields(&fields, &names, headers)
+	return fits && http3.trailers_check(lowered).kind == .None
+}
+
+// Lowercased trailer fields in caller storage; false when they do not fit.
+@(private)
+http3_trailer_fields :: proc(fields: ^[32]http3.Field, names: ^[4096]u8, trailers: []http.Header) -> (lowered: []http3.Field, ok: bool) {
+	if len(trailers) > len(fields) {return nil, false}
+	used := 0
+	for field, i in trailers {
+		name := field_name_lower(names[:], &used, field.name) or_return
+		fields[i] = {name = name, value = field.value}
+	}
+	return fields[:len(trailers)], true
 }
 
 HTTP3_Tunnel :: struct {
@@ -390,17 +391,18 @@ websocket_http3_open :: proc(client:^HTTP_Client,tunnel:^HTTP3_Tunnel,connection
  stream:=WebSocket_Stream{data=tunnel,read=h3_tunnel_read,write=h3_tunnel_write,close=h3_tunnel_close,abort=h3_tunnel_abort,set_read_deadline=h3_tunnel_read_deadline,set_write_deadline=h3_tunnel_write_deadline}
  if websocket_client(connection,stream,options)!=.None {return {kind=.Invalid_Config,phase=.Configuration,write_effect=.Not_Sent}}
  committed:=false;defer if !committed {connection^={};_=h3_tunnel_abort(tunnel)}
- deadline:=time.time_add(time.now(),effective_timeout(client.config));if options.handshake_timeout>0 {own:=time.time_add(time.now(),options.handshake_timeout);if time.diff(own,deadline)>0 {deadline=own}}
+ deadline:=websocket_tunnel_deadline(client.config,options.handshake_timeout)
  fields:[59]http3.Field;count:=1;fields[0]={name="sec-websocket-version",value="13"}
  if options.origin!="" {fields[count]={name="origin",value=options.origin};count+=1}
- protocols:[1024]u8;pn:=0
- for protocol,i in options.subprotocols {if i>0 {if pn+2>len(protocols) {return {kind=.Header_Limit}};pn+=copy(protocols[pn:],", ")};if len(protocol)>len(protocols)-pn {return {kind=.Header_Limit}};pn+=copy(protocols[pn:],protocol)}
- if pn>0 {fields[count]={name="sec-websocket-protocol",value=string(protocols[:pn])};count+=1}
+ protocols:[1024]u8
+ offered,offered_fits:=websocket_protocols_join(protocols[:],options.subprotocols)
+ if !offered_fits {return {kind=.Header_Limit}}
+ if offered!="" {fields[count]={name="sec-websocket-protocol",value=offered};count+=1}
  names:[4096]u8;at:=0
  for header in headers {
-  if count>=len(fields) || len(header.name)>len(names)-at {return {kind=.Header_Limit}}
-  start:=at;for byte in transmute([]u8)header.name {value:=byte;if value>='A' && value<='Z' {value+=32};names[at]=value;at+=1}
-  name:=string(names[start:at])
+  if count>=len(fields) {return {kind=.Header_Limit}}
+  name,fits:=field_name_lower(names[:],&at,header.name)
+  if !fits {return {kind=.Header_Limit}}
   if name=="sec-websocket-key" || name=="sec-websocket-accept" || name=="sec-websocket-version" || name=="sec-websocket-extensions" || name=="sec-websocket-protocol" || name=="origin" {return {kind=.Invalid_Header,phase=.Configuration,write_effect=.Not_Sent}}
   fields[count]={name=name,value=header.value,never_indexed=name=="authorization" || name=="cookie"};count+=1
  }
@@ -415,7 +417,7 @@ websocket_http3_open :: proc(client:^HTTP_Client,tunnel:^HTTP3_Tunnel,connection
   if strings.equal_fold(field.name,"sec-websocket-protocol") {if seen {return {kind=.Invalid_Header}};seen=true;selected=field.value}
   if strings.equal_fold(field.name,"sec-websocket-extensions") || strings.equal_fold(field.name,"sec-websocket-accept") {return {kind=.Invalid_Header}}
  }
- if seen {found:=false;for offered in options.subprotocols {if offered==selected {found=true}};if !found || len(selected)>len(connection.selected_protocol) {return {kind=.Invalid_Header}};connection.selected_protocol_size=copy(connection.selected_protocol[:],selected)}
+ if seen && !websocket_subprotocol_accept(connection,options.subprotocols,selected) {return {kind=.Invalid_Header}}
  client.http3_tunnels[slot]=tunnel;connection.phase=.Open;committed=true;return {}
 }
 @(private)

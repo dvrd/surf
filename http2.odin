@@ -662,23 +662,33 @@ h2_fields :: proc(job: ^H2_Job) -> h2.Error {
 @(private)
 h2_field :: proc(job: ^H2_Job, name, value: string) -> bool {
 	if job.field_n >= len(job.fields) || len(name) == 0 {return false}
-	stored: string
-	if name[0] == ':' {
-		stored = name
-	} else {
-		if job.names_n+len(name) > len(job.names) {return false}
-		at := job.names_n
-		for character, i in name {
-			lower := character
-			if lower >= 'A' && lower <= 'Z' {lower += 32}
-			job.names[at+i] = u8(lower)
-		}
-		job.names_n += len(name)
-		stored = string(job.names[at:job.names_n])
+	stored := name
+	if name[0] != ':' {
+		stored = field_name_lower(job.names[:], &job.names_n, name) or_return
 	}
 	job.fields[job.field_n] = {name = stored, value = value}
 	job.field_n += 1
 	return true
+}
+
+@(private)
+is_upper :: proc(c: u8) -> bool {
+	return c >= 'A' && c <= 'Z'
+}
+
+// HTTP/2 and HTTP/3 field names are lowercase on the wire. Appends the folded
+// name to storage and returns that copy; false when it does not fit.
+@(private)
+field_name_lower :: proc(storage: []u8, used: ^int, name: string) -> (string, bool) {
+	if len(name) > len(storage) - used^ {return "", false}
+	start := used^
+	for i in 0 ..< len(name) {
+		c := name[i]
+		if is_upper(c) {c += 32}
+		storage[start + i] = c
+	}
+	used^ += len(name)
+	return string(storage[start:used^]), true
 }
 
 @(private)

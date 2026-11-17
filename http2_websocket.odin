@@ -51,29 +51,23 @@ websocket_http2_open :: proc(client:^HTTP_Client,tunnel:^HTTP2_Tunnel,conn:^WebS
  fields[2]={":scheme","https",false};fields[3]={":authority",parsed.authority,false};fields[4]={":path",options.target,false}
  fields[5]={"sec-websocket-version","13",false};count:=6
  if options.origin!="" {fields[count]={"origin",options.origin,false};count+=1}
- protocols:[1024]u8;protocol_n:=0
+ protocols:[1024]u8
  if len(options.subprotocols)>0 {
-  for protocol,i in options.subprotocols {
-   if i>0 {if protocol_n+2>len(protocols) {return {kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}};protocol_n+=copy(protocols[protocol_n:],", ")}
-   if len(protocol)>len(protocols)-protocol_n {return {kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
-   protocol_n+=copy(protocols[protocol_n:],protocol)
-  }
-  fields[count]={"sec-websocket-protocol",string(protocols[:protocol_n]),false};count+=1
+  offered,fits:=websocket_protocols_join(protocols[:],options.subprotocols)
+  if !fits {return {kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
+  fields[count]={"sec-websocket-protocol",offered,false};count+=1
  }
  names:[4096]u8;name_n:=0
  for header in headers {
-  if count==len(fields) || len(header.name)>len(names)-name_n {return {kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
-  at:=name_n;for byte in transmute([]u8)header.name {lower:=byte;if lower>='A'&&lower<='Z' {lower+=32};names[name_n]=lower;name_n+=1}
-  name:=string(names[at:name_n]);fields[count]={name,header.value,name=="authorization"||name=="cookie"};count+=1
+  if count==len(fields) {return {kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
+  name,fits:=field_name_lower(names[:],&name_n,header.name)
+  if !fits {return {kind=.Header_Limit,phase=.Configuration,write_effect=.Not_Sent}}
+  fields[count]={name,header.value,name=="authorization"||name=="cookie"};count+=1
  }
  if _,e:=h2.headers_validate(fields[:count],.Request,{max_fields=64,max_list_bytes=8192,extended_connect_enabled=true});e.kind!=.None {
   return {kind=.Invalid_Header,phase=.Configuration,write_effect=.Not_Sent}
  }
- deadline:=time.time_add(time.now(),effective_timeout(client.config))
- if options.handshake_timeout>0 {
-  own:=time.time_add(time.now(),options.handshake_timeout)
-  if time.diff(own,deadline)>0 {deadline=own}
- }
+ deadline:=websocket_tunnel_deadline(client.config,options.handshake_timeout)
  lane,reused,e:=http_lane_prepare(client,parsed,deadline)
  if e.kind!=.None {return e}
  if lane.protocol!=.HTTP2 {http_lane_close(client,lane);return {kind=.Invalid_Config,phase=.Protocol,write_effect=.Not_Sent}}
@@ -96,10 +90,8 @@ websocket_http2_open :: proc(client:^HTTP_Client,tunnel:^HTTP2_Tunnel,conn:^WebS
  protocols_received:=0
  for header in tunnel._response.headers {if strings.equal_fold(header.name,"sec-websocket-protocol") {protocols_received+=1}}
  if protocols_received>1 {return {kind=.Invalid_Header,phase=.Protocol,write_effect=.Response_Received}}
- if present {
-  found:=false;for offered in options.subprotocols {if offered==selected {found=true}}
-  if !found || len(selected)>len(conn.selected_protocol) {return {kind=.Invalid_Header,phase=.Protocol,write_effect=.Response_Received}}
-  conn.selected_protocol_size=copy(conn.selected_protocol[:],selected)
+ if present && !websocket_subprotocol_accept(conn,options.subprotocols,selected) {
+  return {kind=.Invalid_Header,phase=.Protocol,write_effect=.Response_Received}
  }
  if extension,_:=response_header(&tunnel._response,"sec-websocket-extensions");extension!="" {return {kind=.Invalid_Header,phase=.Protocol,write_effect=.Response_Received}}
  response_destroy(&tunnel._response)
@@ -261,4 +253,42 @@ h2_tunnel_stream_error :: proc(error:HTTP_Error)->WebSocket_Stream_Error {
  if error.kind==.Deadline_Failed {transport={kind=.Timeout}}
  if error.phase==.Cancellation {transport={kind=.Cancelled}}
  return {kind=.TCP_Failed,transport=transport}
+}
+
+// Shared by the HTTP/2 and HTTP/3 Extended CONNECT openers.
+
+// The client timeout bounds the open; a shorter handshake timeout wins.
+@(private)
+websocket_tunnel_deadline :: proc(config: Config, handshake_timeout: time.Duration) -> time.Time {
+	now := time.now()
+	timeout := effective_timeout(config)
+	if handshake_timeout > 0 && handshake_timeout < timeout {timeout = handshake_timeout}
+	return time.time_add(now, timeout)
+}
+
+// Comma-joined sec-websocket-protocol value; false when it does not fit dst.
+@(private)
+websocket_protocols_join :: proc(dst: []u8, subprotocols: []string) -> (string, bool) {
+	used := 0
+	for protocol, i in subprotocols {
+		if i > 0 {
+			if used + 2 > len(dst) {return "", false}
+			used += copy(dst[used:], ", ")
+		}
+		if len(protocol) > len(dst) - used {return "", false}
+		used += copy(dst[used:], protocol)
+	}
+	return string(dst[:used]), true
+}
+
+// Records the peer-selected subprotocol; false unless it was offered and fits.
+@(private)
+websocket_subprotocol_accept :: proc(conn: ^WebSocket_Conn, offered: []string, selected: string) -> bool {
+	found := false
+	for candidate in offered {
+		if candidate == selected {found = true}
+	}
+	if !found || len(selected) > len(conn.selected_protocol) {return false}
+	conn.selected_protocol_size = copy(conn.selected_protocol[:], selected)
+	return true
 }
