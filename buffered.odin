@@ -26,7 +26,6 @@ Buffered_HTTP_Result :: struct {
 Buffered_HTTP_Reply :: struct {
 	data: [64 * 1024]byte,
 	used: int,
-	limit_exceeded: bool,
 }
 
 // Preserve the original procedure type for injected AWS/S3 HTTP callbacks.
@@ -116,48 +115,6 @@ buffered_http_execute_managed :: proc(
 @(private)
 buffered_http_allocation_error :: proc(error: mem.Allocator_Error) -> HTTP_Error {
 	return {kind = .Allocation_Failed, phase = .Configuration, write_effect = .Not_Sent, allocation = error}
-}
-
-buffered_http_cstring :: proc(value: string) -> cstring {
-	result, _ := strings.clone_to_cstring(value, context.temp_allocator)
-	return result
-}
-
-// Historical libcurl numbers. Native transfers leave provider_code zero; this
-// mapping remains for the provider fixture and does not perform a transfer.
-buffered_http_error :: proc(code: int, status: int, body_limit, file_upload: bool, request_size: i64 = -1) -> HTTP_Error {
-	error := HTTP_Error{kind = .IO_Failed, provider_code = code, status = status}
-	switch code {
-	case 3, 4, 43, 48: // URL_MALFORMAT, NOT_BUILT_IN, BAD_FUNCTION_ARGUMENT, UNKNOWN_OPTION
-		error.kind, error.phase, error.write_effect = .Invalid_Config, .Configuration, .Not_Sent
-	case 1: // UNSUPPORTED_PROTOCOL
-		error.kind = .Invalid_Status
-	case 6, 5: // COULDNT_RESOLVE_HOST, COULDNT_RESOLVE_PROXY
-		error.kind, error.phase, error.write_effect = .Dial_Failed, .DNS, .Not_Sent
-	case 7: // COULDNT_CONNECT
-		error.kind, error.phase, error.write_effect = .Dial_Failed, .Connect, .Not_Sent
-	case 35, 60, 58, 59, 77, 82, 83, 90, 91, 98:
-		error.kind, error.phase, error.write_effect = .TLS_Failed, .TLS, .Not_Sent
-	case 28: // OPERATION_TIMEDOUT
-		error.kind, error.phase = .Deadline_Failed, .Deadline
-	case 55, 26, 25, 65: // SEND, READ, UPLOAD, SEND_FAIL_REWIND
-		error.phase = .Write
-	case 56, 18, 52, 23: // RECV, PARTIAL_FILE, GOT_NOTHING, WRITE
-		error.phase = .Read
-	case 8, 16, 92, 95, 61: // WEIRD_SERVER_REPLY, HTTP2, HTTP2_STREAM, HTTP3, BAD_CONTENT_ENCODING
-		error.kind, error.phase = .Invalid_Status, .Protocol
-	case 27: // OUT_OF_MEMORY
-		error.kind = .Allocation_Failed
-	case 42: // ABORTED_BY_CALLBACK
-		if file_upload {error.phase = .Write}
-	}
-	if code == 1 && request_size > 0 {
-		error.kind, error.phase, error.write_effect = .Invalid_Status, .Protocol, .Unknown
-	}
-	if request_size > 0 && error.write_effect == .Not_Sent {error.write_effect = .Unknown}
-	if body_limit {error.kind, error.phase = .Body_Oversized, .Body_Limit}
-	if status != 0 {error.write_effect = .Response_Received}
-	return error
 }
 
 // Owned alternative to the borrowed temporary result. The allocator must outlive
@@ -628,7 +585,6 @@ buffered_http_read :: proc(stream: net.Connection, reply: ^Buffered_HTTP_Reply, 
 	// body_read fills body_storage. response.body is the published view.
 	response.body = response.body_storage[:]
 	if len(response.body) > len(reply.data) {
-		reply.limit_exceeded = true
 		return {
 			status = outcome.status,
 			error = {kind = .Body_Oversized, phase = .Body_Limit, status = outcome.status, write_effect = .Response_Received},

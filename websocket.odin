@@ -460,21 +460,6 @@ websocket_subprotocol :: proc(conn: ^WebSocket_Conn) -> string {
 	)
 }
 
-websocket_set_read_deadline :: proc(
-	conn: ^WebSocket_Conn,
-	deadline: time.Time,
-) -> WebSocket_Stream_Error {
-	if conn == nil || conn.phase != .Open {
-		return {kind = .Invalid_Stream}
-	}
-
-	if conn.stream.set_read_deadline == nil {
-		return {kind = .Deadline_Unsupported}
-	}
-
-	return conn.stream.set_read_deadline(conn.stream.data, deadline)
-}
-
 websocket_set_write_deadline :: proc(
 	conn: ^WebSocket_Conn,
 	deadline: time.Time,
@@ -1206,16 +1191,6 @@ websocket_stream_write_all :: proc(
 	return tcp_api.write_all_callback(
 		WebSocket_Stream_Error, stream.data, src, stream.write,
 	)
-}
-
-// Complete TLS first so its handshake cannot replace the WebSocket upgrade's
-// deadline. dial performs this sequencing automatically.
-websocket_tls_stream :: proc(conn: ^tls_api.Conn) -> WebSocket_Stream {
-	if conn == nil || conn.phase != .Established {
-		return {}
-	}
-
-	return websocket_stream_from_tls_address(conn)
 }
 
 websocket_stream_from_tls_address :: proc(conn: ^tls_api.Conn) -> WebSocket_Stream {

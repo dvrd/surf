@@ -85,26 +85,7 @@ public_exchange_retains_observed_status_after_body_failure :: proc(t: ^testing.T
 }
 
 @(test)
-provider_mapping_does_not_fabricate_timeout_or_callback_details :: proc(t: ^testing.T) {
-	dns := surf.buffered_http_error(6, 0, false, false)
-	testing.expect_value(t, dns.phase, .DNS)
-	testing.expect_value(t, dns.write_effect, .Not_Sent)
-	deadline := surf.buffered_http_error(28, 0, false, false)
-	testing.expect_value(t, deadline.phase, .Deadline)
-	testing.expect_value(t, deadline.write_effect, .Unknown)
-	aborted := surf.buffered_http_error(42, 0, false, false)
-	testing.expect_value(t, aborted.phase, .Unknown) // No cancellation callback exists here.
-	capped := surf.buffered_http_error(23, 200, true, false)
-	testing.expect_value(t, capped.phase, .Body_Limit)
-	testing.expect_value(t, capped.status, 200)
-	testing.expect_value(t, capped.write_effect, .Response_Received)
-	testing.expect_value(t, capped.provider_code, 23)
-	ambiguous := surf.buffered_http_error(1, 0, false, false)
-	testing.expect_value(t, ambiguous.phase, .Unknown)
-	testing.expect_value(t, ambiguous.write_effect, .Unknown)
-	observed := surf.buffered_http_error(1, 0, false, false, 40)
-	testing.expect_value(t, observed.phase, .Protocol)
-	testing.expect_value(t, observed.write_effect, .Unknown)
+native_dns_failure_classifies_as_dns :: proc(t: ^testing.T) {
 	native_dns := surf.http_error_classify({kind = .Dial_Failed, network = net.Resolve_Error.Unable_To_Resolve}, .Connect, .Not_Sent)
 	testing.expect_value(t, native_dns.phase, .DNS)
 }

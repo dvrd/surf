@@ -559,8 +559,6 @@ stream_exchange_take_redirect :: proc(x:^Stream_Exchange,destination:^surf.Respo
  return true
 }
 
-stream_exchange_status :: proc(x:^Stream_Exchange)->int {return x.status}
-
 @(private)
 stream_entity_step :: proc(x:^Stream_Exchange)->Exchange_Step {
  if x.encoded_at<x.encoded_used || x.entity_done {return .Continue}
