@@ -14,8 +14,7 @@ import tls "core:crypto/tls"
 import "core:net"
 import "core:crypto/x509"
 
-// Stable public header. Phase2 supplies only the pure kernel, not a network Client.
-// Operational APIs must verify the original address before using opaque state.
+// Stable public header. Operational APIs must verify the original address before using opaque state.
 Client :: struct {
  _self: ^Client,
  _state: rawptr,

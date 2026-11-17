@@ -855,9 +855,8 @@ Drive_Result :: struct {
  reuse_eligible: bool,
 }
 
-// Concrete state for the subsequent engine task, not executable driver stubs.
-// Idle means initialized/no exchange. Done means every accepted operation's
-// terminal callback arrived; a successful Response may still await take.
+// Idle means initialized/no exchange. Done means every accepted operation's terminal callback
+// arrived; a successful Response may still await take.
 Exchange_Phase :: enum {
  Idle,
  Writing_Head,

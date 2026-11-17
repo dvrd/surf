@@ -9,8 +9,6 @@ import "core:time"
 import "core:mem"
 import tcp_api "core:net"
 
-// WebSocket initialization and upgrade execution
-
 WebSocket_DEFAULT_MAX_MESSAGE_SIZE :: 1 << 20
 WebSocket_MAX_MESSAGE_SIZE_LIMIT :: 64 << 20
 
@@ -350,8 +348,6 @@ websocket_upgrade_fail :: proc(conn: ^WebSocket_Conn, err: WebSocket_Error) -> W
 	return err
 }
 
-// Secure dialing and connection configuration
-
 WebSocket_Dial_Error_Kind :: enum {
 	None,
 	Invalid_State,
@@ -492,8 +488,6 @@ websocket_set_deadline :: proc(
 
 	return conn.stream.set_write_deadline(conn.stream.data, deadline)
 }
-
-// WebSocket messages and connection lifecycle
 
 WebSocket_MAX_CONTROL_FRAMES_WITHOUT_MESSAGE :: 1024
 
