@@ -364,17 +364,13 @@ websocket_async_close :: proc(
 	if session.phase != .Open {
 		return {kind = .Invalid_State}
 	}
-	if len(reason) > 123 {
-		return {kind = .Invalid_Frame, frame = .Control_Payload_Oversized}
-	}
 	body: [125]u8
-	body[0], body[1] = u8(code >> 8), u8(code)
-	copy(body[2:], transmute([]u8)reason)
-	if frame_error := websocket.close_payload_validate(body[:2 + len(reason)]); frame_error != .None {
+	size, frame_error := websocket_close_payload(&body, code, reason)
+	if frame_error != .None {
 		return {kind = .Invalid_Frame, frame = frame_error}
 	}
-	copy(session.close_body[:], body[:2 + len(reason)])
-	session.close_len = 2 + len(reason)
+	copy(session.close_body[:], body[:size])
+	session.close_len = size
 	session.local_close = true
 	op^ = {
 		callback = op.callback,
@@ -975,10 +971,9 @@ websocket_async_finish_control :: proc(session: ^WebSocket_Async, body: []u8) ->
 		copy(session.peer_close_body[:], body)
 		session.peer_close_len = len(body)
 		session.peer_closed = true
-		code: u16 = 1005
-		if len(body) >= 2 do code = u16(body[0]) << 8 | u16(body[1])
+		code := websocket_close_code(body)
 		kind := WebSocket_Async_Error_Kind.EOF
-		if code != 1000 && code != 1001 && code != 1005 do kind = .Peer_Close
+		if !websocket_close_code_normal(code) do kind = .Peer_Close
 		if !session.local_close && !session.close_sent {
 			copy(session.close_body[:], body)
 			session.close_len = len(body)
@@ -1037,12 +1032,7 @@ websocket_async_pull_header :: proc(session: ^WebSocket_Async, need: int) -> boo
 @(private)
 websocket_async_header_need :: proc(session: ^WebSocket_Async) -> int {
 	if session.header_have < 2 do return 2
-	need := 2
-	length := session.header_raw[1] & 0x7f
-	if length == 126 do need = 4
-	if length == 127 do need = 10
-	if session.header_raw[1] & 0x80 != 0 do need += 4
-	return need
+	return websocket_frame_header_size(session.header_raw[1])
 }
 
 @(private)
