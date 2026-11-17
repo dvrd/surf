@@ -497,6 +497,9 @@ websocket_set_deadline :: proc(
 
 WebSocket_MAX_CONTROL_FRAMES_WITHOUT_MESSAGE :: 1024
 
+@(private)
+WebSocket_STACK_FRAME_PAYLOAD :: 2048
+
 WebSocket_Conn_Phase :: enum {
 	Uninitialized,
 	Upgrade_Pending,
@@ -686,7 +689,7 @@ websocket_peer_close :: proc(conn: ^WebSocket_Conn, body: []u8) -> WebSocket_Err
 	}
 
 	conn.phase = .Closed
-	websocket.message_release(&conn.message_state)
+	websocket_release_message(conn)
 	websocket_stream_close(conn, write_err.kind != .None)
 	if write_err.kind != .None {
 		write_err.close_code = code
@@ -808,7 +811,7 @@ websocket_close :: proc(
 	}
 
 	if conn.phase == .Closed || conn.phase == .Failed {
-		websocket.message_release(&conn.message_state)
+		websocket_release_message(conn)
 		websocket_stream_close(conn, conn.phase == .Failed)
 		return {}
 	}
@@ -832,7 +835,7 @@ websocket_close :: proc(
 	}
 
 	conn.phase = .Closed
-	websocket.message_release(&conn.message_state)
+	websocket_release_message(conn)
 	stream_err := websocket_stream_close(
 		conn,
 		abort_stream || err.kind != .None,
@@ -872,7 +875,7 @@ websocket_fail :: proc(
 
 	conn.phase = .Failed
 	conn.last_error = err
-	websocket.message_release(&conn.message_state)
+	websocket_release_message(conn)
 	websocket_stream_close(conn, true)
 	return err
 }
@@ -987,24 +990,26 @@ websocket_frame_write :: proc(
 	when !crypto.HAS_RAND_BYTES do return {kind = .Entropy_Unavailable}
 	mask: [4]u8
 	crypto.rand_bytes(mask[:])
+	// Control frames and short messages are masked on the stack, so replying to
+	// a ping or closing never depends on the allocator.
+	small: [websocket.MAX_FRAME_HEADER_SIZE + WebSocket_STACK_FRAME_PAYLOAD]u8
+	wire := small[:]
 	allocator := conn.allocator
 	if allocator.procedure == nil {
 		allocator = context.allocator
 	}
 
-	wire, allocation_err := make(
-		[]u8,
-		websocket.MAX_FRAME_HEADER_SIZE + len(payload),
-		allocator,
-	)
-	if allocation_err != nil {
-		return {
-			kind = .Allocation_Failed,
-			allocation = allocation_err,
+	heap: []u8
+	defer delete(heap, allocator)
+	if len(payload) > WebSocket_STACK_FRAME_PAYLOAD {
+		allocation_err: mem.Allocator_Error
+		heap, allocation_err = make([]u8, websocket.MAX_FRAME_HEADER_SIZE + len(payload), allocator)
+		if allocation_err != nil {
+			return {kind = .Allocation_Failed, allocation = allocation_err}
 		}
+		wire = heap
 	}
 
-	defer delete(wire, allocator)
 	size, frame_err := websocket.frame_encode(
 		wire,
 		true,
@@ -1033,6 +1038,10 @@ websocket_deliver_message :: proc(
 ) -> (websocket.Opcode, int, WebSocket_Error) {
 	opcode, count, error := websocket.message_deliver(&conn.message_state, dst)
 	return opcode, count, websocket_message_error(error)
+}
+
+websocket_release_message :: proc(conn: ^WebSocket_Conn) {
+	websocket.message_release(&conn.message_state)
 }
 
 // Wire size of a frame header, known from its second byte.
