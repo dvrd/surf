@@ -16,8 +16,8 @@ import (
 
 func main() {
 	cert, err := tls.LoadX509KeyPair(
-		"../../../async/connection/tests/testdata/peer/credentials/leaf.pem",
-		"../../../async/connection/tests/testdata/peer/credentials/key.pem",
+		"../../../async/tests/connection/testdata/peer/credentials/leaf.pem",
+		"../../../async/tests/connection/testdata/peer/credentials/key.pem",
 	)
 	if err != nil {
 		panic(err)

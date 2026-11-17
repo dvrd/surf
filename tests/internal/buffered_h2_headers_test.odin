@@ -43,7 +43,7 @@ buffered_h2_public_wire_preserves_authentication_headers :: proc(t: ^testing.T) 
 	data, result := buffered_http_execute("POST", url, transmute([]u8)string("body-review"), {
 		"Authorization: Bearer fixture", "Cookie: session=fixture", "Content-Type: application/json",
 		"X-Review: first", "X-Review: second",
-	}, "async/connection/tests/testdata/peer/credentials/root.pem", timeout_ms = 5000)
+	}, "async/tests/connection/testdata/peer/credentials/root.pem", timeout_ms = 5000)
 	testing.expect_value(t, result.error.kind, .None)
 	testing.expect(t, result.transport_ok && result.status == 200)
 	testing.expect_value(t, string(data), "HTTP/2.0|POST|Bearer fixture|session=fixture|application/json|first,second|body-review")

@@ -91,9 +91,9 @@ def main():
         state['go'] = {'path': str(go), 'sha256': sha(go), 'version': run('go-version', [go, 'version']).strip()}
         standard = sorted(str(p.relative_to(core)) for folder in ('base', 'core', 'vendor') for p in (core/folder).rglob('*') if p.is_file() and p.suffix in ('.odin', '.c', '.h', '.s', '.S'))
         state['core_sources_before'] = manifest(core, standard)
-        artifacts = ['async/tests/internal/concurrency_test.odin', 'tests/concurrency101.py', 'tests/testdata/concurrency101/main.odin', 'tests/testdata/concurrency101/peer.go']
+        artifacts = ['tests/async/internal/concurrency_test.odin', 'tests/concurrency101.py', 'tests/testdata/concurrency101/main.odin', 'tests/testdata/concurrency101/peer.go']
         state['fixtures_before'] = manifest(shared/'surf', artifacts)
-        names = re.findall(r'@\(test\)\s*(\w+)\s*::', (shared/'surf/async/tests/internal/concurrency_test.odin').read_text())
+        names = re.findall(r'@\(test\)\s*(\w+)\s*::', (shared/'surf/tests/async/internal/concurrency_test.odin').read_text())
         require(len(names) == 2, 'Exact public concurrency unit aggregates')
         helper = compiler.parent/'ci/webtools_consumer_gate.py';state['helper_sha256'] = sha(helper)
         spec = importlib.util.spec_from_file_location('concurrency101_closure', helper)

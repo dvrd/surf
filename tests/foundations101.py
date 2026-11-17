@@ -172,7 +172,7 @@ def main():
             work = Path(temporary)
             copied = work / 'shared'
             copied.mkdir()
-            packages = ('surf', 'surf/tests', 'http/v1', 'async/connection', 'async/connection/tests')
+            packages = ('surf', 'surf/tests', 'http/v1', 'async/connection', 'async/tests/connection')
             state['dependency_closures'] = {name: copy_closure(gate, name, source, copied) for name in packages}
             require(not any(p.is_symlink() for p in copied.rglob('*')), 'Copied closure contains a symlink')
             state['copied_files_before'] = manifest(copied)
@@ -198,7 +198,7 @@ def main():
                         '-define:ODIN_TEST_THREADS=1', '-sanitize:' + sanitizer, '-keep-executable', '-out:' + str(binary)], tests=count)
                     cell['binary_sha256'] = digest(binary)
             budget_report = report.parent / (report.stem + '-request-budget.json')
-            run('request-budget-gate', ['python3', copied / 'async/connection/tests/request_budget_gate.py',
+            run('request-budget-gate', ['python3', copied / 'async/tests/connection/request_budget_gate.py',
                 '--odin', compiler, '--sanitizers', *args.sanitizers, '--report', budget_report], timeout=240)
             budget = json.loads(budget_report.read_text())
             require(budget['passed'] and len(budget['cells']) == 2 * len(args.sanitizers), 'Budget gate count/failure')

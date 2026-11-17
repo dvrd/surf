@@ -27,7 +27,7 @@ def main():
  a=parser.parse_args();require(len(set(a.sanitizers))==len(a.sanitizers),'duplicate sanitizer')
  compiler,core,shared,report=[v.resolve() for v in (a.odin,a.core_root,a.shared_root,a.report)]
  report.parent.mkdir(parents=True,exist_ok=True);own=Path(__file__).resolve().parents[1]
- fixtures=['async/tests/internal/failure_test.odin','tests/failure101.py','tests/testdata/failure101/main.odin','tests/testdata/failure101/peer.go']
+ fixtures=['tests/async/internal/failure_test.odin','tests/failure101.py','tests/testdata/failure101/main.odin','tests/testdata/failure101/peer.go']
  state={'passed':False,'scope':'public fixed-body submit/redirect allocation failures, callback-safe close/cancel/stats and whole-backed Response lifetime; constructor414 referenced, no new constructor claim','selected_sanitizers':a.sanitizers,'partial':a.baseline_only or set(a.sanitizers)!={'address','thread'},'commands':[],'cells':[],'native_execution_count':0,'artifact_hashes':{}}
  env=dict(os.environ,ODIN_ROOT=str(core),GOTOOLCHAIN='local',GOPROXY='off',GOSUMDB='off',CGO_ENABLED='0',GOCACHE=str(report.parent/'go-cache'));env['PATH']='/opt/homebrew/opt/llvm@22/bin:'+env.get('PATH','')
  for k in list(env):
@@ -50,8 +50,8 @@ def main():
    temp=Path(tmp);copied=temp/'shared';copied.mkdir();state['closure']=copy_closure(gate, 'surf/async',shared,copied)
    original=manifest(copied);state['source_files_before']=manifest(shared,original);require(original==state['source_files_before'],'copy differs from source')
    # Supports a temporary independent draft without writing the candidate.
-   shutil.copyfile(own/'async/tests/internal/failure_test.odin',copied/'surf/async/tests/internal/failure_test.odin')
-   state['copied_files_before']=manifest(copied);state['unit_overlay_sha256']=sha(copied/'surf/async/tests/internal/failure_test.odin')
+   shutil.copyfile(own/'tests/async/internal/failure_test.odin',copied/'surf/tests/async/internal/failure_test.odin')
+   state['copied_files_before']=manifest(copied);state['unit_overlay_sha256']=sha(copied/'surf/tests/async/internal/failure_test.odin')
    host=temp/'host';host.mkdir();shutil.copyfile(own/'tests/testdata/failure101/main.odin',host/'main.odin')
    peer=report.parent/'peer';run('peer-build',[go,'build','-o',peer,own/'tests/testdata/failure101/peer.go']);state['artifact_hashes'][str(peer)]=sha(peer)
    names=['failure32_public_submit_grants_preserve_full_caller_inputs_and_rollback','failure32_closed_scope_rejects_before_new_allocation_and_refunds_lease','failure32_allocation_callbacks_use_public_close_stats_cancel_and_fresh_clock']

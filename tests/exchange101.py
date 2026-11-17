@@ -101,7 +101,7 @@ def main():
         stdnames = sorted(str(x.relative_to(core)) for folder in ('base', 'core', 'vendor') for x in (core/folder).rglob('*') if x.is_file() and x.suffix in ('.odin', '.h', '.c', '.s', '.S'))
         state['standard_sources_before'] = manifest(core, stdnames)
         state['runner_sha256'] = sha(__file__)
-        artifacts = ['async/exchange/tests/internal/exchange_test.odin', 'tests/exchange101.py', 'tests/testdata/exchange101/main.odin', 'tests/testdata/exchange101/peer.go']
+        artifacts = ['tests/async/exchange/internal/exchange_test.odin', 'tests/exchange101.py', 'tests/testdata/exchange101/main.odin', 'tests/testdata/exchange101/peer.go']
         state['fixture_sources_before'] = manifest(here, artifacts)
         helper = compiler.parent/'ci/webtools_consumer_gate.py'
         state['closure_helper_sha256'] = sha(helper)

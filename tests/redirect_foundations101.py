@@ -14,9 +14,9 @@ import tempfile
 import time
 
 STREAMS = {
-    'ledger': 'async/tests/internal/redirect_kernel_test.odin',
-    'prepare': 'async/tests/internal/redirect_prepare_test.odin',
-    'queue': 'async/tests/internal/redirect_queue_test.odin',
+    'ledger': 'tests/async/internal/redirect_kernel_test.odin',
+    'prepare': 'tests/async/internal/redirect_prepare_test.odin',
+    'queue': 'tests/async/internal/redirect_queue_test.odin',
 }
 API_FILES = ['async/redirect.odin', 'async/pool.odin']
 

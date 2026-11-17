@@ -10,7 +10,7 @@ http2_websocket_requires_negotiated_permission_without_sending_or_poisoning_pool
  peer:=http102_start(t,"h2")
  if peer==nil {return}
  defer free(peer);defer http102_stop(peer)
- roots:=http102_roots(t,"async/connection/tests/testdata/peer/credentials/root.pem")
+ roots:=http102_roots(t,"async/tests/connection/testdata/peer/credentials/root.pem")
  if roots==nil {return}
  defer free(roots);defer tls.root_pool_destroy(roots)
  protocols:=[1]string{"h2"}

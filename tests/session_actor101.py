@@ -149,7 +149,7 @@ def main():
         state['go']['sha256']=sha(state['go']['path'])
         standard=sorted(str(p.relative_to(core)) for tree in ('base','core','vendor') for p in (core/tree).rglob('*') if p.is_file() and p.suffix in ('.odin','.c','.h','.s','.S'))
         state['core_sources_before']=manifest(core,standard)
-        fixture_names=['tests/session_actor101.py','tests/testdata/session_actor101/main.odin','tests/testdata/session_actor101/peer.go','async/tests/internal/session_test.odin']
+        fixture_names=['tests/session_actor101.py','tests/testdata/session_actor101/main.odin','tests/testdata/session_actor101/peer.go','tests/async/internal/session_test.odin']
         state['fixtures_before']=manifest(shared/'surf',fixture_names)
         helper=compiler.parent/'ci/webtools_consumer_gate.py';state['closure_helper_sha256']=sha(helper)
         spec=importlib.util.spec_from_file_location('actor_closure',helper);gate=importlib.util.module_from_spec(spec);spec.loader.exec_module(gate)
