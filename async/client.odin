@@ -880,31 +880,21 @@ ranges_overlap :: proc(a: rawptr, an: int, b: rawptr, bn: int) -> bool {
 
 	return av <= bv && bv - av < uintptr(an) || bv < av && av - bv < uintptr(bn)
 }
-client_destination_alias :: proc(s: ^Client_State, c: ^Client, destination: ^surf.Response) -> bool {
+// Overlap with the client's own state: the checks every destination needs.
+client_state_alias :: proc(s: ^Client_State, c: ^Client, destination: rawptr, size: int) -> bool {
 	return(
-		ranges_overlap(destination, size_of(surf.Response), c, size_of(Client)) ||
-		ranges_overlap(destination, size_of(surf.Response), s, size_of(Client_State)) ||
-		ranges_overlap(
-			destination,
-			size_of(surf.Response),
-			raw_data(s.actors),
-			len(s.actors) * size_of(Session_Actor),
-		) ||
-		ranges_overlap(
-			destination,
-			size_of(surf.Response),
-			raw_data(s.requests),
-			len(s.requests) * size_of(Request_Network),
-		) ||
-		ranges_overlap(
-			destination,
-			size_of(surf.Response),
-			raw_data(s.task_index),
-			len(s.task_index) * size_of(^runtime_async.Task),
-		) ||
-		ranges_overlap(destination, size_of(surf.Response), raw_data(s.dns_ids), len(s.dns_ids) * size_of(u16)) ||
-		ranges_overlap(destination, size_of(surf.Response), raw_data(s.profile.storage), len(s.profile.storage)) \
+		ranges_overlap(destination, size, c, size_of(Client)) ||
+		ranges_overlap(destination, size, s, size_of(Client_State)) ||
+		ranges_overlap(destination, size, raw_data(s.actors), len(s.actors) * size_of(Session_Actor)) ||
+		ranges_overlap(destination, size, raw_data(s.requests), len(s.requests) * size_of(Request_Network)) ||
+		ranges_overlap(destination, size, raw_data(s.task_index), len(s.task_index) * size_of(^runtime_async.Task)) ||
+		ranges_overlap(destination, size, raw_data(s.dns_ids), len(s.dns_ids) * size_of(u16)) ||
+		ranges_overlap(destination, size, raw_data(s.profile.storage), len(s.profile.storage)) \
 	)
+}
+
+client_destination_alias :: proc(s: ^Client_State, c: ^Client, destination: ^surf.Response) -> bool {
+	return client_state_alias(s, c, destination, size_of(surf.Response))
 }
 
 client_request_stage :: proc(c: ^Client, handle: Request_Handle) -> (Request_Stage, Client_Error) {
@@ -987,17 +977,6 @@ client_cancel :: proc(c: ^Client, handle: Request_Handle) -> Client_Error {
 	}
 
 	return cause
-}
-client_refill_dns_ids :: proc(c: ^Client, ids: []u16) -> Client_Error {
-	s, error := client_enter(c)
-
-	if error.kind != .None {
-		return error
-	}
-
-	defer client_leave(s)
-
-	return network_dns_refill(s, ids)
 }
 client_stats :: proc(c: ^Client) -> (Client_Stats, bool) {
 	s, error := client_enter(c)

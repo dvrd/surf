@@ -39,7 +39,7 @@ managed_results_charge_full_backing_transfer_without_duplication_and_recover :: 
 		wire = BUDGET_WIRE,
 	}
 
-	response, error := surf.exchange_scoped(
+	response, error := surf.exchange(
 		budget_stream(&first),
 		{method = .GET, url = "https://fixture.invalid/"},
 		1024,
@@ -54,7 +54,7 @@ managed_results_charge_full_backing_transfer_without_duplication_and_recover :: 
 		wire = BUDGET_WIRE,
 	}
 
-	failed, rejected := surf.exchange_scoped(
+	failed, rejected := surf.exchange(
 		budget_stream(&second),
 		{method = .GET, url = "https://fixture.invalid/"},
 		1024,
@@ -81,7 +81,7 @@ managed_results_charge_full_backing_transfer_without_duplication_and_recover :: 
 		wire = BUDGET_WIRE,
 	}
 
-	recovered, retry := surf.exchange_scoped(
+	recovered, retry := surf.exchange(
 		budget_stream(&third),
 		{method = .GET, url = "https://fixture.invalid/"},
 		1024,
@@ -111,7 +111,7 @@ stream_exhaustion_and_foreign_allocator_reject_before_any_write :: proc(t: ^test
 		wire = BUDGET_WIRE,
 	}
 
-	_, denied := surf.exchange_scoped(
+	_, denied := surf.exchange(
 		budget_stream(&fixture),
 		{method = .GET, url = "https://fixture.invalid/"},
 		64,
@@ -125,7 +125,7 @@ stream_exhaustion_and_foreign_allocator_reject_before_any_write :: proc(t: ^test
 	binding, created := charged.create(other)
 	assert(created.kind == .None)
 	defer charged.release(&binding)
-	_, mismatch := surf.exchange_scoped(
+	_, mismatch := surf.exchange(
 		budget_stream(&fixture),
 		{method = .GET, url = "https://fixture.invalid/"},
 		64,
@@ -166,7 +166,7 @@ covered_arena_is_not_double_wrapped_and_retains_actual_backing_until_arena_destr
 		wire = BUDGET_WIRE,
 	}
 
-	_, unknown := surf.exchange_scoped(
+	_, unknown := surf.exchange(
 		budget_stream(&fixture),
 		{method = .GET, url = "https://fixture.invalid/"},
 		64,
@@ -174,7 +174,7 @@ covered_arena_is_not_double_wrapped_and_retains_actual_backing_until_arena_destr
 		scope = a,
 	)
 	testing.expect_value(t, unknown.kind, .Invalid_Config)
-	_, sibling := surf.exchange_scoped(
+	_, sibling := surf.exchange(
 		budget_stream(&fixture),
 		{method = .GET, url = "https://fixture.invalid/"},
 		64,
@@ -184,7 +184,7 @@ covered_arena_is_not_double_wrapped_and_retains_actual_backing_until_arena_destr
 	)
 	testing.expect_value(t, sibling.kind, .Invalid_Config)
 	testing.expect_value(t, fixture.written_count, 0)
-	response, accepted := surf.exchange_scoped(
+	response, accepted := surf.exchange(
 		budget_stream(&fixture),
 		{method = .GET, url = "https://fixture.invalid/"},
 		64,
@@ -228,7 +228,7 @@ surf_body_moves_to_sibling_http_exchange_without_charging_common_ancestors_twice
 		wire = BUDGET_WIRE,
 	}
 
-	response, fetched := surf.exchange_scoped(
+	response, fetched := surf.exchange(
 		budget_stream(&fixture),
 		{method = .GET, url = "https://fixture.invalid/"},
 		64,
@@ -314,7 +314,7 @@ managed_response_destructor_detaches_before_callback_can_free_response_frame :: 
 		wire = BUDGET_WIRE,
 	}
 
-	value, error := surf.exchange_scoped(
+	value, error := surf.exchange(
 		budget_stream(&fixture),
 		{method = .GET, url = "https://fixture.invalid/"},
 		64,

@@ -403,13 +403,7 @@ client_upload_finish :: proc(c: ^Client, handle: Request_Handle, source_error: i
 }
 
 client_stream_destination_alias :: proc(s: ^Client_State, c: ^Client, destination: rawptr, size: int) -> bool {
-	if ranges_overlap(destination, size, c, size_of(Client)) ||
-	   ranges_overlap(destination, size, s, size_of(Client_State)) ||
-	   ranges_overlap(destination, size, raw_data(s.actors), len(s.actors) * size_of(Session_Actor)) ||
-	   ranges_overlap(destination, size, raw_data(s.requests), len(s.requests) * size_of(Request_Network)) ||
-	   ranges_overlap(destination, size, raw_data(s.task_index), len(s.task_index) * size_of(^runtime_async.Task)) ||
-	   ranges_overlap(destination, size, raw_data(s.dns_ids), len(s.dns_ids) * size_of(u16)) ||
-	   ranges_overlap(destination, size, raw_data(s.profile.storage), len(s.profile.storage)) {
+	if client_state_alias(s, c, destination, size) {
 		return true
 	}
 

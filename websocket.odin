@@ -593,7 +593,7 @@ websocket_peer_close :: proc(conn: ^WebSocket_Conn, body: []u8) -> WebSocket_Err
 	}
 
 	conn.phase = .Closed
-	websocket_release_message(conn)
+	websocket.message_release(&conn.message_state)
 	websocket_stream_close(conn, write_err.kind != .None)
 
 	if write_err.kind != .None {
@@ -731,7 +731,7 @@ websocket_close :: proc(conn: ^WebSocket_Conn, code: u16 = 1000, reason: string 
 	}
 
 	if conn.phase == .Closed || conn.phase == .Failed {
-		websocket_release_message(conn)
+		websocket.message_release(&conn.message_state)
 		websocket_stream_close(conn, conn.phase == .Failed)
 		return {}
 	}
@@ -758,7 +758,7 @@ websocket_close :: proc(conn: ^WebSocket_Conn, code: u16 = 1000, reason: string 
 	}
 
 	conn.phase = .Closed
-	websocket_release_message(conn)
+	websocket.message_release(&conn.message_state)
 	stream_err := websocket_stream_close(conn, abort_stream || err.kind != .None)
 
 	if err.kind == .None && stream_err.kind != .None {
@@ -787,7 +787,7 @@ websocket_fail :: proc(conn: ^WebSocket_Conn, err: WebSocket_Error, close_code: 
 
 	conn.phase = .Failed
 	conn.last_error = err
-	websocket_release_message(conn)
+	websocket.message_release(&conn.message_state)
 	websocket_stream_close(conn, true)
 
 	return err
@@ -918,10 +918,6 @@ websocket_deliver_message :: proc(conn: ^WebSocket_Conn, dst: []u8) -> (websocke
 	opcode, count, error := websocket.message_deliver(&conn.message_state, dst)
 
 	return opcode, count, websocket_message_error(error)
-}
-
-websocket_release_message :: proc(conn: ^WebSocket_Conn) {
-	websocket.message_release(&conn.message_state)
 }
 
 // Wire size of a frame header, known from its second byte.

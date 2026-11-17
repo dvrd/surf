@@ -520,19 +520,6 @@ exchange :: proc(
 	request: http.Request,
 	max_body_size: int = 0,
 	allocator := context.allocator,
-) -> (
-	Response,
-	HTTP_Error,
-) {
-	return exchange_run(stream, request, nil, max_body_size, allocator, {}, {}, {})
-}
-
-// Explicit scoped variant preserves exchange's original injectable procedure type.
-exchange_scoped :: proc(
-	stream: trans.Connection,
-	request: http.Request,
-	max_body_size: int = 0,
-	allocator := context.allocator,
 	scope: resources.Scope = {},
 	allocator_scope: resources.Scope = {},
 ) -> (

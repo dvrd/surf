@@ -105,6 +105,7 @@ exchange_begin :: proc(
 	request: http.Request,
 	budget: Budget,
 	notify: Notify,
+	encoded_head: []u8 = nil,
 ) -> surf.HTTP_Error {
 	if !exchange_valid(x) {
 		return {kind = .Invalid_Config}
@@ -143,11 +144,18 @@ exchange_begin :: proc(
 		return {kind = .Overlapping_Buffers}
 	}
 	// All rejection paths preserve the complete Exchange and caller inputs.
+	// A caller that already encoded this request (stream_exchange_begin, which
+	// needs a different Accept-Encoding and length) passes the head instead.
 	header: [HEAD_BUFFER_SIZE]u8
-	count, error := h1.request_encode_content(header[:], request, .Keep_Alive, .Identity)
-	if error.kind != .None {
-		return surf.http_protocol_error(error)
+	head := encoded_head
+	if head == nil {
+		count, error := h1.request_encode_content(header[:], request, .Keep_Alive, .Identity)
+		if error.kind != .None {
+			return surf.http_protocol_error(error)
+		}
+		head = header[:count]
 	}
+	count := len(head)
 	options, allocator := x._options, x._allocator
 	x^ = {
 		_self              = x,
@@ -161,7 +169,7 @@ exchange_begin :: proc(
 		_request_head_used = count,
 		_request_body      = request.body,
 	}
-	copy(x._request_head[:count], header[:count])
+	copy(x._request_head[:count], head)
 	x._read.owner = x
 	x._write.owner = x
 	x._read.operation = {
@@ -913,11 +921,9 @@ stream_exchange_begin :: proc(
 	if error := exchange_init(&x.base, {body_limit = int(options.max_encoded_bytes)}, allocator); error.kind != .None {
 		return error
 	}
-	if error := exchange_begin(&x.base, stream, request, budget, notify); error.kind != .None {
+	if error := exchange_begin(&x.base, stream, request, budget, notify, head[:count]); error.kind != .None {
 		return error
 	}
-	copy(x.base._request_head[:], head[:count])
-	x.base._request_head_used = count
 	// RX is enabled after the independent TX head finishes.
 	x.base._phase = .Reading_Head
 	return {}
