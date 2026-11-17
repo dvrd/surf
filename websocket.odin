@@ -38,13 +38,17 @@ websocket_client :: proc(
 	stream: WebSocket_Stream,
 	config: WebSocket_Config,
 ) -> WebSocket_Client_Error {
-	if conn == nil do return .Nil_Connection
+	if conn == nil {
+		return .Nil_Connection
+	}
 
 	if conn.phase != .Uninitialized {
 		return .Already_Initialized
 	}
 
-	if !websocket_stream_valid(stream) do return .Invalid_Stream
+	if !websocket_stream_valid(stream) {
+		return .Invalid_Stream
+	}
 
 	if config.max_message_size < 0 || config.max_message_size > WebSocket_MAX_MESSAGE_SIZE_LIMIT {
 		return .Invalid_Message_Limit
@@ -56,7 +60,9 @@ websocket_client :: proc(
 
 	settings := config
 
-	if settings.target == "" do settings.target = "/"
+	if settings.target == "" {
+		settings.target = "/"
+	}
 
 	if settings.max_message_size == 0 {
 		settings.max_message_size = WebSocket_DEFAULT_MAX_MESSAGE_SIZE
@@ -74,7 +80,9 @@ websocket_client :: proc(
 		},
 		{},
 	)
-	if err != .None do return .Invalid_Upgrade_Options
+	if err != .None {
+		return .Invalid_Upgrade_Options
+	}
 
 	conn.stream = stream
 	conn.config = settings
@@ -88,11 +96,17 @@ websocket_client :: proc(
 // coalesced with its final header. Failure consumes the connection and closes
 // the stream; successful repeated calls are no-ops.
 websocket_upgrade :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
-	if conn == nil do return {kind = .Invalid_State}
+	if conn == nil {
+		return {kind = .Invalid_State}
+	}
 
-	if conn.phase == .Open do return {}
+	if conn.phase == .Open {
+		return {}
+	}
 
-	if conn.phase == .Failed do return conn.last_error
+	if conn.phase == .Failed {
+		return conn.last_error
+	}
 
 	if conn.phase != .Upgrade_Pending {
 		return {kind = .Invalid_State}
@@ -103,7 +117,9 @@ websocket_upgrade :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
 	}
 
 	deadlines_set, deadline_error := websocket_upgrade_deadline_start(conn)
-	if deadline_error.kind != .None do return deadline_error
+	if deadline_error.kind != .None {
+		return deadline_error
+	}
 
 	defer {
 		if deadlines_set && !conn.transport_closed {
@@ -114,8 +130,12 @@ websocket_upgrade :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
 
 	key: [16]u8
 	crypto.rand_bytes(key[:])
-	if request_error := websocket_upgrade_request_send(conn, key); request_error.kind != .None do return request_error
-	if response_error := websocket_upgrade_response_receive(conn, key); response_error.kind != .None do return response_error
+	if request_error := websocket_upgrade_request_send(conn, key); request_error.kind != .None {
+		return request_error
+	}
+	if response_error := websocket_upgrade_response_receive(conn, key); response_error.kind != .None {
+		return response_error
+	}
 
 	if deadlines_set {
 		if clear_error := websocket_upgrade_deadline_clear(conn); clear_error.kind != .None {
@@ -137,7 +157,9 @@ websocket_upgrade_deadline_start :: proc(conn: ^WebSocket_Conn) -> (bool, WebSoc
 
 	if has_read_n_write_deadline {
 		timeout := conn.config.handshake_timeout
-		if timeout == 0 do timeout = 10 * time.Second
+		if timeout == 0 {
+			timeout = 10 * time.Second
+		}
 
 		deadline := time.time_add(time.now(), timeout)
 
@@ -225,7 +247,9 @@ websocket_upgrade_response_receive :: proc(conn: ^WebSocket_Conn, key: [16]u8) -
 			return websocket_upgrade_fail(conn, {kind = .Upgrade_Failed, upgrade = .Header_Oversized})
 		}
 
-		if progress_error := websocket_upgrade_response_progress(conn, key, &used); progress_error.kind != .None do return progress_error
+		if progress_error := websocket_upgrade_response_progress(conn, key, &used); progress_error.kind != .None {
+			return progress_error
+		}
 	}
 }
 
@@ -359,7 +383,9 @@ websocket_dial_host :: proc(host_storage: []u8, host: string, port: int) -> stri
 
 // Returns the negotiated subprotocol, borrowing connection-owned storage.
 websocket_subprotocol :: proc(conn: ^WebSocket_Conn) -> string {
-	if conn == nil do return ""
+	if conn == nil {
+		return ""
+	}
 
 	return cast(string)conn.selected_protocol[:conn.selected_protocol_size]
 }
@@ -697,7 +723,9 @@ websocket_ping :: proc(conn: ^WebSocket_Conn, payload: []u8) -> WebSocket_Error 
 // Sends close and then closes the underlying stream without an endless wait
 // for a peer response. Close also releases any retained oversized-dst message.
 websocket_close :: proc(conn: ^WebSocket_Conn, code: u16 = 1000, reason: string = "") -> WebSocket_Error {
-	if conn == nil do return {kind = .Invalid_State}
+	if conn == nil {
+		return {kind = .Invalid_State}
+	}
 
 	if conn.phase == .Uninitialized {
 		return {kind = .Invalid_State}
@@ -747,7 +775,9 @@ websocket_close :: proc(conn: ^WebSocket_Conn, code: u16 = 1000, reason: string 
 // Shared failure path for upgrade and framed I/O. close_code=0 suppresses a
 // best-effort protocol close (e.g. transport failure before frames are usable).
 websocket_fail :: proc(conn: ^WebSocket_Conn, err: WebSocket_Error, close_code: u16 = 0) -> WebSocket_Error {
-	if conn == nil do return err
+	if conn == nil {
+		return err
+	}
 
 	if close_code != 0 && conn.phase == .Open && !conn.transport_closed {
 		if deadline_err := websocket_close_deadline(conn); deadline_err.kind == .None {
@@ -765,9 +795,13 @@ websocket_fail :: proc(conn: ^WebSocket_Conn, err: WebSocket_Error, close_code: 
 }
 
 websocket_ensure_open :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
-	if conn == nil do return {kind = .Invalid_State}
+	if conn == nil {
+		return {kind = .Invalid_State}
+	}
 
-	if conn.phase == .Failed do return conn.last_error
+	if conn.phase == .Failed {
+		return conn.last_error
+	}
 
 	if conn.phase == .Closed {
 		if conn.last_error.kind != .None {
@@ -796,7 +830,9 @@ websocket_read_exact :: proc(conn: ^WebSocket_Conn, dst: []u8) -> (received: int
 		conn.prefetched_at += received
 	}
 
-	if received == len(dst) do return received, {}
+	if received == len(dst) {
+		return received, {}
+	}
 
 	count, stream_err := websocket_stream_read_exact(conn.stream, dst[received:])
 
@@ -835,7 +871,9 @@ websocket_frame_header_read :: proc(
 }
 
 websocket_frame_write :: proc(conn: ^WebSocket_Conn, opcode: websocket.Opcode, payload: []u8) -> WebSocket_Error {
-	when !crypto.HAS_RAND_BYTES do return {kind = .Entropy_Unavailable}
+	when !crypto.HAS_RAND_BYTES {
+		return {kind = .Entropy_Unavailable}
+	}
 	mask: [4]u8
 	crypto.rand_bytes(mask[:])
 	// Control frames and short messages are masked on the stack, so replying to
@@ -899,7 +937,9 @@ websocket_frame_header_size :: proc(second: u8) -> int {
 		size += 8
 	}
 
-	if second & 0x80 != 0 do size += 4
+	if second & 0x80 != 0 {
+		size += 4
+	}
 
 	return size
 }
@@ -907,7 +947,9 @@ websocket_frame_header_size :: proc(second: u8) -> int {
 // Writes code and reason into dst and validates the result as a close payload.
 @(private)
 websocket_close_payload :: proc(dst: ^[125]u8, code: u16, reason: string) -> (int, websocket.Frame_Error) {
-	if len(reason) > 123 do return 0, .Control_Payload_Oversized
+	if len(reason) > 123 {
+		return 0, .Control_Payload_Oversized
+	}
 	dst[0], dst[1] = u8(code >> 8), u8(code)
 	copy(dst[2:], reason)
 	size := 2 + len(reason)
@@ -928,7 +970,9 @@ websocket_close_validation_code :: proc(frame_err: websocket.Frame_Error) -> u16
 // 1005 means no status was present; it is never sent as a wire code.
 @(private)
 websocket_close_code :: proc(body: []u8) -> u16 {
-	if len(body) < 2 do return 1005
+	if len(body) < 2 {
+		return 1005
+	}
 
 	return u16(body[0]) << 8 | u16(body[1])
 }
@@ -945,7 +989,9 @@ websocket_close_code_normal :: proc(code: u16) -> bool {
 }
 
 websocket_stream_close :: proc(conn: ^WebSocket_Conn, abort_stream: bool = false) -> WebSocket_Stream_Error {
-	if conn.transport_closed do return {}
+	if conn.transport_closed {
+		return {}
+	}
 
 	conn.transport_closed = true
 
@@ -1052,7 +1098,9 @@ websocket_stream_from_tls_address :: proc(conn: ^tls_api.Conn) -> WebSocket_Stre
 }
 
 websocket_tcp_stream :: proc(conn: ^tcp_api.TCP_Connection) -> WebSocket_Stream {
-	if conn == nil do return {}
+	if conn == nil {
+		return {}
+	}
 
 	return {
 		data = conn,

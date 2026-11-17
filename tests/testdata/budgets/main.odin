@@ -85,7 +85,9 @@ count_fds :: proc() -> int {
 	count := 0
 
 	for fd in 0 ..< 4096 {
-		if posix.fcntl(posix.FD(fd), .GETFD) >= 0 do count += 1
+		if posix.fcntl(posix.FD(fd), .GETFD) >= 0 {
+			count += 1
+		}
 	}
 
 	return count
@@ -184,7 +186,9 @@ retained :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) {
 	scopes.release_scope(&ctx.a)
 	surf.response_destroy(&first)
 	assert(usage(ctx.root).used.bytes == info.backing_bytes)
-	for byte in chunk.data do assert(byte == 'B')
+	for byte in chunk.data {
+		assert(byte == 'B')
+	}
 	owned.destroy(&chunk)
 	assert(usage(ctx.root).used.bytes == 0)
 	recovered, retry := perform(mode, url, ctx.b, allocator)
@@ -239,7 +243,9 @@ legacy :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 			scope = ctx.a,
 			allocator_scope = ctx.a,
 		)
-		if result.error.write_effect != .Not_Sent do record.calls += 1
+		if result.error.write_effect != .Not_Sent {
+			record.calls += 1
+		}
 
 		if result.error.kind != .None {
 			assert(result.error.kind == .Allocation_Failed)
@@ -255,7 +261,9 @@ legacy :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 	assert(denied && count > 0)
 
 	for bytes in views[:count] {
-		for byte in bytes do assert(byte == 'B')
+		for byte in bytes {
+			assert(byte == 'B')
+		}
 	}
 
 	assert(usage(ctx.root).used.streams == 0 && usage(ctx.root).rejected > 0)
@@ -322,7 +330,9 @@ tls_budget :: proc(url: string, denied: bool, allocator: mem.Allocator, record: 
 	conn, _ := charged.allocation_cost(size_of(tls.Conn), align_of(tls.Conn))
 	flight, _ := charged.allocation_cost(tls.MAX_SERVER_FLIGHT_SIZE, 1)
 	limit := u64(4 * 1024 * 1024)
-	if denied do limit = conn + flight - 1
+	if denied {
+		limit = conn + flight - 1
+	}
 	ctx := context_create(limit, allocator)
 	response, error := perform("tls", url, ctx.a, allocator)
 

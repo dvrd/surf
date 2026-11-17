@@ -279,7 +279,9 @@ Request_Disposal :: struct {
 // entropy or runtime access. The returned configuration still borrows all inputs.
 config_normalize :: proc(input: Client_Config) -> (Normalized_Config, Client_Error) {
 	cause := surf.config_validate(input.http)
-	if cause.kind != .None do return {}, {kind = .Invalid_Config, http = cause}
+	if cause.kind != .None {
+		return {}, {kind = .Invalid_Config, http = cause}
+	}
 	if input.idle_timeout < 0 ||
 	   input.max_age < 0 ||
 	   input.http.tls.handshake_timeout < 0 ||
@@ -294,7 +296,9 @@ config_normalize :: proc(input: Client_Config) -> (Normalized_Config, Client_Err
 	}
 
 	capacities := DEFAULT_CAPACITIES
-	if explicit, ok := input.capacities.?; ok do capacities = explicit
+	if explicit, ok := input.capacities.?; ok {
+		capacities = explicit
+	}
 	if capacities.requests < 1 ||
 	   capacities.requests > MAX_REQUESTS ||
 	   capacities.origins < 1 ||
@@ -312,10 +316,14 @@ config_normalize :: proc(input: Client_Config) -> (Normalized_Config, Client_Err
 		return {}, {kind = .Invalid_Config}
 	}
 
-	if len(input.http.resolver.name_servers) > MAX_NAME_SERVERS do return {}, {kind = .Invalid_Config}
+	if len(input.http.resolver.name_servers) > MAX_NAME_SERVERS {
+		return {}, {kind = .Invalid_Config}
+	}
 
 	for endpoint in input.http.resolver.name_servers {
-		if endpoint.port < 1 || endpoint.port > 65535 do return {}, {kind = .Invalid_Config}
+		if endpoint.port < 1 || endpoint.port > 65535 {
+			return {}, {kind = .Invalid_Config}
+		}
 	}
 
 	streaming: Maybe(Stream_Client_Limits)
@@ -341,9 +349,15 @@ config_normalize :: proc(input: Client_Config) -> (Normalized_Config, Client_Err
 		streaming           = streaming,
 	}
 
-	if result.idle_timeout == 0 do result.idle_timeout = 30 * time.Second
-	if result.max_age == 0 do result.max_age = 5 * time.Minute
-	if result.response_body_limit == 0 do result.response_body_limit = http.DEFAULT_MAX_BODY_SIZE
+	if result.idle_timeout == 0 {
+		result.idle_timeout = 30 * time.Second
+	}
+	if result.max_age == 0 {
+		result.max_age = 5 * time.Minute
+	}
+	if result.response_body_limit == 0 {
+		result.response_body_limit = http.DEFAULT_MAX_BODY_SIZE
+	}
 
 	return result, {}
 }
@@ -514,7 +528,9 @@ resources_init :: proc(r: ^Kernel_Resources, scope: scopes.Scope, backing: mem.A
 
 	if scope != (scopes.Scope{}) && managed && !scopes.covers(source_scope, scope) {
 		cause := scopes.Error.Invalid_Config
-		if !scopes.same_root(source_scope, scope) do cause = .Foreign_Root
+		if !scopes.same_root(source_scope, scope) {
+			cause = .Foreign_Root
+		}
 		return {kind = .Invalid_Config, http = {kind = .Invalid_Config, budget = cause}}
 	}
 
@@ -522,12 +538,18 @@ resources_init :: proc(r: ^Kernel_Resources, scope: scopes.Scope, backing: mem.A
 	// be different nodes. Both must be open; checking only an ancestor permits a
 	// closed child binding to appear usable until the first physical allocation.
 	probes := [2]scopes.Scope{scope, {}}
-	if managed do probes[1] = source_scope
+	if managed {
+		probes[1] = source_scope
+	}
 
 	for candidate, index in probes {
-		if candidate == (scopes.Scope{}) || index == 1 && candidate == probes[0] do continue
+		if candidate == (scopes.Scope{}) || index == 1 && candidate == probes[0] {
+			continue
+		}
 		probe, error := scopes.reserve(candidate, {})
-		if error != .None do return resource_failure(error)
+		if error != .None {
+			return resource_failure(error)
+		}
 		scopes.release(&probe)
 	}
 
@@ -535,7 +557,9 @@ resources_init :: proc(r: ^Kernel_Resources, scope: scopes.Scope, backing: mem.A
 
 	if scope != (scopes.Scope{}) {
 		owner, error := scopes.retain_scope(scope)
-		if error != .None do return resource_failure(error)
+		if error != .None {
+			return resource_failure(error)
+		}
 		retained = owner
 	}
 
@@ -554,7 +578,9 @@ resources_init :: proc(r: ^Kernel_Resources, scope: scopes.Scope, backing: mem.A
 	}
 
 	allocator := backing
-	if binding != (charged.Binding{}) do allocator = charged.allocator(binding)
+	if binding != (charged.Binding{}) {
+		allocator = charged.allocator(binding)
+	}
 	r^ = {
 		self      = r,
 		scope     = retained,
@@ -566,7 +592,9 @@ resources_init :: proc(r: ^Kernel_Resources, scope: scopes.Scope, backing: mem.A
 	return {}
 }
 resources_destroy :: proc(r: ^Kernel_Resources) {
-	if r == nil || r.self != r do return
+	if r == nil || r.self != r {
+		return
+	}
 	old := r^
 	r^ = {}
 	charged.release(&old.binding)

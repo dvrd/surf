@@ -1443,7 +1443,9 @@ request_clone :: proc(request: http.Request, allocator: mem.Allocator) -> (Reque
 	return result, {}
 }
 request_owner_destroy :: proc(owner: ^Request_Owner) {
-	if owner == nil do return
+	if owner == nil {
+		return
+	}
 	old := owner^
 	owner^ = {}
 	kernel_free(old.storage, align_of(http.Header), old.allocator)
@@ -1473,7 +1475,9 @@ kernel_init :: proc(k: ^Kernel, profile: ^Profile, resources: ^Kernel_Resources)
 			streaming = profile.config.streaming,
 		},
 	)
-	if error.kind != .None do return error
+	if error.kind != .None {
+		return error
+	}
 	if normalized.capacities != profile.config.capacities ||
 	   normalized.request_timeout != profile.config.request_timeout ||
 	   normalized.response_body_limit != profile.config.response_body_limit ||
@@ -1498,17 +1502,29 @@ kernel_init :: proc(k: ^Kernel, profile: ^Profile, resources: ^Kernel_Resources)
 
 	capacities := profile.config.capacities
 	temporary.requests, error = kernel_array(Request_Slot, capacities.requests, temporary.allocator)
-	if error.kind != .None do return error
+	if error.kind != .None {
+		return error
+	}
 	temporary.origins, error = kernel_array(Origin_Slot, capacities.origins, temporary.allocator)
-	if error.kind != .None do return error
+	if error.kind != .None {
+		return error
+	}
 	temporary.sessions, error = kernel_array(Session_Model, capacities.connections, temporary.allocator)
-	if error.kind != .None do return error
+	if error.kind != .None {
+		return error
+	}
 	temporary.request_free, error = kernel_array(u32, capacities.requests, temporary.allocator)
-	if error.kind != .None do return error
+	if error.kind != .None {
+		return error
+	}
 	temporary.origin_free, error = kernel_array(u32, capacities.origins, temporary.allocator)
-	if error.kind != .None do return error
+	if error.kind != .None {
+		return error
+	}
 	temporary.session_free, error = kernel_array(u32, capacities.connections, temporary.allocator)
-	if error.kind != .None do return error
+	if error.kind != .None {
+		return error
+	}
 
 	for &slot, index in temporary.requests {
 		slot.generation = 1
@@ -1566,15 +1582,21 @@ kernel_destroy :: proc(k: ^Kernel) -> Client_Error {
 		k.references != 1 || k.preparing != 0 || k.returning != 0 || k.completion_head != 0 || k.completion_tail != 0
 
 	for slot in k.requests {
-		if slot.state != .Free && slot.state != .Retired do busy = true
+		if slot.state != .Free && slot.state != .Retired {
+			busy = true
+		}
 	}
 
 	for slot in k.origins {
-		if slot.state != .Free && slot.state != .Retired do busy = true
+		if slot.state != .Free && slot.state != .Retired {
+			busy = true
+		}
 	}
 
 	for slot in k.sessions {
-		if slot.state != .Free && slot.state != .Retired do busy = true
+		if slot.state != .Free && slot.state != .Retired {
+			busy = true
+		}
 	}
 
 	sync.unlock(&k.mu)
@@ -1591,13 +1613,17 @@ kernel_destroy :: proc(k: ^Kernel) -> Client_Error {
 // Disposal snapshots never contain the Kernel, Client, Runtime or an active Task.
 // Only the scalar cleanup tickets survive, copied separately by the caller.
 origin_disposal_destroy :: proc(disposal: ^Origin_Disposal) {
-	if disposal == nil do return
+	if disposal == nil {
+		return
+	}
 	old := disposal^
 	disposal^ = {}
 	kernel_free(old.owner.storage, 1, old.owner.allocator)
 }
 request_disposal_destroy :: proc(disposal: ^Request_Disposal) {
-	if disposal == nil do return
+	if disposal == nil {
+		return
+	}
 	old := disposal^
 	disposal^ = {}
 
@@ -1693,7 +1719,9 @@ kernel_origin_release_locked :: proc(
 			return {}, {kind = .Invalid_State}
 		}
 
-		if other != counter && other^ != 0 do final = false
+		if other != counter && other^ != 0 {
+			final = false
+		}
 	}
 	if final &&
 	   (slot.queue_head != 0 ||

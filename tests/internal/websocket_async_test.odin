@@ -142,14 +142,18 @@ websocket_async_bounds_queue_and_message :: proc(t: ^testing.T) {
 @(test)
 websocket_async_upgrade_authentication_rejected :: proc(t: ^testing.T) {
 	ws_run(t, .Bad_Accept)
-	if testing.failed(t) do return
+	if testing.failed(t) {
+		return
+	}
 	ws_run(t, .Unauthorized)
 }
 
 @(test)
 websocket_async_invalid_utf8_and_masked_server_frame :: proc(t: ^testing.T) {
 	ws_run(t, .Bad_UTF8)
-	if testing.failed(t) do return
+	if testing.failed(t) {
+		return
+	}
 	ws_run(t, .Masked)
 }
 
@@ -169,7 +173,9 @@ websocket_async_tls_loopback_echo_and_hostname_mismatch :: proc(t: ^testing.T) {
 	go_bin := ws_go_bin()
 	read_end, write_end, pipe_error := os.pipe()
 	testing.expect(t, pipe_error == nil)
-	if pipe_error != nil do return
+	if pipe_error != nil {
+		return
+	}
 	defer os.close(read_end)
 	process, start_error := os.process_start(
 		{
@@ -181,7 +187,9 @@ websocket_async_tls_loopback_echo_and_hostname_mismatch :: proc(t: ^testing.T) {
 	)
 	os.close(write_end)
 	testing.expect(t, start_error == nil)
-	if start_error != nil do return
+	if start_error != nil {
+		return
+	}
 	defer {
 		_, wait_error := os.process_wait(process, 0)
 
@@ -193,20 +201,26 @@ websocket_async_tls_loopback_echo_and_hostname_mismatch :: proc(t: ^testing.T) {
 
 	port, port_ok := ws_read_port(read_end)
 	testing.expect(t, port_ok)
-	if !port_ok do return
+	if !port_ok {
+		return
+	}
 	pool := new(tls.Root_Pool)
 	defer free(pool)
 	defer tls.root_pool_destroy(pool)
 	load_error := tls.root_pool_load_file(pool, "async/tests/connection/testdata/peer/credentials/root.pem")
 	testing.expect(t, load_error.kind == .None)
-	if load_error.kind != .None do return
+	if load_error.kind != .None {
+		return
+	}
 	endpoint := net.Endpoint {
 		address = net.IP4_Loopback,
 		port    = port,
 	}
 
 	ws_tls_echo(t, endpoint, pool.roots[:pool.count])
-	if testing.failed(t) do return
+	if testing.failed(t) {
+		return
+	}
 	ws_tls_wrong_host(t, endpoint, pool.roots[:pool.count])
 }
 
@@ -217,22 +231,36 @@ ws_run :: proc(t: ^testing.T, mode: Ws_Peer_Mode) {
 	defer ws_test_stop(h)
 	listener, listen_error := net.listen_tcp({net.IP4_Loopback, 0})
 	testing.expect(t, listen_error == nil)
-	if listen_error != nil do return
+	if listen_error != nil {
+		return
+	}
 	h.peer.listener = listener
 	h.listener_up = true
 	endpoint, bound_error := net.bound_endpoint(listener)
 	testing.expect_value(t, bound_error, .None)
-	if bound_error != .None do return
+	if bound_error != .None {
+		return
+	}
 	h.peer.mode = mode
 	h.worker = thread.create_and_start_with_poly_data(&h.peer, ws_peer_serve)
 	testing.expect(t, h.worker != nil)
-	if h.worker == nil do return
+	if h.worker == nil {
+		return
+	}
 	cfg := ws_case_config(h, endpoint, mode)
-	if !ws_client_start(t, h, cfg) do return
-	if mode == .Cancel && !ws_cancel_when_armed(t, h) do return
+	if !ws_client_start(t, h, cfg) {
+		return
+	}
+	if mode == .Cancel && !ws_cancel_when_armed(t, h) {
+		return
+	}
 	limit := 8 * time.Second
-	if mode == .Slow do limit = 5 * time.Second
-	if !ws_wait(t, h, limit) do return
+	if mode == .Slow {
+		limit = 5 * time.Second
+	}
+	if !ws_wait(t, h, limit) {
+		return
+	}
 	ws_test_stop(h)
 	ws_expect_case(t, h, mode)
 }
@@ -269,7 +297,9 @@ ws_case_config :: proc(h: ^Ws_Test, endpoint: net.Endpoint, mode: Ws_Peer_Mode) 
 ws_client_start :: proc(t: ^testing.T, h: ^Ws_Test, cfg: WebSocket_Async_Config) -> bool {
 	init_error := runtime_async.init(&h.rt, {workers = 1, task_capacity = 4, io_capacity = 16})
 	testing.expect_value(t, init_error.kind, .None)
-	if init_error.kind != .None do return false
+	if init_error.kind != .None {
+		return false
+	}
 	h.rt_up = true
 	h.session.user = h
 	saved := context.allocator
@@ -277,15 +307,21 @@ ws_client_start :: proc(t: ^testing.T, h: ^Ws_Test, cfg: WebSocket_Async_Config)
 	bind_error := websocket_async_bind(&h.session, &h.rt, cfg, ws_on_done)
 	context.allocator = saved
 	testing.expect_value(t, bind_error.kind, .None)
-	if bind_error.kind != .None do return false
+	if bind_error.kind != .None {
+		return false
+	}
 	h.upgrade.callback = ws_on_upgrade
 	h.upgrade.user_data = h
 	submit_error := websocket_async_upgrade(&h.session, &h.upgrade)
 	testing.expect_value(t, submit_error.kind, .None)
-	if submit_error.kind != .None do return false
+	if submit_error.kind != .None {
+		return false
+	}
 	spawn_error := runtime_async.spawn(&h.rt, &h.session.task)
 	testing.expect_value(t, spawn_error.kind, .None)
-	if spawn_error.kind != .None do return false
+	if spawn_error.kind != .None {
+		return false
+	}
 	start_error := runtime_async.start(&h.rt)
 	testing.expect_value(t, start_error.kind, .None)
 
@@ -427,8 +463,12 @@ ws_tls_echo :: proc(t: ^testing.T, endpoint: net.Endpoint, roots: []^x509.Certif
 		close_timeout     = 2 * time.Second,
 	}
 
-	if !ws_client_start(t, h, cfg) do return
-	if !ws_wait(t, h, 10 * time.Second) do return
+	if !ws_client_start(t, h, cfg) {
+		return
+	}
+	if !ws_wait(t, h, 10 * time.Second) {
+		return
+	}
 	ws_test_stop(h)
 	ws_expect_terminal(t, h)
 	testing.expect_value(t, h.upgrade_error.kind, .None)
@@ -453,8 +493,12 @@ ws_tls_wrong_host :: proc(t: ^testing.T, endpoint: net.Endpoint, roots: []^x509.
 		close_timeout     = time.Second,
 	}
 
-	if !ws_client_start(t, h, cfg) do return
-	if !ws_wait(t, h, 10 * time.Second) do return
+	if !ws_client_start(t, h, cfg) {
+		return
+	}
+	if !ws_wait(t, h, 10 * time.Second) {
+		return
+	}
 	ws_test_stop(h)
 	ws_expect_terminal(t, h)
 	testing.expect_value(t, h.upgrade_error.kind, .TLS_Failed)
@@ -476,7 +520,9 @@ ws_on_upgrade :: proc(op: ^WebSocket_Async_Op) {
 	h := cast(^Ws_Test)op.user_data
 	h.upgrade_error = op.error
 	h.saw_upgrade = 1
-	if op.error.kind != .None do return
+	if op.error.kind != .None {
+		return
+	}
 
 	switch h.peer.mode {
 	case .Echo:
@@ -498,7 +544,9 @@ ws_on_upgrade :: proc(op: ^WebSocket_Async_Op) {
 }
 
 ws_queue_probe :: proc(h: ^Ws_Test) {
-	for i in 0 ..< len(h.payload6) do h.payload6[i] = 'a'
+	for i in 0 ..< len(h.payload6) {
+		h.payload6[i] = 'a'
+	}
 	h.payload1[0] = 'b'
 	h.write_a.callback = ws_on_write
 	h.write_a.user_data = h
@@ -538,7 +586,9 @@ ws_on_read :: proc(op: ^WebSocket_Async_Op) {
 		h.read_is_text = op.opcode == .Text
 	}
 
-	if h.read_ok && h.write_ok do ws_submit_close(h)
+	if h.read_ok && h.write_ok {
+		ws_submit_close(h)
+	}
 }
 
 ws_on_write :: proc(op: ^WebSocket_Async_Op) {
@@ -557,7 +607,9 @@ ws_on_write :: proc(op: ^WebSocket_Async_Op) {
 	h.write_n = op.n
 	h.saw_write = 1
 	h.write_ok = op.error.kind == .None && op.n == h.src_n
-	if h.read_ok && h.write_ok do ws_submit_close(h)
+	if h.read_ok && h.write_ok {
+		ws_submit_close(h)
+	}
 }
 
 ws_on_close :: proc(op: ^WebSocket_Async_Op) {
@@ -567,7 +619,9 @@ ws_on_close :: proc(op: ^WebSocket_Async_Op) {
 }
 
 ws_submit_close :: proc(h: ^Ws_Test) {
-	if h.close_once do return
+	if h.close_once {
+		return
+	}
 	h.close_once = true
 	h.close.callback = ws_on_close
 	h.close.user_data = h
@@ -575,18 +629,24 @@ ws_submit_close :: proc(h: ^Ws_Test) {
 }
 
 ws_bytes_equal :: proc(buf: []u8, text: string) -> bool {
-	if len(buf) != len(text) do return false
+	if len(buf) != len(text) {
+		return false
+	}
 	raw := transmute([]u8)text
 
 	for b, i in buf {
-		if b != raw[i] do return false
+		if b != raw[i] {
+			return false
+		}
 	}
 
 	return true
 }
 
 ws_peer_serve :: proc(peer: ^Ws_Peer) {
-	defer if peer.status == 0 do peer.status = WS_PEER_IO
+	defer if peer.status == 0 {
+		peer.status = WS_PEER_IO
+	}
 	sock, _, accept_error := net.accept_tcp(peer.listener)
 
 	if accept_error != .None {
@@ -690,7 +750,9 @@ ws_peer_hold :: proc(sock: net.TCP_Socket) {
 
 	for {
 		got, err := net.recv_tcp(sock, scratch[:])
-		if err != .None || got == 0 do return
+		if err != .None || got == 0 {
+			return
+		}
 	}
 }
 
@@ -703,7 +765,9 @@ ws_peer_request :: proc(sock: net.TCP_Socket, dst: []u8) -> (int, bool) {
 		}
 
 		got, err := net.recv_tcp(sock, dst[n:])
-		if err != .None || got == 0 do return n, false
+		if err != .None || got == 0 {
+			return n, false
+		}
 		n += got
 	}
 
@@ -713,10 +777,14 @@ ws_peer_request :: proc(sock: net.TCP_Socket, dst: []u8) -> (int, bool) {
 ws_peer_key :: proc(header: string) -> string {
 	needle := "Sec-WebSocket-Key: "
 	at := strings.index(header, needle)
-	if at < 0 do return ""
+	if at < 0 {
+		return ""
+	}
 	rest := header[at + len(needle):]
 	end := strings.index(rest, "\r\n")
-	if end <= 0 do return ""
+	if end <= 0 {
+		return ""
+	}
 
 	return rest[:end]
 }
@@ -744,7 +812,9 @@ ws_peer_101 :: proc(dst: []u8, accept, protocol: string) -> int {
 
 ws_peer_echo_frames :: proc(dst: []u8) -> int {
 	at := ws_peer_put(dst, 0, true, .Ping, []u8{'z'}, {})
-	if at < 0 do return at
+	if at < 0 {
+		return at
+	}
 	text := "hello-from-server"
 	offset := 0
 
@@ -754,7 +824,9 @@ ws_peer_echo_frames :: proc(dst: []u8) -> int {
 		opcode := websocket.Opcode.Text if offset == 0 else .Continuation
 		chunk := transmute([]u8)text[offset:offset + step]
 		at = ws_peer_put(dst, at, fin, opcode, chunk, {})
-		if at < 0 do return at
+		if at < 0 {
+			return at
+		}
 		offset += step
 	}
 
@@ -762,10 +834,14 @@ ws_peer_echo_frames :: proc(dst: []u8) -> int {
 }
 
 ws_peer_put :: proc(dst: []u8, at: int, fin: bool, opcode: websocket.Opcode, payload: []u8, mask: [4]u8) -> int {
-	if at < 0 || at > len(dst) do return -1
+	if at < 0 || at > len(dst) {
+		return -1
+	}
 	masked := mask != {}
 	n, err := websocket.frame_encode(dst[at:], fin, opcode, payload, mask, masked)
-	if err != .None do return -1
+	if err != .None {
+		return -1
+	}
 
 	return at + n
 }
@@ -774,7 +850,9 @@ ws_peer_send_slow :: proc(sock: net.TCP_Socket, data: []u8) -> bool {
 	for b in data {
 		one := [1]u8{b}
 		sent, err := net.send_tcp(sock, one[:])
-		if err != .None || sent != 1 do return false
+		if err != .None || sent != 1 {
+			return false
+		}
 		time.sleep(time.Millisecond)
 	}
 
@@ -787,9 +865,13 @@ ws_peer_frames :: proc(sock: net.TCP_Socket, peer: ^Ws_Peer, want_text: bool) {
 
 	for peer.closes == 0 {
 		for {
-			if n < 2 do break
+			if n < 2 {
+				break
+			}
 			header, consumed, frame_error := websocket.frame_header_decode(buf[:n], true)
-			if frame_error == .Header_Incomplete do break
+			if frame_error == .Header_Incomplete {
+				break
+			}
 
 			if frame_error != .None {
 				peer.status = WS_PEER_IO
@@ -803,16 +885,22 @@ ws_peer_frames :: proc(sock: net.TCP_Socket, peer: ^Ws_Peer, want_text: bool) {
 				return
 			}
 
-			if n < total do break
+			if n < total {
+				break
+			}
 			payload := buf[consumed:total]
 			websocket.mask_payload(payload, header.masking_key)
-			if !ws_peer_take(sock, peer, header, payload) do return
+			if !ws_peer_take(sock, peer, header, payload) {
+				return
+			}
 			remain := n - total
 			copy(buf[:remain], buf[total:n])
 			n = remain
 		}
 
-		if peer.closes > 0 do break
+		if peer.closes > 0 {
+			break
+		}
 
 		if n == len(buf) {
 			peer.status = WS_PEER_IO
@@ -898,7 +986,9 @@ ws_peer_take :: proc(sock: net.TCP_Socket, peer: ^Ws_Peer, header: websocket.Fra
 }
 
 ws_go_bin :: proc() -> string {
-	if os.exists("/opt/homebrew/bin/go") do return "/opt/homebrew/bin/go"
+	if os.exists("/opt/homebrew/bin/go") {
+		return "/opt/homebrew/bin/go"
+	}
 
 	return "/opt/homebrew/Cellar/go/1.26.2/bin/go"
 }
@@ -921,7 +1011,9 @@ ws_read_port :: proc(file: ^os.File) -> (int, bool) {
 			}
 		}
 
-		if err != nil || got == 0 do return 0, false
+		if err != nil || got == 0 {
+			return 0, false
+		}
 	}
 
 	return 0, false

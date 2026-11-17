@@ -79,21 +79,29 @@ buffered_http_execute_managed :: proc(
 		upload_size,
 		scope != (resources.Scope{}),
 	)
-	if validation.kind != .None do return nil, {error = validation}
+	if validation.kind != .None {
+		return nil, {error = validation}
+	}
 	// Borrowed output has no independent destructor: managed mode requires an
 	// explicit host promise about the temporary allocator's covered lifetime.
 	if scope != (resources.Scope{}) && allocator_scope == (resources.Scope{}) {
 		return nil, {error = budget_error(.Invalid_Config)}
 	}
 	ctx, output, admission := budget_begin(scope, allocator_scope, context.temp_allocator)
-	if admission.kind != .None do return nil, {error = admission}
+	if admission.kind != .None {
+		return nil, {error = admission}
+	}
 	defer budget_cleanup(&ctx)
 	scratch, denied := buffered_http_scratch(scope)
-	if denied.kind != .None do return nil, {error = denied}
+	if denied.kind != .None {
+		return nil, {error = denied}
+	}
 	defer resources.release(&scratch)
 	reply: Buffered_HTTP_Reply
 	result = buffered_http_perform(method, url, body, headers, ca_file, timeout_ms, upload_file, upload_size, &reply)
-	if !result.transport_ok do return
+	if !result.transport_ok {
+		return
+	}
 	copied, ae := make([]byte, reply.used, output)
 	if ae != nil {
 		result = buffered_http_copy_error(result, ae)
@@ -136,12 +144,18 @@ buffered_http_execute_owned :: proc(
 		upload_size,
 		scope != (resources.Scope{}),
 	)
-	if validation.kind != .None do return {}, {error = validation}
+	if validation.kind != .None {
+		return {}, {error = validation}
+	}
 	ctx, output, admission := budget_begin(scope, allocator_scope, allocator)
-	if admission.kind != .None do return {}, {error = admission}
+	if admission.kind != .None {
+		return {}, {error = admission}
+	}
 	defer budget_cleanup(&ctx)
 	scratch, denied := buffered_http_scratch(scope)
-	if denied.kind != .None do return {}, {error = denied}
+	if denied.kind != .None {
+		return {}, {error = denied}
+	}
 	defer resources.release(&scratch)
 	// Setup cstrings are call-owned rather than leaked through a temporary heap
 	// alias. Both arena backings use the already selected charged allocator.
@@ -159,7 +173,9 @@ buffered_http_execute_owned :: proc(
 	defer context.temp_allocator = previous
 	reply: Buffered_HTTP_Reply
 	result = buffered_http_perform(method, url, body, headers, ca_file, timeout_ms, upload_file, upload_size, &reply)
-	if !result.transport_ok do return
+	if !result.transport_ok {
+		return
+	}
 	copied, ae := buffered_http_owned_copy(&reply, result.status, output)
 	if ae != nil {
 		result = buffered_http_copy_error(result, ae)
@@ -172,9 +188,13 @@ buffered_http_execute_owned :: proc(
 
 @(private)
 buffered_http_scratch :: proc(scope: resources.Scope) -> (resources.Lease, HTTP_Error) {
-	if scope == (resources.Scope{}) do return {}, {}
+	if scope == (resources.Scope{}) {
+		return {}, {}
+	}
 	lease, denied := resources.reserve(scope, {bytes = 64 * 1024})
-	if denied != .None do return {}, budget_error(denied)
+	if denied != .None {
+		return {}, budget_error(denied)
+	}
 
 	return lease, {}
 }
@@ -203,7 +223,9 @@ buffered_http_owned_copy :: proc(
 	mem.Allocator_Error,
 ) {
 	storage, error := make([dynamic]u8, reply.used, reply.used, allocator)
-	if error != nil do return {}, error
+	if error != nil {
+		return {}, error
+	}
 	copy(storage[:], reply.data[:reply.used])
 	return {status = status, body = storage[:], body_storage = storage, allocator = allocator}, nil
 }
@@ -234,7 +256,9 @@ buffered_http_validate :: proc(
 		error.kind = .Invalid_Method
 		return error
 	}
-	if timeout_ms <= 0 || timeout_ms > 120000 || upload_size < 0 do return error
+	if timeout_ms <= 0 || timeout_ms > 120000 || upload_size < 0 {
+		return error
+	}
 	if managed && len(headers) > http.MAX_HEADERS {
 		error.kind = .Header_Limit
 		return error
@@ -323,7 +347,9 @@ buffered_http_perform :: proc(
 		allocated, pool_error := new(tls_api.Root_Pool)
 
 		if pool_error != nil || allocated == nil {
-			if pool_error == nil do pool_error = .Out_Of_Memory
+			if pool_error == nil {
+				pool_error = .Out_Of_Memory
+			}
 			result.error = buffered_http_allocation_error(pool_error)
 			return
 		}
@@ -523,7 +549,9 @@ buffered_http_header :: proc(header: string) -> (name, value: string, suppress, 
 	}
 
 	semi := strings.index_byte(header, ';')
-	if semi < 0 do return
+	if semi < 0 {
+		return
+	}
 
 	return header[:semi], "", false, true
 }
@@ -535,13 +563,17 @@ buffered_http_h2_headers :: proc(headers: []string, storage: []http.Header) -> (
 
 	for header in headers {
 		name, value, suppress, present := buffered_http_header(header)
-		if !present do continue
+		if !present {
+			continue
+		}
 
 		if !http.header_name_valid(name) {
 			return nil, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
 		}
 
-		if suppress do continue
+		if suppress {
+			continue
+		}
 
 		if !http.header_value_valid(value) {
 			return nil, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
@@ -793,8 +825,12 @@ buffered_http_io :: proc(
 
 @(private)
 buffered_source_io :: proc(error: os.Error) -> io.Error {
-	if value, ok := error.(io.Error); ok do return value
-	if error == nil do return .None
+	if value, ok := error.(io.Error); ok {
+		return value
+	}
+	if error == nil {
+		return .None
+	}
 
 	return .Unknown
 }
@@ -857,7 +893,9 @@ buffered_http_encode :: proc(
 	custom_count := 0
 	for header in headers {
 		name, value, suppress, present := buffered_http_header(header)
-		if !present do continue
+		if !present {
+			continue
+		}
 
 		if !http.header_name_valid(name) {
 			return 0, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
@@ -893,7 +931,9 @@ buffered_http_encode :: proc(
 			continue
 		}
 
-		if suppress do continue
+		if suppress {
+			continue
+		}
 
 		if custom_count == len(custom) {
 			return 0, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
@@ -908,13 +948,19 @@ buffered_http_encode :: proc(
 	}
 	target := parsed.target
 	prefix := ""
-	if target == "" || target[0] == '?' do prefix = "/"
+	if target == "" || target[0] == '?' {
+		prefix = "/"
+	}
 	w := Buffered_HTTP_Writer {
 		dst = dst,
 	}
 	buffered_http_put(&w, method, " ", prefix, target, " HTTP/1.1\r\n")
-	if host.on do buffered_http_put(&w, "Host: ", host.value, "\r\n")
-	if accept.on do buffered_http_put(&w, "Accept: ", accept.value, "\r\n")
+	if host.on {
+		buffered_http_put(&w, "Host: ", host.value, "\r\n")
+	}
+	if accept.on {
+		buffered_http_put(&w, "Accept: ", accept.value, "\r\n")
+	}
 	for item in custom[:custom_count] {
 		// Only the "Name;" form reaches here with an empty value.
 		if item.value == "" {
@@ -923,7 +969,9 @@ buffered_http_encode :: proc(
 			buffered_http_put(&w, item.name, ": ", item.value, "\r\n")
 		}
 	}
-	if length_on do buffered_http_put(&w, "Content-Length: ", length_text, "\r\n")
+	if length_on {
+		buffered_http_put(&w, "Content-Length: ", length_text, "\r\n")
+	}
 	buffered_http_put(&w, "\r\n")
 	if w.overflow {
 		return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}

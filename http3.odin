@@ -99,7 +99,9 @@ execute_http3 :: proc(
 	if budget < 50 * time.Millisecond && remain >= 100 * time.Millisecond {
 		budget = 50 * time.Millisecond
 	}
-	if budget <= 0 do budget = remain
+	if budget <= 0 {
+		budget = remain
+	}
 	deadline := time.time_add(time.now(), budget)
 	port := http3_dial_port(config.alt_svc, url.host, url.port, time.now())
 	endpoint, resolve_error := http3_resolve(url.host, port, deadline, config.resolver)
@@ -107,7 +109,9 @@ execute_http3 :: proc(
 		return {}, resolve_error
 	}
 	path := url.target
-	if len(path) == 0 do path = "/"
+	if len(path) == 0 {
+		path = "/"
+	}
 	fields: [http.MAX_HEADERS]http3.Field
 	if len(request.headers) > len(fields) {
 		return {}, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
@@ -242,7 +246,9 @@ http3_dial_port :: proc(cache: ^Alt_Svc_Cache, host: string, url_port: int, now:
 		return port
 	}
 
-	if url_port > 0 do return url_port
+	if url_port > 0 {
+		return url_port
+	}
 
 	return 443
 }
@@ -273,7 +279,9 @@ http3_resolve :: proc(
 @(private)
 http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) -> HTTP_Error {
 	effect := HTTP_Write_Effect.Not_Sent
-	if result.sent do effect = .Unknown
+	if result.sent {
+		effect = .Unknown
+	}
 
 	if result.error == .Deadline && time.diff(time.now(), total_deadline) <= 0 {
 		return {kind = .Deadline_Failed, phase = .Deadline, write_effect = effect}
@@ -322,8 +330,12 @@ http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -
 	}
 
 	n := result.body_len
-	if n < 0 do n = 0
-	if n > len(result.body) do n = len(result.body)
+	if n < 0 {
+		n = 0
+	}
+	if n > len(result.body) {
+		n = len(result.body)
+	}
 	body, alloc_error := make([dynamic]u8, n, allocator)
 
 	if alloc_error != nil {
@@ -335,7 +347,9 @@ http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -
 		}
 	}
 
-	if n > 0 do copy(body[:n], result.body[:n])
+	if n > 0 {
+		copy(body[:n], result.body[:n])
+	}
 	response.body_storage = body
 	response.body = response.body_storage[:]
 	bytes := 0
@@ -417,7 +431,9 @@ alt_svc_note :: proc(
 	if !parsed || ma <= 0 {
 		return false
 	}
-	if ma > ALT_SVC_MAX_AGE do ma = ALT_SVC_MAX_AGE
+	if ma > ALT_SVC_MAX_AGE {
+		ma = ALT_SVC_MAX_AGE
+	}
 	index := cache.next % ALT_SVC_SLOTS
 	replaced := false
 	for i in 0 ..< ALT_SVC_SLOTS {
@@ -436,7 +452,9 @@ alt_svc_note :: proc(
 	slot.origin_port = effective_port
 	slot.expires = time.time_add(now, time.Duration(ma) * time.Second)
 	slot.used = true
-	if !replaced do cache.next += 1
+	if !replaced {
+		cache.next += 1
+	}
 	return true
 }
 
@@ -453,10 +471,14 @@ alt_svc_lookup :: proc(
 	if effective_port == 0 {
 		effective_port = 443
 	}
-	if cache == nil do return 0, false
+	if cache == nil {
+		return 0, false
+	}
 	for i in 0 ..< ALT_SVC_SLOTS {
 		slot := &cache.slots[i]
-		if !slot.used || slot.origin_port != effective_port || string(slot.host[:slot.host_len]) != host do continue
+		if !slot.used || slot.origin_port != effective_port || string(slot.host[:slot.host_len]) != host {
+			continue
+		}
 
 		if time.diff(now, slot.expires) <= 0 {
 			slot^ = {}
@@ -476,31 +498,47 @@ is_digit :: proc(c: rune) -> bool {
 @(private)
 alt_svc_h3 :: proc(value: string) -> (port, ma: int, ok: bool) {
 	at := strings.index(value, "h3=\"")
-	if at < 0 do return
+	if at < 0 {
+		return
+	}
 	rest := value[at + 4:]
 	end := strings.index(rest, "\"")
-	if end <= 0 do return
+	if end <= 0 {
+		return
+	}
 	token := rest[:end]
 
 	if len(token) > 1 && token[0] == ':' {
 		token = token[1:]
 	}
 
-	if len(token) == 0 do return
-
-	for rune in token {
-		if !is_digit(rune) do return
-		port = port * 10 + int(rune - '0')
-		if port > 65535 do return 0, 0, false
+	if len(token) == 0 {
+		return
 	}
 
-	if port == 0 do return
+	for rune in token {
+		if !is_digit(rune) {
+			return
+		}
+		port = port * 10 + int(rune - '0')
+		if port > 65535 {
+			return 0, 0, false
+		}
+	}
+
+	if port == 0 {
+		return
+	}
 	tail := rest[end + 1:]
 	loc := strings.index(tail, "ma=")
-	if loc < 0 do return
+	if loc < 0 {
+		return
+	}
 
 	for rune in tail[loc + 3:] {
-		if !is_digit(rune) do break
+		if !is_digit(rune) {
+			break
+		}
 		ma = ma * 10 + int(rune - '0')
 
 		if ma > ALT_SVC_MAX_AGE {

@@ -17,7 +17,9 @@ main :: proc() {
 	timeout, timeout_ok := strconv.parse_i64(os.args[6])
 	assert(timeout_ok)
 	body: []byte
-	if os.args[7] == "body" do body = transmute([]byte)string("body")
+	if os.args[7] == "body" {
+		body = transmute([]byte)string("body")
+	}
 	headers := os.args[9:]
 	tracker: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&tracker, rt.heap_allocator(), rt.heap_allocator())
@@ -58,7 +60,11 @@ main :: proc() {
 	}
 
 	all_r := true
-	for byte in data do if byte != 'R' do all_r = false
+	for byte in data {
+		if byte != 'R' {
+			all_r = false
+		}
+	}
 	fmt.print("{")
 	fmt.printf(
 		"\"status\":%d,\"ok\":%v,\"transport_ok\":%v," +

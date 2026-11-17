@@ -82,7 +82,9 @@ Response :: struct {
 	_allocator_scope: resources.Scope,
 }
 response_destroy :: proc(response: ^Response) {
-	if response == nil do return
+	if response == nil {
+		return
+	}
 	old := response^
 	response^ = {}
 
@@ -97,10 +99,14 @@ response_destroy :: proc(response: ^Response) {
 	resources.release_scope(&old._allocator_scope)
 }
 response_header :: proc(response: ^Response, name: string) -> (string, bool) {
-	if response == nil do return "", false
+	if response == nil {
+		return "", false
+	}
 
-	for h in response.headers do if strings.equal_fold(h.name, name) {
-		return h.value, true
+	for h in response.headers {
+		if strings.equal_fold(h.name, name) {
+			return h.value, true
+		}
 	}
 
 	return "", false
@@ -127,7 +133,9 @@ execute_with_upload :: proc(
 		return {}, http_error_classify(validation, .Configuration, .Not_Sent)
 	}
 	ctx, call_allocator, admission := budget_begin(config.scope, config.allocator_scope, allocator)
-	if admission.kind != .None do return {}, admission
+	if admission.kind != .None {
+		return {}, admission
+	}
 	defer budget_cleanup(&ctx)
 	previous_context := context
 	next_context := context
@@ -152,7 +160,9 @@ execute_with_upload :: proc(
 			error.write_effect = .Response_Received
 		}
 	}
-	if error.kind == .None do budget_response(&ctx, &response)
+	if error.kind == .None {
+		budget_response(&ctx, &response)
+	}
 	return response, error
 }
 
@@ -215,7 +225,9 @@ execute_internal :: proc(
 		}
 
 		u, e := http.url_parse(current.url)
-		if e.kind != .None do return {}, http_protocol_error(e)
+		if e.kind != .None {
+			return {}, http_protocol_error(e)
+		}
 
 		if !u.secure && !config.allow_http {
 			return {}, {kind = .Insecure_URL}
@@ -269,7 +281,9 @@ execute_internal :: proc(
 			response, err = execute_tcp(u, current, config, total_deadline, allocator, upload)
 		}
 
-		if err.kind != .None do return {}, err
+		if err.kind != .None {
+			return {}, err
+		}
 
 		if config.alt_svc != nil && u.secure {
 			if value, found := response_header(&response, "Alt-Svc"); found {
@@ -435,9 +449,13 @@ execute_redirect :: proc(
 
 	location: string
 	locations := 0
-	for h in response.headers do if strings.equal_fold(h.name, "Location") {
-		if locations == 0 do location = h.value
-		locations += 1
+	for h in response.headers {
+		if strings.equal_fold(h.name, "Location") {
+			if locations == 0 {
+				location = h.value
+			}
+			locations += 1
+		}
 	}
 
 	if locations != 1 {
@@ -543,7 +561,9 @@ exchange_run :: proc(
 	HTTP_Error,
 ) {
 	ctx, call_allocator, admission := budget_begin(scope, allocator_scope, allocator)
-	if admission.kind != .None do return {}, admission
+	if admission.kind != .None {
+		return {}, admission
+	}
 	defer budget_cleanup(&ctx)
 	previous_context := context
 	next_context := context
@@ -582,7 +602,9 @@ exchange_run :: proc(
 
 		error = http_error_classify(error, .Read, effect, outcome.status)
 	}
-	if error.kind == .None do budget_response(&ctx, &response)
+	if error.kind == .None {
+		budget_response(&ctx, &response)
+	}
 	return response, error
 }
 
@@ -612,7 +634,9 @@ exchange_internal :: proc(
 	}
 
 	limit := max_body_size
-	if limit == 0 do limit = http.DEFAULT_MAX_BODY_SIZE
+	if limit == 0 {
+		limit = http.DEFAULT_MAX_BODY_SIZE
+	}
 
 	encoded: [http.MAX_HEADER_SIZE]u8
 	n, e := http1.request_encode(encoded[:], request)
@@ -661,7 +685,9 @@ exchange_read_response :: proc(
 	}
 	response.allocator = allocator
 	success := false
-	defer if !success do response_destroy(&response)
+	defer if !success {
+		response_destroy(&response)
+	}
 
 	head, initialize_error := response_initialize(&response, storage[:used], limit, allocator)
 	if initialize_error.kind != .None {
@@ -695,7 +721,9 @@ response_read_header :: proc(reader: ^Reader, storage: []u8, observed_status: ^i
 			}
 
 			v, read_err := reader_byte(reader)
-			if read_err.kind != .None do return 0, read_err
+			if read_err.kind != .None {
+				return 0, read_err
+			}
 
 			storage[used] = v
 			used += 1
@@ -709,7 +737,9 @@ response_read_header :: proc(reader: ^Reader, storage: []u8, observed_status: ^i
 		}
 
 		head, _, he := http1.response_header_decode(storage[:used])
-		if he.kind != .None do return 0, http_protocol_error(he)
+		if he.kind != .None {
+			return 0, http_protocol_error(he)
+		}
 
 		if observed_status != nil {
 			observed_status^ = head.status
@@ -719,7 +749,9 @@ response_read_header :: proc(reader: ^Reader, storage: []u8, observed_status: ^i
 			return 0, {kind = .Invalid_Status}
 		}
 
-		if head.status >= 200 do break
+		if head.status >= 200 {
+			break
+		}
 
 		if informational == 7 {
 			return 0, {kind = .Too_Many_Informational}
@@ -811,12 +843,18 @@ response_read_chunked :: proc(reader: ^Reader, body: ^[dynamic]u8, limit: int) -
 
 	for {
 		read_count, operation_error_2 := reader_line(reader, line[:], &metadata)
-		if operation_error_2.kind != .None do return operation_error_2
+		if operation_error_2.kind != .None {
+			return operation_error_2
+		}
 
 		size, se := http1.chunk_size_decode(cast(string)line[:read_count])
-		if se.kind != .None do return http_protocol_error(se)
+		if se.kind != .None {
+			return http_protocol_error(se)
+		}
 
-		if size == 0 do break
+		if size == 0 {
+			break
+		}
 
 		if size > cast(u64)(limit - len(body^)) {
 			return {kind = .Body_Oversized}
@@ -828,7 +866,9 @@ response_read_chunked :: proc(reader: ^Reader, body: ^[dynamic]u8, limit: int) -
 
 		for expected in ([?]u8{13, 10}) {
 			v, re := reader_byte(reader)
-			if re.kind != .None do return re
+			if re.kind != .None {
+				return re
+			}
 
 			if v != expected {
 				return {kind = .Invalid_Chunk}
@@ -838,9 +878,13 @@ response_read_chunked :: proc(reader: ^Reader, body: ^[dynamic]u8, limit: int) -
 
 	for {
 		read_count, operation_error := reader_line(reader, line[:], &metadata)
-		if operation_error.kind != .None do return operation_error
+		if operation_error.kind != .None {
+			return operation_error
+		}
 
-		if read_count == 0 do break
+		if read_count == 0 {
+			break
+		}
 
 		h, he := http1.header_line_decode(cast(string)line[:read_count])
 
@@ -861,7 +905,9 @@ Reader :: struct {
 HTTP_MAX_CHUNK_METADATA_SIZE :: 65536
 
 reader_fill :: proc(r: ^Reader) -> HTTP_Error {
-	if r.at < r.used do return {}
+	if r.at < r.used {
+		return {}
+	}
 
 	if r.pending.kind != .None {
 		if r.pending.kind == .Peer_Closed {
@@ -878,9 +924,13 @@ reader_fill :: proc(r: ^Reader) -> HTTP_Error {
 	}
 
 	r.at, r.used, r.pending = 0, n, e
-	if n > 0 do return {}
+	if n > 0 {
+		return {}
+	}
 
-	if e.kind == .None do return {kind = .No_Progress}
+	if e.kind == .None {
+		return {kind = .No_Progress}
+	}
 
 	if e.kind == .Peer_Closed {
 		return {kind = .Unexpected_EOF, transport = e}
@@ -889,7 +939,9 @@ reader_fill :: proc(r: ^Reader) -> HTTP_Error {
 	return {kind = .IO_Failed, transport = e}
 }
 reader_byte :: proc(r: ^Reader) -> (u8, HTTP_Error) {
-	if e := reader_fill(r); e.kind != .None do return 0, e
+	if e := reader_fill(r); e.kind != .None {
+		return 0, e
+	}
 
 	v := r.buffer[r.at]
 	r.at += 1
@@ -904,7 +956,9 @@ body_read :: proc(r: ^Reader, body: ^[dynamic]u8, count, limit: int) -> HTTP_Err
 	remaining := count
 
 	for remaining > 0 {
-		if e := reader_fill(r); e.kind != .None do return e
+		if e := reader_fill(r); e.kind != .None {
+			return e
+		}
 
 		n := min(remaining, r.used - r.at)
 		_, ae := append(body, ..r.buffer[r.at:r.at + n])
@@ -928,7 +982,9 @@ reader_line :: proc(r: ^Reader, dst: []u8, metadata: ^int) -> (int, HTTP_Error) 
 		}
 
 		v, e := reader_byte(r)
-		if e.kind != .None do return 0, e
+		if e.kind != .None {
+			return 0, e
+		}
 
 		metadata^ += 1
 
@@ -943,7 +999,9 @@ reader_line :: proc(r: ^Reader, dst: []u8, metadata: ^int) -> (int, HTTP_Error) 
 			}
 
 			next, ne := reader_byte(r)
-			if ne.kind != .None do return 0, ne
+			if ne.kind != .None {
+				return 0, ne
+			}
 
 			metadata^ += 1
 
@@ -954,7 +1012,9 @@ reader_line :: proc(r: ^Reader, dst: []u8, metadata: ^int) -> (int, HTTP_Error) 
 			return at, {}
 		}
 
-		if v == 10 do return 0, {kind = .Invalid_Chunk}
+		if v == 10 {
+			return 0, {kind = .Invalid_Chunk}
+		}
 
 		dst[at] = v
 		at += 1
@@ -985,7 +1045,9 @@ config_validate :: proc(c: Config) -> HTTP_Error {
 	return {}
 }
 effective_timeout :: proc(c: Config) -> time.Duration {
-	if c.timeout == 0 do return 30 * time.Second
+	if c.timeout == 0 {
+		return 30 * time.Second
+	}
 
 	return c.timeout
 }
@@ -998,9 +1060,13 @@ tls_read :: proc(data: rawptr, dst: []u8) -> (int, trans.Connection_Error) {
 	a := cast(^TLS_Adapter)data
 	n, e := tls_api.read(a.connection, dst)
 	a.last_error = e
-	if e.kind == .EOF do return n, {kind = .Peer_Closed}
+	if e.kind == .EOF {
+		return n, {kind = .Peer_Closed}
+	}
 
-	if e.kind != .None do return n, {kind = .Read_Failed}
+	if e.kind != .None {
+		return n, {kind = .Read_Failed}
+	}
 
 	return n, {}
 }
@@ -1008,14 +1074,18 @@ tls_write :: proc(data: rawptr, src: []u8) -> (int, trans.Connection_Error) {
 	a := cast(^TLS_Adapter)data
 	n, e := tls_api.write(a.connection, src)
 	a.last_error = e
-	if e.kind != .None do return n, {kind = .Write_Failed}
+	if e.kind != .None {
+		return n, {kind = .Write_Failed}
+	}
 
 	return n, {}
 }
 tls_close :: proc(data: rawptr) -> trans.Connection_Error {
 	a := cast(^TLS_Adapter)data
 	e := tls_api.abort(a.connection)
-	if e.kind != .None do return {kind = .Closed}
+	if e.kind != .None {
+		return {kind = .Closed}
+	}
 
 	return {}
 }
@@ -1031,7 +1101,9 @@ redirect_url :: proc(base: http.URL, location: string, allocator: mem.Allocator)
 	count := redirect_parts(base, location, &parts)
 
 	size := 0
-	for p in parts[:count] do size += len(p)
+	for p in parts[:count] {
+		size += len(p)
+	}
 
 	if size > http.MAX_HEADER_SIZE {
 		return "", {kind = .Invalid_Redirect}
@@ -1044,7 +1116,9 @@ redirect_url :: proc(base: http.URL, location: string, allocator: mem.Allocator)
 	}
 
 	at := 0
-	for p in parts[:count] do at += copy(storage[at:], transmute([]u8)p)
+	for p in parts[:count] {
+		at += copy(storage[at:], transmute([]u8)p)
+	}
 	parsed, pe := http.url_parse(cast(string)storage)
 
 	if pe.kind != .None {
@@ -1095,7 +1169,9 @@ redirect_parts :: proc(base: http.URL, location: string, parts: ^[5]string) -> i
 		parts[0], parts[1], parts[2], parts[3], count = base.scheme, "://", base.authority, location, 4
 	} else if location[0] == '?' {
 		target := base.target
-		if target == "" || target[0] == '?' do target = "/"
+		if target == "" || target[0] == '?' {
+			target = "/"
+		}
 
 		if i := strings.index_byte(target, '?'); i >= 0 {
 			target = target[:i]
@@ -1111,7 +1187,9 @@ redirect_parts :: proc(base: http.URL, location: string, parts: ^[5]string) -> i
 			target = target[:i]
 		}
 
-		if target == "" do target = "/"
+		if target == "" {
+			target = "/"
+		}
 
 		last := strings.last_index_byte(target, '/')
 		target = target[:last + 1]
@@ -1174,7 +1252,9 @@ redirect_path_normalize :: proc(dst: []u8, target: string) -> int {
 
 		end := len(path)
 		start := 0
-		if path[0] == '/' do start = 1
+		if path[0] == '/' {
+			start = 1
+		}
 
 		if i := strings.index_byte(path[start:], '/'); i >= 0 {
 			end = start + i
@@ -1263,7 +1343,9 @@ budget_begin :: proc(
 	HTTP_Error,
 ) {
 	if scope == (resources.Scope{}) {
-		if coverage != (resources.Scope{}) do return {}, {}, budget_error(.Invalid_Config)
+		if coverage != (resources.Scope{}) {
+			return {}, {}, budget_error(.Invalid_Config)
+		}
 		return {}, backing, {}
 	}
 	if coverage != (resources.Scope{}) && !resources.covers(coverage, scope) {
@@ -1272,7 +1354,9 @@ budget_begin :: proc(
 	managed_scope, managed := charged.allocator_scope(backing)
 	if managed && !resources.covers(managed_scope, scope) {
 		reason: resources.Error = .Invalid_Config
-		if !resources.same_root(managed_scope, scope) do reason = .Foreign_Root
+		if !resources.same_root(managed_scope, scope) {
+			reason = .Foreign_Root
+		}
 		return {}, {}, budget_error(reason)
 	}
 	if !managed && coverage == (resources.Scope{}) && .Free not_in mem.query_features(backing) {
@@ -1280,7 +1364,9 @@ budget_begin :: proc(
 	}
 	ctx: Budget_Context
 	lease, admission := resources.reserve(scope, {streams = 1})
-	if admission != .None do return {}, {}, budget_error(admission)
+	if admission != .None {
+		return {}, {}, budget_error(admission)
+	}
 	ctx.stream = lease
 	allocator := backing
 	failure: HTTP_Error
@@ -1288,12 +1374,17 @@ budget_begin :: proc(
 		ctx.binding, failure = budget_retain_allocator(backing)
 	} else if coverage == (resources.Scope{}) {
 		ctx.binding, failure = budget_create_allocator(scope, backing)
-		if failure.kind == .None do allocator = charged.allocator(ctx.binding)
+		if failure.kind == .None {
+			allocator = charged.allocator(ctx.binding)
+		}
 	}
 	if failure.kind == .None && coverage != (resources.Scope{}) {
 		retained, error := resources.retain_scope(coverage)
-		if error != .None do failure = budget_error(error)
-		else do ctx.coverage = retained
+		if error != .None {
+			failure = budget_error(error)
+		} else {
+			ctx.coverage = retained
+		}
 	}
 	if failure.kind != .None {
 		budget_cleanup(&ctx)
@@ -1316,7 +1407,9 @@ budget_create_allocator :: proc(scope: resources.Scope, backing: mem.Allocator) 
 }
 @(private)
 budget_allocator_error :: proc(error: charged.Error) -> HTTP_Error {
-	if error.kind == .None do return {}
+	if error.kind == .None {
+		return {}
+	}
 	result := budget_error(error.budget)
 	result.allocation = error.allocation
 
@@ -1340,7 +1433,9 @@ budget_error :: proc(reason: resources.Error) -> HTTP_Error {
 budget_cleanup :: proc(ctx: ^Budget_Context) {
 	old := ctx^
 	ctx^ = {}
-	if old.temporary_initialized do mem.dynamic_arena_destroy(&old.temporary)
+	if old.temporary_initialized {
+		mem.dynamic_arena_destroy(&old.temporary)
+	}
 	charged.release(&old.binding)
 	resources.release_scope(&old.coverage)
 	resources.release(&old.stream)

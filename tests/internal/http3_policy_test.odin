@@ -146,7 +146,9 @@ surf_http3_peer_get :: proc(t: ^testing.T) {
 	url_buf: [96]u8
 	body_buf: [64]u8
 	url, want, roots, ok := surf_peer_setup(t, false, url_buf[:], body_buf[:])
-	if !ok do return
+	if !ok {
+		return
+	}
 	defer surf_roots_free(roots)
 	response, error := execute(
 		{method = .GET, url = url},
@@ -172,7 +174,9 @@ surf_http3_peer_post_bad_cert :: proc(t: ^testing.T) {
 	url_buf: [96]u8
 	body_buf: [64]u8
 	url, _, roots, ok := surf_peer_setup(t, true, url_buf[:], body_buf[:])
-	if !ok do return
+	if !ok {
+		return
+	}
 	defer surf_roots_free(roots)
 	_, error := execute(
 		{method = .POST, url = url},
@@ -199,13 +203,19 @@ surf_peer_setup :: proc(
 	port_s := os.get_env_buf(port_buf[:], "H3_PEER_PORT")
 	cert := os.get_env_buf(cert_buf[:], "H3_PEER_CERT")
 	body = os.get_env_buf(body_buf, "H3_PEER_BODY")
-	if len(port_s) == 0 || len(cert) == 0 || len(body) == 0 do return
+	if len(port_s) == 0 || len(cert) == 0 || len(body) == 0 {
+		return
+	}
 	if bogus {
 		cert = os.get_env_buf(cert_buf[:], "H3_BOGUS_CERT")
-		if len(cert) == 0 do return
+		if len(cert) == 0 {
+			return
+		}
 	}
 	url = fmt.bprintf(url_buf, "https://127.0.0.1:%s/", port_s)
-	if len(url) == 0 do return
+	if len(url) == 0 {
+		return
+	}
 	roots = new(tls.Root_Pool)
 	load_error := tls.root_pool_load_file(roots, cert)
 	testing.expect_value(t, load_error.kind, .None)
@@ -220,7 +230,9 @@ surf_peer_setup :: proc(
 
 @(private)
 surf_roots_free :: proc(pool: ^tls.Root_Pool) {
-	if pool == nil do return
+	if pool == nil {
+		return
+	}
 	tls.root_pool_destroy(pool)
 	free(pool)
 }

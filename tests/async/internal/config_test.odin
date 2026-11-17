@@ -245,7 +245,9 @@ schema_dns_snapshot_bounds_and_scalar_handles :: proc(t: ^testing.T) {
 		normalized, error := schema_normalize({http = {resolver = {name_servers = servers[:count]}}})
 		testing.expect_value(t, error.kind, .None)
 		testing.expect_value(t, len(normalized.http.resolver.name_servers), count)
-		if count > 0 do testing.expect_value(t, raw_data(normalized.http.resolver.name_servers), raw_data(servers[:count]))
+		if count > 0 {
+			testing.expect_value(t, raw_data(normalized.http.resolver.name_servers), raw_data(servers[:count]))
+		}
 	}
 
 	_, error := schema_normalize({http = {resolver = {name_servers = servers[:]}}})

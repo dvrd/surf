@@ -789,11 +789,21 @@ Channel :: struct {
 
 limits_normalize :: proc(input: Limits, requests: int) -> (Limits, bool) {
 	result := input
-	if result.streams == 0 do result.streams = min(requests, 8)
-	if result.response_chunks == 0 do result.response_chunks = 2
-	if result.upload_chunks == 0 do result.upload_chunks = 2
-	if result.max_chunk_bytes == 0 do result.max_chunk_bytes = 16 << 10
-	if result.max_retained_bytes_per_stream == 0 do result.max_retained_bytes_per_stream = 64 << 10
+	if result.streams == 0 {
+		result.streams = min(requests, 8)
+	}
+	if result.response_chunks == 0 {
+		result.response_chunks = 2
+	}
+	if result.upload_chunks == 0 {
+		result.upload_chunks = 2
+	}
+	if result.max_chunk_bytes == 0 {
+		result.max_chunk_bytes = 16 << 10
+	}
+	if result.max_retained_bytes_per_stream == 0 {
+		result.max_retained_bytes_per_stream = 64 << 10
+	}
 	if result.streams < 1 ||
 	   result.streams > min(requests, MAX_STREAMS) ||
 	   result.response_chunks < 1 ||
@@ -812,8 +822,12 @@ limits_normalize :: proc(input: Limits, requests: int) -> (Limits, bool) {
 
 options_normalize :: proc(input: Options, body_limit: int) -> (Options, bool) {
 	result := input
-	if result.max_encoded_bytes == 0 do result.max_encoded_bytes = u64(body_limit)
-	if result.max_decoded_bytes == 0 do result.max_decoded_bytes = u64(body_limit)
+	if result.max_encoded_bytes == 0 {
+		result.max_encoded_bytes = u64(body_limit)
+	}
+	if result.max_decoded_bytes == 0 {
+		result.max_decoded_bytes = u64(body_limit)
+	}
 	if result.max_encoded_bytes > 64 << 20 ||
 	   result.max_decoded_bytes > 64 << 20 ||
 	   result.max_encoded_bytes == 0 ||
