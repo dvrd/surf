@@ -48,7 +48,6 @@ HTTP_Client :: struct {
 	_self:         ^HTTP_Client,
 }
 
-@(private)
 HTTP_Lane :: struct {
 	live, reusable, booted, ready, dead, goaway, engine_up: bool,
 	secure:                                                 bool,
@@ -70,7 +69,6 @@ HTTP_Lane :: struct {
 	identity:                                               HTTP_Client_Identity,
 }
 
-@(private)
 H2_Job :: struct {
 	request:                                                      http.Request,
 	upload:                                                       ^Upload_Source,
@@ -316,7 +314,6 @@ http_client_multiplex :: proc(
 	return drive_error
 }
 
-@(private)
 http_body_limit :: proc(config: Config, limits: HTTP_Origin_Limits) -> int {
 	limit := config.max_body_size
 
@@ -331,7 +328,6 @@ http_body_limit :: proc(config: Config, limits: HTTP_Origin_Limits) -> int {
 	return limit
 }
 
-@(private)
 http_arm_socket :: proc(c: ^HTTP_Client, socket: net.TCP_Socket) {
 	if c == nil {
 		return
@@ -342,7 +338,6 @@ http_arm_socket :: proc(c: ^HTTP_Client, socket: net.TCP_Socket) {
 	sync.unlock(&c.mu)
 }
 
-@(private)
 http_disarm_socket :: proc(c: ^HTTP_Client, socket: net.TCP_Socket) {
 	if c == nil {
 		return
@@ -357,7 +352,6 @@ http_disarm_socket :: proc(c: ^HTTP_Client, socket: net.TCP_Socket) {
 	sync.unlock(&c.mu)
 }
 
-@(private)
 http_tls_connect :: proc(
 	url: http.URL,
 	config: Config,
@@ -430,7 +424,6 @@ http_tls_connect :: proc(
 	return connection, {}
 }
 
-@(private)
 http_lane_prepare :: proc(
 	c: ^HTTP_Client,
 	url: http.URL,
@@ -542,7 +535,6 @@ http_lane_prepare :: proc(
 	return lane, false, {}
 }
 
-@(private)
 http_lane_close :: proc(c: ^HTTP_Client, lane: ^HTTP_Lane) {
 	if lane == nil || lane.tls == nil && !lane.engine_up && len(lane.host) == 0 && lane.identity.store == nil {
 		return
@@ -568,7 +560,6 @@ http_lane_close :: proc(c: ^HTTP_Client, lane: ^HTTP_Lane) {
 	lane^ = {}
 }
 
-@(private)
 http_lane_http1 :: proc(
 	c: ^HTTP_Client,
 	lane: ^HTTP_Lane,
@@ -589,7 +580,6 @@ http_lane_http1 :: proc(
 	return response, err
 }
 
-@(private)
 h2_exchange_once :: proc(
 	connection: ^tls_api.Conn,
 	request: http.Request,
@@ -635,7 +625,6 @@ h2_exchange_once :: proc(
 	return jobs[0].response, {}
 }
 
-@(private)
 h2_engine_open :: proc(lane: ^HTTP_Lane) -> HTTP_Error {
 	if lane.engine_up || lane.max_streams < 1 {
 		return {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent}
@@ -664,7 +653,6 @@ h2_engine_open :: proc(lane: ^HTTP_Lane) -> HTTP_Error {
 	return {}
 }
 
-@(private)
 h2_engine_close :: proc(lane: ^HTTP_Lane) {
 	if lane == nil || !lane.engine_up {
 		return
@@ -700,12 +688,10 @@ h2_engine_close :: proc(lane: ^HTTP_Lane) {
 	lane.engine_up = false
 }
 
-@(private)
 h2_cancelled :: proc(flag: ^int) -> bool {
 	return flag != nil && intrinsics.atomic_load(flag) != 0
 }
 
-@(private)
 h2_effect :: proc(job: ^H2_Job) -> HTTP_Write_Effect {
 	if job.status > 0 {
 		return .Response_Received
@@ -718,7 +704,6 @@ h2_effect :: proc(job: ^H2_Job) -> HTTP_Write_Effect {
 	return .Not_Sent
 }
 
-@(private)
 h2_fail :: proc(job: ^H2_Job, error: HTTP_Error) {
 	if job == nil || job.failed {
 		return
@@ -738,7 +723,6 @@ h2_fail :: proc(job: ^H2_Job, error: HTTP_Error) {
 	owned.destroy(&job.chunk)
 }
 
-@(private)
 h2_map_error :: proc(error: h2.Error, effect: HTTP_Write_Effect, status: int) -> HTTP_Error {
 	if error.kind == .None {
 		return {}
@@ -760,7 +744,6 @@ h2_map_error :: proc(error: h2.Error, effect: HTTP_Write_Effect, status: int) ->
 	return {kind = kind, phase = phase, write_effect = effect, status = status, allocation = error.allocation}
 }
 
-@(private)
 h2_tls_error :: proc(io_error: tls_api.IO_Error, effect: HTTP_Write_Effect, status: int) -> HTTP_Error {
 	kind := http.Error_Kind.IO_Failed
 	phase := HTTP_Phase.Read
@@ -782,7 +765,6 @@ h2_tls_error :: proc(io_error: tls_api.IO_Error, effect: HTTP_Write_Effect, stat
 	}
 }
 
-@(private)
 h2_boot :: proc(lane: ^HTTP_Lane, deadline: time.Time, cancel: ^int) -> HTTP_Error {
 	empty: [0]H2_Job
 
@@ -855,7 +837,6 @@ h2_boot :: proc(lane: ^HTTP_Lane, deadline: time.Time, cancel: ^int) -> HTTP_Err
 	return {kind = .IO_Failed, phase = .Protocol, write_effect = .Not_Sent}
 }
 
-@(private)
 h2_drive :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, deadline: time.Time, cancel: ^int) -> HTTP_Error {
 	defer h2_finish(lane, jobs)
 
@@ -953,7 +934,6 @@ h2_drive :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, deadline: time.Time, cancel: 
 	return error
 }
 
-@(private)
 h2_settled :: proc(jobs: []H2_Job) -> bool {
 	for &job in jobs {
 		if !(job.failed || job.ended && job.sent) {
@@ -964,7 +944,6 @@ h2_settled :: proc(jobs: []H2_Job) -> bool {
 	return true
 }
 
-@(private)
 h2_no_progress :: proc(jobs: []H2_Job) -> bool {
 	for &job in jobs {
 		if job.opened && !job.failed && !job.ended {
@@ -975,7 +954,6 @@ h2_no_progress :: proc(jobs: []H2_Job) -> bool {
 	return true
 }
 
-@(private)
 h2_fail_open :: proc(jobs: []H2_Job, error: HTTP_Error) {
 	for &job in jobs {
 		if job.ended && job.sent && job.error.kind == .None {
@@ -986,7 +964,6 @@ h2_fail_open :: proc(jobs: []H2_Job, error: HTTP_Error) {
 	}
 }
 
-@(private)
 h2_active :: proc(jobs: []H2_Job) -> int {
 	count := 0
 
@@ -999,7 +976,6 @@ h2_active :: proc(jobs: []H2_Job) -> int {
 	return count
 }
 
-@(private)
 h2_submit :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 	if lane.dead || !lane.engine_up {
 		return
@@ -1040,7 +1016,6 @@ h2_submit :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 	}
 }
 
-@(private)
 h2_open :: proc(lane: ^HTTP_Lane, job: ^H2_Job) -> h2.Error {
 	if error := h2_fields(job); error.kind != .None {
 		return error
@@ -1063,7 +1038,6 @@ h2_open :: proc(lane: ^HTTP_Lane, job: ^H2_Job) -> h2.Error {
 	return {}
 }
 
-@(private)
 h2_fields :: proc(job: ^H2_Job) -> h2.Error {
 	url, error := http.url_parse(job.request.url)
 
@@ -1127,7 +1101,6 @@ h2_fields :: proc(job: ^H2_Job) -> h2.Error {
 	return {}
 }
 
-@(private)
 h2_field :: proc(job: ^H2_Job, name, value: string) -> bool {
 	if job.field_n >= len(job.fields) || len(name) == 0 {
 		return false
@@ -1149,14 +1122,12 @@ h2_field :: proc(job: ^H2_Job, name, value: string) -> bool {
 	return true
 }
 
-@(private)
 is_upper :: proc(c: u8) -> bool {
 	return c >= 'A' && c <= 'Z'
 }
 
 // HTTP/2 and HTTP/3 field names are lowercase on the wire. Appends the folded
 // name to storage and returns that copy; false when it does not fit.
-@(private)
 field_name_lower :: proc(storage: []u8, used: ^int, name: string) -> (string, bool) {
 	if len(name) > len(storage) - used^ {
 		return "", false
@@ -1179,7 +1150,6 @@ field_name_lower :: proc(storage: []u8, used: ^int, name: string) -> (string, bo
 	return string(storage[start:used^]), true
 }
 
-@(private)
 h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 	if job.chunk.allocator.procedure != nil || len(job.chunk.storage) > 0 {
 		end_stream := job.body_at >= len(job.body) && job.upload_left == 0
@@ -1257,7 +1227,6 @@ h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 	}
 }
 
-@(private)
 h2_service :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	h2_tunnel_reap(lane)
 	progress := h2_retired_requests_reap(lane)
@@ -1314,7 +1283,6 @@ h2_service :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	return progress, {}
 }
 
-@(private)
 h2_poll :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	saw := false
 
@@ -1358,7 +1326,6 @@ h2_poll :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	return saw, {}
 }
 
-@(private)
 h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP_Error {
 	if h2_retired_request_event(lane, event) {
 		return {}
@@ -1497,7 +1464,6 @@ h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP
 	return {}
 }
 
-@(private)
 h2_find :: proc(jobs: []H2_Job, handle: h2.Stream_Handle) -> ^H2_Job {
 	for &job in jobs {
 		if job.opened && job.handle == handle {
@@ -1508,7 +1474,6 @@ h2_find :: proc(jobs: []H2_Job, handle: h2.Stream_Handle) -> ^H2_Job {
 	return nil
 }
 
-@(private)
 h2_copy_headers :: proc(job: ^H2_Job, fields: []hpack.Field, allocator: mem.Allocator) -> HTTP_Error {
 	count, bytes := 0, 0
 
@@ -1585,7 +1550,6 @@ h2_copy_headers :: proc(job: ^H2_Job, fields: []hpack.Field, allocator: mem.Allo
 	return {}
 }
 
-@(private)
 h2_reset_open :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 	if !lane.engine_up {
 		return
@@ -1599,7 +1563,6 @@ h2_reset_open :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 	}
 }
 
-@(private)
 h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	wrote := false
 
@@ -1665,7 +1628,6 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	return wrote, {}
 }
 
-@(private)
 h2_read :: proc(lane: ^HTTP_Lane) -> (int, HTTP_Error) {
 	n, read_error := tls_api.read(lane.tls, lane.read_buf[:])
 
@@ -1683,7 +1645,6 @@ h2_read :: proc(lane: ^HTTP_Lane) -> (int, HTTP_Error) {
 	return n, {}
 }
 
-@(private)
 h2_finish :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 	if lane != nil && lane.engine_up {
 		for &job in jobs {
@@ -1720,7 +1681,6 @@ h2_finish :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 	}
 }
 
-@(private)
 h2_feed :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, src: []u8) -> HTTP_Error {
 	rest := src
 	spins := 0
@@ -1770,7 +1730,6 @@ h2_feed :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, src: []u8) -> HTTP_Error {
 
 // Folded comparison without retaining a lowercased copy. The matched set is
 // the connection-specific field names HTTP/2 forbids on a request.
-@(private)
 h2_name_forbidden :: proc(name: string) -> bool {
 	switch len(name) {
 	case 2:
@@ -1788,18 +1747,15 @@ h2_name_forbidden :: proc(name: string) -> bool {
 	return false
 }
 
-@(private)
 http_client_h3_cancelled :: proc(data: rawptr) -> bool {
 	return h2_cancelled(&(cast(^HTTP_Client)data).cancel)
 }
 
-@(private)
 HTTP_Client_Identity :: struct {
 	store:      ^credential_store.Store,
 	lease:      credential_store.Lease,
 	generation: u64,
 }
-@(private)
 http_identity_acquire :: proc(config: tls_api.Config) -> (HTTP_Client_Identity, HTTP_Error) {
 	identity := HTTP_Client_Identity {
 		store = config.client_credentials,
@@ -1838,7 +1794,6 @@ http_identity_acquire :: proc(config: tls_api.Config) -> (HTTP_Client_Identity, 
 
 	return identity, {}
 }
-@(private)
 http_identity_release :: proc(identity: ^HTTP_Client_Identity) {
 	if identity.store != nil {
 		_ = credential_store.release(identity.store, &identity.lease)
@@ -1846,7 +1801,6 @@ http_identity_release :: proc(identity: ^HTTP_Client_Identity) {
 
 	identity^ = {}
 }
-@(private)
 http_tls_config_equal :: proc(a, b: tls_api.Config) -> bool {
 	if a.client_credentials != b.client_credentials ||
 	   a.session != b.session ||
@@ -1873,7 +1827,6 @@ http_tls_config_equal :: proc(a, b: tls_api.Config) -> bool {
 
 	return true
 }
-@(private)
 http_lane_has_tunnels :: proc(lane: ^HTTP_Lane) -> bool {
 	for tunnel in lane.tunnels {
 		if tunnel != nil {
@@ -1889,7 +1842,6 @@ http_lane_has_tunnels :: proc(lane: ^HTTP_Lane) -> bool {
 // permit physical reaping; returning a response is earlier than that boundary.
 HTTP_RETIRED_REQUEST_SLOTS :: 32
 
-@(private)
 h2_retire_request :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) {
 	error := h2.connection_reap(&lane.engine, handle)
 
@@ -1924,7 +1876,6 @@ h2_retire_request :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) {
 	lane.reusable = false
 }
 
-@(private)
 h2_retired_requests_reap :: proc(lane: ^HTTP_Lane) -> bool {
 	if lane == nil || !lane.engine_up {
 		return false
@@ -1950,7 +1901,6 @@ h2_retired_requests_reap :: proc(lane: ^HTTP_Lane) -> bool {
 	return progress
 }
 
-@(private)
 h2_retired_request_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> bool {
 	handle: h2.Stream_Handle
 	#partial switch value in event.payload {

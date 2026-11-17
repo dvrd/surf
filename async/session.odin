@@ -16,7 +16,6 @@ import h1 "../../http/v1"
 import "core:mem"
 import scopes "core:sync/budget"
 
-@(private)
 session_valid :: proc(a: ^Session_Actor) -> bool {
 	return(
 		a != nil &&
@@ -26,16 +25,13 @@ session_valid :: proc(a: ^Session_Actor) -> bool {
 		a == &a.owner.actors[int(a.index) - 1] \
 	)
 }
-@(private)
 session_notify :: proc(data: rawptr) {
 	a := cast(^Session_Actor)data
 	_ = signal.wake(a.wake)
 }
-@(private)
 session_notify_coordinator :: proc(a: ^Session_Actor) {
 	_ = signal.wake(a.owner.coordinator.wake)
 }
-@(private)
 session_borrow :: proc(a: ^Session_Actor) -> (http.Request, Origin_Key, Client_Error) {
 	s := a.owner
 	sync.lock(&s.mu)
@@ -56,7 +52,6 @@ session_borrow :: proc(a: ^Session_Actor) -> (http.Request, Origin_Key, Client_E
 
 	return request.input.request, origin.owner.key, {}
 }
-@(private)
 session_stopping :: proc(a: ^Session_Actor) -> bool {
 	s := a.owner
 	sync.lock(&s.mu)
@@ -65,7 +60,6 @@ session_stopping :: proc(a: ^Session_Actor) -> bool {
 
 	return closing || runtime_async.cancelled(&a.task)
 }
-@(private)
 session_cancelled :: proc(a: ^Session_Actor) -> bool {
 	s := a.owner
 	sync.lock(&s.mu)
@@ -85,7 +79,6 @@ session_cancelled :: proc(a: ^Session_Actor) -> bool {
 
 	return request == nil || request.cancel_requested || s.kernel.closed
 }
-@(private)
 session_runtime_error :: proc(error: runtime_async.Error, phase: surf.HTTP_Phase) -> surf.HTTP_Error {
 	if error.kind == .Timeout {
 		return {kind = .Deadline_Failed, transport = {kind = .Timeout}, phase = .Deadline, write_effect = .Not_Sent}
@@ -118,7 +111,6 @@ session_runtime_error :: proc(error: runtime_async.Error, phase: surf.HTTP_Phase
 
 	return {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent}
 }
-@(private)
 session_error :: proc(a: ^Session_Actor, error: surf.HTTP_Error) {
 	if a.error.kind == .None {
 		a.error = redirect_error_context(a, error)
@@ -126,7 +118,6 @@ session_error :: proc(a: ^Session_Actor, error: surf.HTTP_Error) {
 
 	a.phase = .Retiring
 }
-@(private)
 session_before_http :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> bool {
 	if session_cancelled(a) || runtime_async.cancelled(&a.task) {
 		session_error(
@@ -149,7 +140,6 @@ session_before_http :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> b
 
 // A pending mailbox can already represent an Active Kernel assignment even if
 // the actor never took it. Cancellation must complete that handle without I/O.
-@(private)
 session_take_cancelled_mailbox :: proc(a: ^Session_Actor) {
 	s := a.owner
 	sync.lock(&s.mu)
@@ -288,7 +278,6 @@ network_assignment_finish :: proc(
 	return {}
 }
 
-@(private)
 session_assign :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	snapshot, error := network_assignment_take(a)
 
@@ -339,7 +328,6 @@ session_assign :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	return .Yield
 }
 
-@(private)
 session_exchange_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> runtime_async.Resume_Result {
 	if a.stream_exchange != nil {
 		return session_stream_step(a, now)
@@ -441,7 +429,6 @@ session_exchange_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) ->
 	return session_finish_reuse(a, result.reuse_eligible)
 }
 
-@(private)
 session_finish_reuse :: proc(a: ^Session_Actor, eligible: bool) -> runtime_async.Resume_Result {
 	reusable := eligible && !session_stopping(a) && !session_cancelled(a)
 
@@ -494,7 +481,6 @@ network_session_cancel :: proc(data: rawptr) -> runtime_async.Resume_Result {
 // Owner-thread observation after provider jobs have run. Public readers touch
 // only this synchronized Kernel metadata, never TLS/Exchange/actor internals.
 // Returning/Preparing redirect tickets retain the ledger's Redirecting stage.
-@(private)
 session_publish_stage :: proc(a: ^Session_Actor) {
 	h := a.request
 
@@ -554,7 +540,6 @@ session_publish_stage :: proc(a: ^Session_Actor) {
 	network_unlock_both(s)
 }
 
-@(private)
 session_resume :: proc(a: ^Session_Actor, force: bool) -> runtime_async.Resume_Result {
 	if !session_valid(a) {
 		return .Done
@@ -664,13 +649,11 @@ network_session_done :: proc(data: rawptr) {
 	network_task_done(s, index, drained)
 }
 
-@(private)
 session_close_done :: proc(op: ^net.Async_Operation) {
 	a := cast(^Session_Actor)op.user_data
 	a.close_done = true
 	session_notify(a)
 }
-@(private)
 session_mark_retiring :: proc(a: ^Session_Actor) {
 	if a.model.slot == 0 {
 		return
@@ -698,7 +681,6 @@ session_mark_retiring :: proc(a: ^Session_Actor) {
 // Reset only a fully closed transport generation. Task, Signal, owner/index and
 // the cross-thread mailbox and redirect custody MUST survive: coordinator may already have queued
 // the next generation as soon as pool_retire made the model slot available.
-@(private)
 session_reset_io :: proc(a: ^Session_Actor) {
 	session_stream_dispose(a)
 	assert(exchange_api.exchange_reset(&a.exchange).kind == .None)
@@ -727,7 +709,6 @@ session_reset_io :: proc(a: ^Session_Actor) {
 	a.error = {}
 }
 
-@(private)
 session_close_step :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	session_mark_retiring(a)
 	// Consume only flags attached to this old generation before freeing its pool
@@ -862,13 +843,11 @@ session_close_step :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	return .Waiting
 }
 
-@(private)
 session_handshake_done :: proc(op: ^tls_api.Async_Handshake_Operation) {
 	a := cast(^Session_Actor)op.user_data
 	a.handshake_done = true
 	session_notify(a)
 }
-@(private)
 session_tls_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	_, origin, borrow := session_borrow(a)
 
@@ -934,7 +913,6 @@ session_tls_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 
 	return .Yield
 }
-@(private)
 session_tls_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> runtime_async.Resume_Result {
 	if !session_before_http(a, now) {
 		return .Yield
@@ -996,7 +974,6 @@ session_tls_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> runt
 	return session_begin_exchange(a, true)
 }
 
-@(private)
 session_reuse :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	if !exchange_api.exchange_quiescent(&a.exchange) {
 		session_error(
@@ -1041,7 +1018,6 @@ session_reuse :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 
 	return session_begin_exchange(a, false)
 }
-@(private)
 session_begin_exchange :: proc(a: ^Session_Actor, fresh: bool) -> runtime_async.Resume_Result {
 	request, _, borrow := session_borrow(a)
 
@@ -1108,7 +1084,6 @@ session_begin_exchange :: proc(a: ^Session_Actor, fresh: bool) -> runtime_async.
 	return .Yield
 }
 
-@(private)
 session_dns_error :: proc(error: runtime_async.DNS_Error) -> surf.HTTP_Error {
 	result := surf.HTTP_Error {
 		kind         = .Dial_Failed,
@@ -1140,7 +1115,6 @@ session_dns_error :: proc(error: runtime_async.DNS_Error) -> surf.HTTP_Error {
 
 	return result
 }
-@(private)
 session_dns_block :: proc(a: ^Session_Actor) -> bool {
 	s := a.owner
 	sync.lock(&s.mu)
@@ -1182,7 +1156,6 @@ session_dns_block :: proc(a: ^Session_Actor) -> bool {
 
 	return true
 }
-@(private)
 session_query_begin :: proc(
 	a: ^Session_Actor,
 	host: string,
@@ -1220,7 +1193,6 @@ session_query_begin :: proc(
 	}
 	return runtime_async.begin_dns_connect(&a.dial, &a.query)
 }
-@(private)
 session_numeric_begin :: proc(a: ^Session_Actor) -> runtime_async.DNS_Error {
 	endpoint := a.prepared_addresses[a.prepared_address_at]
 	storage: [64]u8
@@ -1236,7 +1208,6 @@ session_numeric_begin :: proc(a: ^Session_Actor) -> runtime_async.DNS_Error {
 	return session_query_begin(a, text, endpoint.port, .Both_A_First)
 }
 
-@(private)
 session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	_, origin, borrow := session_borrow(a)
 
@@ -1285,7 +1256,6 @@ session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	return .Yield
 }
 
-@(private)
 session_dial_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> runtime_async.Resume_Result {
 	if !session_before_http(a, now) {
 		return .Yield
@@ -1377,9 +1347,7 @@ session_dial_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> run
 	return session_begin_exchange(a, true)
 }
 
-@(private)
 kernel_identity_mu: sync.Mutex
-@(private)
 kernel_identity_serial: u64
 
 request_clone :: proc(request: http.Request, allocator: mem.Allocator) -> (Request_Owner, Client_Error) {
@@ -1560,7 +1528,6 @@ kernel_init :: proc(k: ^Kernel, profile: ^Profile, resources: ^Kernel_Resources)
 
 	return {}
 }
-@(private)
 kernel_free_arrays :: proc(k: ^Kernel) {
 	// Locals only after clearing the owner: arbitrary backing frees may reenter.
 	old := k^
@@ -1639,7 +1606,6 @@ request_disposal_destroy :: proc(disposal: ^Request_Disposal) {
 	origin_disposal_destroy(&old.origin)
 }
 
-@(private)
 kernel_origin_cell_locked :: proc(k: ^Kernel, handle: Cell_Handle) -> ^Origin_Slot {
 	if k == nil ||
 	   k.self != k ||
@@ -1657,7 +1623,6 @@ kernel_origin_cell_locked :: proc(k: ^Kernel, handle: Cell_Handle) -> ^Origin_Sl
 
 	return slot
 }
-@(private)
 origin_reference_counter :: proc(slot: ^Origin_Slot, reference: Origin_Reference) -> ^int {
 	switch reference {
 	case .Request:
@@ -1963,7 +1928,6 @@ network_assignment_take :: proc(actor: ^Session_Actor) -> (Session_Assignment, C
 	return result, {}
 }
 
-@(private)
 network_unstarted_cancel :: proc(s: ^Client_State) {
 	assert(kernel_close(&s.kernel).kind == .None)
 

@@ -9,7 +9,6 @@ import charged "core:mem/budget"
 import stream_api "stream"
 import h1 "../../http/v1"
 
-@(private)
 redirect_status_error :: proc(error: surf.HTTP_Error, status: int) -> surf.HTTP_Error {
 	result := error
 
@@ -26,7 +25,6 @@ redirect_status_error :: proc(error: surf.HTTP_Error, status: int) -> surf.HTTP_
 
 // Match Root's logical-request error context: never replace Unknown from an
 // ambiguous later-hop write merely because an earlier response was received.
-@(private)
 redirect_error_context :: proc(a: ^Session_Actor, error: surf.HTTP_Error) -> surf.HTTP_Error {
 	status := 0
 	h := a.request
@@ -57,7 +55,6 @@ redirect_error_context :: proc(a: ^Session_Actor, error: surf.HTTP_Error) -> sur
 	return redirect_status_error(error, status)
 }
 
-@(private)
 redirect_client_error :: proc(error: Client_Error) -> surf.HTTP_Error {
 	if error.http.kind != .None {
 		return error.http
@@ -83,7 +80,6 @@ redirect_client_error :: proc(error: Client_Error) -> surf.HTTP_Error {
 
 // Return true only when this response is consumed by redirect processing.
 // A disabled policy returns the original successful3xx to its caller unchanged.
-@(private)
 redirect_response :: proc(a: ^Session_Actor, response: ^surf.Response) -> bool {
 	if a.owner.config.config.http.max_redirects == 0 {
 		return false
@@ -151,7 +147,6 @@ redirect_response :: proc(a: ^Session_Actor, response: ^surf.Response) -> bool {
 // Called only after old close/app callbacks and adapter quiescence. On Begin
 // rejection the old request remains Active and normal closed-stream completion
 // handles it. On success the handoff becomes its sole actor custody across reset.
-@(private)
 redirect_closed_begin :: proc(a: ^Session_Actor) {
 	if a.redirect.phase != .Ready {
 		return
@@ -203,7 +198,6 @@ redirect_closed_begin :: proc(a: ^Session_Actor) {
 // After old model retirement, all remaining ledger and physical cleanup is
 // synchronous and bounded by the owned input/origin limits. Keep running until
 // the accepted request is Queued or Completed, including global close paths.
-@(private)
 redirect_closed_resolve :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	assert(a.redirect.phase == .Ready && a.request == (Request_Handle{}) && a.model.slot == 0)
 	redirect_requeue(a)
@@ -221,19 +215,16 @@ redirect_closed_resolve :: proc(a: ^Session_Actor) -> runtime_async.Resume_Resul
 	return .Yield
 }
 
-@(private)
 Redirect_Grant :: struct {
 	storage:   []u8,
 	alignment: int,
 }
-@(private)
 Redirect_Allocator :: struct {
 	backing: mem.Allocator,
 	binding: charged.Binding,
 	grants:  [2]Redirect_Grant,
 	failure: Client_Error,
 }
-@(private)
 redirect_allocator_failure :: proc(state: ^Redirect_Allocator, error: Client_Error) {
 	if state.failure.kind == .None {
 		state.failure = error
@@ -243,7 +234,6 @@ redirect_allocator_failure :: proc(state: ^Redirect_Allocator, error: Client_Err
 // Root redirect_url makes at most two simultaneously live URL grants. After it
 // returns, the surviving URL and one origin grant share this same finite ledger.
 // No pointer to this stack allocator may appear in a published owner.
-@(private)
 redirect_allocator_proc :: proc(
 	data: rawptr,
 	mode: mem.Allocator_Mode,
@@ -382,7 +372,6 @@ redirect_allocator_proc :: proc(
 	return nil, .Mode_Not_Implemented
 }
 
-@(private)
 redirect_allocator_init :: proc(state: ^Redirect_Allocator, backing: mem.Allocator) -> Client_Error {
 	if backing.procedure == nil || .Free not_in mem.query_features(backing) {
 		return {kind = .Invalid_Config}
@@ -405,7 +394,6 @@ redirect_allocator_init :: proc(state: ^Redirect_Allocator, backing: mem.Allocat
 
 // Transfer one exact origin allocation to its permanent allocator provenance.
 // This removes the temporary ledger's ownership without releasing the bytes.
-@(private)
 redirect_allocator_detach :: proc(state: ^Redirect_Allocator, storage: []u8, alignment: int) -> bool {
 	for &grant in state.grants {
 		if raw_data(grant.storage) == raw_data(storage) &&
@@ -418,7 +406,6 @@ redirect_allocator_detach :: proc(state: ^Redirect_Allocator, storage: []u8, ali
 
 	return false
 }
-@(private)
 redirect_allocator_destroy :: proc(state: ^Redirect_Allocator) {
 	old := state^
 	state^ = {}
@@ -441,7 +428,6 @@ redirect_allocator_destroy :: proc(state: ^Redirect_Allocator) {
 
 // Kernel.mu is held. The owner samples now after its physical work; this pure
 // ledger has no Runtime/transport pointer and cannot certify callback drainage.
-@(private)
 redirect_cutoff_locked :: proc(k: ^Kernel, r: ^Request_Slot, now: runtime_async.Deadline) -> Client_Error {
 	if now.epoch != r.deadline.epoch || now.at <= 0 {
 		return {kind = .Invalid_Config, http = {kind = .Invalid_Config, phase = .Configuration}}
@@ -692,7 +678,6 @@ kernel_redirect_fail :: proc(
 	return disposal, {}
 }
 
-@(private)
 redirect_dispose :: proc(s: ^Client_State, disposal: ^Request_Disposal) {
 	origin := disposal.origin.origin
 	request_disposal_destroy(disposal)
@@ -704,7 +689,6 @@ redirect_dispose :: proc(s: ^Client_State, disposal: ^Request_Disposal) {
 
 // Fresh monotonic sample supplied after each synchronous prefix destructor.
 // The accepted request stays exclusively actor-owned until terminal/requeue.
-@(private)
 redirect_live_error :: proc(a: ^Session_Actor, h: Request_Handle, now: runtime_async.Deadline) -> surf.HTTP_Error {
 	s := a.owner
 	network_lock_both(s)
@@ -738,7 +722,6 @@ redirect_live_error :: proc(a: ^Session_Actor, h: Request_Handle, now: runtime_a
 	return result
 }
 
-@(private)
 redirect_terminal :: proc(a: ^Session_Actor, error: surf.HTTP_Error) {
 	s := a.owner
 	h := a.redirect.request
@@ -773,7 +756,6 @@ redirect_terminal :: proc(a: ^Session_Actor, error: surf.HTTP_Error) {
 	sync.unlock(&s.mu)
 }
 
-@(private)
 redirect_requeue :: proc(a: ^Session_Actor) {
 	s := a.owner
 	h := a.redirect.request
@@ -843,7 +825,6 @@ redirect_requeue :: proc(a: ^Session_Actor) {
 	}
 }
 
-@(private)
 redirect_empty :: proc(h: ^Redirect_Handoff) -> bool {
 	return(
 		h.phase == .Empty &&
@@ -870,7 +851,6 @@ redirect_empty :: proc(h: ^Redirect_Handoff) -> bool {
 		h.last_status == 0 \
 	)
 }
-@(private)
 redirect_request_shape :: proc(request: http.Request) -> bool {
 	if len(request.url) < 0 ||
 	   len(request.body) < 0 ||
@@ -893,7 +873,6 @@ redirect_request_shape :: proc(request: http.Request) -> bool {
 
 	return true
 }
-@(private)
 redirect_request_overlaps :: proc(request: http.Request, p: rawptr, n: int) -> bool {
 	if ranges_overlap(raw_data(request.url), len(request.url), p, n) ||
 	   ranges_overlap(raw_data(request.body), len(request.body), p, n) ||
@@ -910,7 +889,6 @@ redirect_request_overlaps :: proc(request: http.Request, p: rawptr, n: int) -> b
 
 	return false
 }
-@(private)
 redirect_preparation_error :: proc(error: Client_Error, status: int) -> Client_Error {
 	result := error
 	result.http = surf.http_error_classify(result.http, .Protocol, .Response_Received, status)

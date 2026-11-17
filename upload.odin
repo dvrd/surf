@@ -55,7 +55,6 @@ exchange_upload :: proc(
 	return exchange_run(stream, request, &upload, max_body_size, allocator, deadline, {}, {})
 }
 
-@(private)
 upload_validate :: proc(request: http.Request, source: Upload_Source) -> HTTP_Error {
 	if source.content_length < 0 ||
 	   (source.content_length > 0 && source.stream.procedure == nil) ||
@@ -70,12 +69,10 @@ upload_validate :: proc(request: http.Request, source: Upload_Source) -> HTTP_Er
 	return {}
 }
 
-@(private)
 upload_deadline_expired :: proc(deadline: time.Time) -> bool {
 	return deadline != time.Time{} && time.diff(time.now(), deadline) <= 0
 }
 
-@(private)
 exchange_upload_internal :: proc(
 	stream: net.Connection,
 	request: http.Request,

@@ -14,7 +14,6 @@ import "core:testing"
 import "core:thread"
 import "core:time"
 
-@(private)
 Surf_H3_Fixture :: struct {
 	listener: http3.Listener,
 	stop:     bool,
@@ -22,7 +21,6 @@ Surf_H3_Fixture :: struct {
 	valid:    bool,
 	headers:  [3]http3.Field,
 }
-@(private)
 surf_h3_request_handler :: proc(
 	data: rawptr,
 	request: ^http3.Server_Request,
@@ -223,7 +221,6 @@ surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t: ^test
 	testing.expect(t, fixture.valid)
 }
 
-@(private)
 surf_h3_slow_source :: proc(
 	data: rawptr,
 	mode: io.Stream_Mode,

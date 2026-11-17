@@ -362,7 +362,6 @@ config_normalize :: proc(input: Client_Config) -> (Normalized_Config, Client_Err
 	return result, {}
 }
 
-@(private)
 client_enter :: proc(c: ^Client) -> (^Client_State, Client_Error) {
 	if c == nil || c._self != c || c._state == nil {
 		return nil, {kind = .Invalid_State}
@@ -387,7 +386,6 @@ client_enter :: proc(c: ^Client) -> (^Client_State, Client_Error) {
 
 	return s, {}
 }
-@(private)
 client_leave :: proc(s: ^Client_State) {
 	sync.lock(&s.mu)
 	assert(s.producer_calls > 0)
@@ -495,11 +493,9 @@ client_init :: proc(
 	return {}
 }
 
-@(private)
 resource_failure :: proc(error: scopes.Error) -> Client_Error {
 	return {kind = .Budget_Rejected, http = {kind = .Allocation_Failed, budget = error}}
 }
-@(private)
 resource_allocation_failure :: proc(error: charged.Error) -> Client_Error {
 	if error.kind == .Budget_Rejected || error.kind == .Overflow {
 		return resource_failure(error.budget if error.kind == .Budget_Rejected else .Overflow)
@@ -620,7 +616,6 @@ resources_request_lease :: proc(r: ^Kernel_Resources) -> (scopes.Lease, Client_E
 
 // Validate the physical grant before constructing any typed/sized view. A
 // failed allocator may still report storage; release that exact whole extent.
-@(private)
 kernel_grant :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u8, Client_Error) {
 	if size < 0 || alignment < 1 || allocator.procedure == nil {
 		return nil, {kind = .Invalid_Config}
@@ -649,13 +644,11 @@ kernel_grant :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u8, C
 
 	return profile_allocate(size, alignment, allocator)
 }
-@(private)
 kernel_free :: proc(storage: []u8, alignment: int, allocator: mem.Allocator) {
 	if raw_data(storage) != nil {
 		_, _ = allocator.procedure(allocator.data, .Free, 0, alignment, raw_data(storage), len(storage))
 	}
 }
-@(private)
 kernel_array :: proc($T: typeid, count: int, allocator: mem.Allocator) -> ([]T, Client_Error) {
 	if count < 0 || count > max(int) / size_of(T) {
 		return nil, {kind = .Invalid_Config}
@@ -669,19 +662,15 @@ kernel_array :: proc($T: typeid, count: int, allocator: mem.Allocator) -> ([]T, 
 
 	return (cast([^]T)raw_data(storage))[:count], {}
 }
-@(private)
 kernel_free_array :: proc(values: []$T, allocator: mem.Allocator) {
 	kernel_free(mem.slice_to_bytes(values), align_of(T), allocator)
 }
 
-@(private)
 profile_identity_mu: sync.Mutex
-@(private)
 profile_identity_serial: u64
 
 // Counter ownership is explicit so exhaustion can be tested without mutating
 // the shared identity namespace used by concurrently initialized profiles.
-@(private)
 profile_identity_next :: proc(serial: ^u64, mu: ^sync.Mutex) -> (u64, bool) {
 	sync.mutex_lock(mu)
 	defer sync.mutex_unlock(mu)
@@ -697,7 +686,6 @@ profile_identity_next :: proc(serial: ^u64, mu: ^sync.Mutex) -> (u64, bool) {
 
 // Descriptor offsets are aligned before any cast. A single checked physical
 // backing owns every copied descriptor/string, keeping rollback one-step.
-@(private)
 profile_region :: proc(total: ^int, count, size, alignment: int) -> (int, bool) {
 	if count < 0 || size < 1 || count > max(int) / size {
 		return 0, false
@@ -715,7 +703,6 @@ profile_region :: proc(total: ^int, count, size, alignment: int) -> (int, bool) 
 
 	return offset, true
 }
-@(private)
 profile_allocate :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u8, Client_Error) {
 	if size < 0 || allocator.procedure == nil {
 		return nil, {kind = .Invalid_Config}
@@ -745,7 +732,6 @@ profile_allocate :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u
 
 	return storage, {}
 }
-@(private)
 profile_valid :: proc(p: ^Profile) -> bool {
 	return p != nil && p.self == p && p.owner_id != 0
 }
@@ -885,7 +871,6 @@ profile_destroy :: proc(p: ^Profile) {
 	kernel_free(storage, alignment, allocator)
 }
 
-@(private)
 ranges_overlap :: proc(a: rawptr, an: int, b: rawptr, bn: int) -> bool {
 	if an <= 0 || bn <= 0 {
 		return false
@@ -895,7 +880,6 @@ ranges_overlap :: proc(a: rawptr, an: int, b: rawptr, bn: int) -> bool {
 
 	return av <= bv && bv - av < uintptr(an) || bv < av && av - bv < uintptr(bn)
 }
-@(private)
 client_destination_alias :: proc(s: ^Client_State, c: ^Client, destination: ^surf.Response) -> bool {
 	return(
 		ranges_overlap(destination, size_of(surf.Response), c, size_of(Client)) ||

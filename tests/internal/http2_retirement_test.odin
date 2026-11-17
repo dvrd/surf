@@ -106,7 +106,6 @@ http_retirement_stack_borrow :: proc(client: ^HTTP_Client, url: string) -> (Resp
 }
 
 // Transport completion and the independent peer-log reader are separate events.
-@(private)
 http102_wait_count :: proc(log: ^Http102_Log, needle: string, expected: int) -> int {
 	start := time.tick_now()
 

@@ -413,17 +413,14 @@ http2_goaway_does_not_send_the_request :: proc(t: ^testing.T) {
 	testing.expect_value(t, headers, 0)
 }
 
-@(private)
 http102_call :: proc(call: ^Http102_Call) {
 	call.response, call.error = http_client_exchange(call.client, {method = .GET, url = call.url})
 }
 
-@(private)
 http102_config :: proc(roots: []^x509.Certificate, alpn: []string, timeout: time.Duration) -> Config {
 	return {tls = {root_cas = roots, alpn_protocols = alpn}, timeout = timeout}
 }
 
-@(private)
 http102_client :: proc(t: ^testing.T, config: Config, limits: HTTP_Origin_Limits) -> ^HTTP_Client {
 	client := new(HTTP_Client)
 	error := http_client_init(client, config, limits, context.allocator)
@@ -438,7 +435,6 @@ http102_client :: proc(t: ^testing.T, config: Config, limits: HTTP_Origin_Limits
 	return client
 }
 
-@(private)
 http102_roots :: proc(t: ^testing.T, path: string) -> ^tls.Root_Pool {
 	pool := new(tls.Root_Pool)
 	load_error := tls.root_pool_load_file(pool, path)
@@ -452,7 +448,6 @@ http102_roots :: proc(t: ^testing.T, path: string) -> ^tls.Root_Pool {
 	return pool
 }
 
-@(private)
 http102_url :: proc(dst: []u8, port: int, path: string) -> string {
 	n := copy(dst, "https://localhost:")
 	port_text := strconv.write_int(dst[n:], i64(port), 10)
@@ -462,7 +457,6 @@ http102_url :: proc(dst: []u8, port: int, path: string) -> string {
 	return string(dst[:n])
 }
 
-@(private)
 http102_body_is :: proc(body: []u8, n: int, value: u8) -> bool {
 	if len(body) != n {
 		return false
@@ -477,7 +471,6 @@ http102_body_is :: proc(body: []u8, n: int, value: u8) -> bool {
 	return true
 }
 
-@(private)
 http102_build :: proc(t: ^testing.T) -> bool {
 	process, start_error := os.process_start(
 		{
@@ -498,7 +491,6 @@ http102_build :: proc(t: ^testing.T) -> bool {
 	return wait_error == nil && state.exit_code == 0
 }
 
-@(private)
 http102_go :: proc() -> string {
 	if os.exists("/opt/homebrew/bin/go") {
 		return "/opt/homebrew/bin/go"
@@ -507,7 +499,6 @@ http102_go :: proc() -> string {
 	return "/opt/homebrew/Cellar/go/1.26.2/bin/go"
 }
 
-@(private)
 http102_start :: proc(t: ^testing.T, mode: string) -> ^Http102_Peer {
 	peer := new(Http102_Peer)
 	read_end, write_end, pipe_error := os.pipe()
@@ -568,7 +559,6 @@ http102_start :: proc(t: ^testing.T, mode: string) -> ^Http102_Peer {
 	return peer
 }
 
-@(private)
 http102_stop :: proc(peer: ^Http102_Peer) {
 	if peer == nil || !peer.up {
 		return
@@ -590,7 +580,6 @@ http102_stop :: proc(peer: ^Http102_Peer) {
 	}
 }
 
-@(private)
 http102_read_log :: proc(log: ^Http102_Log) {
 	buf: [512]u8
 
@@ -616,7 +605,6 @@ http102_read_log :: proc(log: ^Http102_Log) {
 	}
 }
 
-@(private)
 http102_count :: proc(log: ^Http102_Log, needle: string) -> int {
 	sync.lock(&log.mu)
 	defer sync.unlock(&log.mu)
@@ -638,7 +626,6 @@ http102_count :: proc(log: ^Http102_Log, needle: string) -> int {
 	return count
 }
 
-@(private)
 http102_wait_int :: proc(log: ^Http102_Log, key: string, budget: time.Duration) -> (int, bool) {
 	deadline := time.time_add(time.now(), budget)
 
@@ -655,7 +642,6 @@ http102_wait_int :: proc(log: ^Http102_Log, key: string, budget: time.Duration) 
 	return http102_find_int(log, key)
 }
 
-@(private)
 http102_find_int :: proc(log: ^Http102_Log, key: string) -> (int, bool) {
 	sync.lock(&log.mu)
 	defer sync.unlock(&log.mu)

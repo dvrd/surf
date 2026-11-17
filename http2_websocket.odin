@@ -25,7 +25,6 @@ HTTP2_Tunnel :: struct {
 	_inputs:                         [HTTP_STREAM_SLOTS]HTTP2_Tunnel_Input,
 	_head, _count:                   int,
 }
-@(private)
 HTTP2_Tunnel_Input :: struct {
 	owner:  h2.Incoming_Data,
 	credit: h2.Data_Token,
@@ -203,7 +202,6 @@ websocket_http2_open :: proc(
 	return {}
 }
 
-@(private)
 h2_tunnel_find :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) -> ^HTTP2_Tunnel {
 	for stream in lane.tunnels {
 		if stream != nil && stream._handle == handle {
@@ -213,7 +211,6 @@ h2_tunnel_find :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) -> ^HTTP2_Tun
 
 	return nil
 }
-@(private)
 h2_tunnel_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> (handled, taken: bool, error: HTTP_Error) {
 	#partial switch value in event.payload {
 	case h2.Headers_Event:
@@ -296,7 +293,6 @@ h2_tunnel_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> (handled, tak
 
 	return false, false, {}
 }
-@(private)
 h2_tunnel_progress :: proc(stream: ^HTTP2_Tunnel, read: bool, force_read: bool = false) -> HTTP_Error {
 	lane := stream._lane
 
@@ -358,7 +354,6 @@ h2_tunnel_progress :: proc(stream: ^HTTP2_Tunnel, read: bool, force_read: bool =
 
 	return h2_feed(lane, empty[:], lane.read_buf[:n])
 }
-@(private)
 h2_tunnel_read :: proc(data: rawptr, destination: []u8) -> (int, WebSocket_Stream_Error) {
 	stream := cast(^HTTP2_Tunnel)data
 
@@ -407,7 +402,6 @@ h2_tunnel_read :: proc(data: rawptr, destination: []u8) -> (int, WebSocket_Strea
 		}
 	}
 }
-@(private)
 h2_tunnel_write :: proc(data: rawptr, source: []u8) -> (int, WebSocket_Stream_Error) {
 	stream := cast(^HTTP2_Tunnel)data
 
@@ -442,7 +436,6 @@ h2_tunnel_write :: proc(data: rawptr, source: []u8) -> (int, WebSocket_Stream_Er
 		}
 	}
 }
-@(private)
 h2_tunnel_detach :: proc(stream: ^HTTP2_Tunnel) {
 	lane := stream._lane
 
@@ -480,7 +473,6 @@ h2_tunnel_detach :: proc(stream: ^HTTP2_Tunnel) {
 	stream._closed = true
 	stream._count = 0
 }
-@(private)
 h2_tunnel_abort :: proc(data: rawptr) -> WebSocket_Stream_Error {
 	stream := cast(^HTTP2_Tunnel)data
 
@@ -495,7 +487,6 @@ h2_tunnel_abort :: proc(data: rawptr) -> WebSocket_Stream_Error {
 
 	return {}
 }
-@(private)
 h2_tunnel_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 	stream := cast(^HTTP2_Tunnel)data
 
@@ -528,14 +519,12 @@ h2_tunnel_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 
 	return {}
 }
-@(private)
 h2_tunnel_read_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
 	stream := cast(^HTTP2_Tunnel)data
 	stream._read_deadline = deadline
 
 	return {}
 }
-@(private)
 h2_tunnel_write_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
 	stream := cast(^HTTP2_Tunnel)data
 	stream._write_deadline = deadline
@@ -543,7 +532,6 @@ h2_tunnel_write_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket
 	return {}
 }
 
-@(private)
 h2_tunnel_retired :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) -> bool {
 	for retired in lane.closed_tunnels {
 		if retired == handle {
@@ -553,7 +541,6 @@ h2_tunnel_retired :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) -> bool {
 
 	return false
 }
-@(private)
 h2_tunnel_reap :: proc(lane: ^HTTP_Lane) {
 	if lane == nil || !lane.engine_up {
 		return
@@ -572,7 +559,6 @@ h2_tunnel_reap :: proc(lane: ^HTTP_Lane) {
 	}
 }
 
-@(private)
 h2_tunnel_stream_error :: proc(error: HTTP_Error) -> WebSocket_Stream_Error {
 	if error.tls_io.kind != .None {
 		return {kind = .TLS_Failed, tls = error.tls_io}
@@ -598,7 +584,6 @@ h2_tunnel_stream_error :: proc(error: HTTP_Error) -> WebSocket_Stream_Error {
 // Shared by the HTTP/2 and HTTP/3 Extended CONNECT openers.
 
 // The client timeout bounds the open; a shorter handshake timeout wins.
-@(private)
 websocket_tunnel_deadline :: proc(config: Config, handshake_timeout: time.Duration) -> time.Time {
 	now := time.now()
 	timeout := effective_timeout(config)
@@ -611,7 +596,6 @@ websocket_tunnel_deadline :: proc(config: Config, handshake_timeout: time.Durati
 }
 
 // Comma-joined sec-websocket-protocol value; false when it does not fit dst.
-@(private)
 websocket_protocols_join :: proc(dst: []u8, subprotocols: []string) -> (string, bool) {
 	used := 0
 
@@ -635,7 +619,6 @@ websocket_protocols_join :: proc(dst: []u8, subprotocols: []string) -> (string, 
 }
 
 // Records the peer-selected subprotocol; false unless it was offered and fits.
-@(private)
 websocket_subprotocol_accept :: proc(conn: ^WebSocket_Conn, offered: []string, selected: string) -> bool {
 	found := false
 

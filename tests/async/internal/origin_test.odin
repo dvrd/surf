@@ -132,7 +132,6 @@ identity_allocator :: proc(
 identity_backing :: proc(s: ^Identity_Grant_Probe) -> mem.Allocator {
 	return {procedure = identity_allocator, data = s}
 }
-@(private)
 identity_test_offers: [1]string = {"http/1.1"}
 identity_config :: proc() -> Normalized_Config {
 	result, error := config_normalize(

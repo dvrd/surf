@@ -49,17 +49,14 @@ budget_validate :: proc(input: Budget) -> surf.HTTP_Error {
 	return {}
 }
 
-@(private)
 Exchange_Step :: enum {
 	Continue,
 	Waiting,
 	Barrier,
 }
-@(private)
 exchange_valid :: proc(x: ^Exchange) -> bool {
 	return x != nil && x._self == x
 }
-@(private)
 exchange_pending_error :: proc() -> surf.HTTP_Error {
 	return {kind = .Invalid_Config, transport = {kind = .Operation_Pending}, phase = .Configuration}
 }
@@ -178,7 +175,6 @@ exchange_begin :: proc(
 	return {}
 }
 
-@(private)
 exchange_fail :: proc(x: ^Exchange, error: surf.HTTP_Error) {
 	if x._failure.kind == .None {
 		x._failure = error
@@ -187,7 +183,6 @@ exchange_fail :: proc(x: ^Exchange, error: surf.HTTP_Error) {
 	x._reuse_eligible = false
 	x._phase = .Draining
 }
-@(private)
 exchange_error :: proc(x: ^Exchange) -> surf.HTTP_Error {
 	effect: surf.HTTP_Write_Effect = .Unknown
 
@@ -199,7 +194,6 @@ exchange_error :: proc(x: ^Exchange) -> surf.HTTP_Error {
 
 	return surf.http_error_classify(x._failure, .Read, effect, x._response.status)
 }
-@(private)
 exchange_check_budget :: proc(x: ^Exchange, now: i64, cancelled: bool) {
 	if x._failure.kind != .None {
 		return
@@ -212,7 +206,6 @@ exchange_check_budget :: proc(x: ^Exchange, now: i64, cancelled: bool) {
 		exchange_fail(x, {kind = .Deadline_Failed, transport = {kind = .Timeout}, phase = .Deadline})
 	}
 }
-@(private)
 exchange_drain :: proc(x: ^Exchange) -> bool {
 	if x._write.ready {
 		error := exchange_write_result(x)
@@ -449,7 +442,6 @@ exchange_destroy :: proc(x: ^Exchange) -> surf.HTTP_Error {
 	return {} // No owner access after an arbitrary physical free.
 }
 
-@(private)
 exchange_grant :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u8, surf.HTTP_Error) {
 	if size < 0 || allocator.procedure == nil {
 		return nil, {kind = .Invalid_Config}
@@ -479,13 +471,11 @@ exchange_grant :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u8,
 
 	return grant, {}
 }
-@(private)
 exchange_free :: proc(grant: []u8, alignment: int, allocator: mem.Allocator) {
 	if raw_data(grant) != nil {
 		_, _ = allocator.procedure(allocator.data, .Free, 0, alignment, raw_data(grant), len(grant))
 	}
 }
-@(private)
 exchange_response_empty :: proc(r: ^surf.Response) -> bool {
 	return(
 		r != nil &&
@@ -499,7 +489,6 @@ exchange_response_empty :: proc(r: ^surf.Response) -> bool {
 		r._allocator_scope == {} \
 	)
 }
-@(private)
 exchange_overlap :: proc(a: rawptr, an: int, b: rawptr, bn: int) -> bool {
 	if an <= 0 || bn <= 0 {
 		return false
@@ -509,7 +498,6 @@ exchange_overlap :: proc(a: rawptr, an: int, b: rawptr, bn: int) -> bool {
 
 	return (av <= bv && bv - av < uintptr(an)) || (bv < av && av - bv < uintptr(bn))
 }
-@(private)
 exchange_aliases :: proc(x: ^Exchange, request: http.Request) -> bool {
 	if exchange_overlap(x, size_of(Exchange), raw_data(request.url), len(request.url)) ||
 	   exchange_overlap(x, size_of(Exchange), raw_data(request.body), len(request.body)) {
@@ -533,7 +521,6 @@ exchange_aliases :: proc(x: ^Exchange, request: http.Request) -> bool {
 	return false
 }
 
-@(private)
 exchange_copy_head :: proc(x: ^Exchange) -> surf.HTTP_Error {
 	storage, error := exchange_grant(x._response_head_used, 1, x._allocator)
 
@@ -574,7 +561,6 @@ exchange_copy_head :: proc(x: ^Exchange) -> surf.HTTP_Error {
 
 // Growth publishes the new owner before freeing old storage. _busy excludes
 // reentrant public mutation until the caller returns a fresh-clock barrier.
-@(private)
 exchange_grow_body :: proc(x: ^Exchange, needed: int) -> (bool, surf.HTTP_Error) {
 	body := x._response.body_storage
 
@@ -609,7 +595,6 @@ exchange_grow_body :: proc(x: ^Exchange, needed: int) -> (bool, surf.HTTP_Error)
 
 	return true, {}
 }
-@(private)
 exchange_append_body :: proc(x: ^Exchange, source: []u8) -> (bool, surf.HTTP_Error) {
 	length := len(x._response.body_storage)
 
@@ -648,7 +633,6 @@ exchange_phase :: proc(x: ^Exchange) -> (Exchange_Phase, bool) {
 	}
 }
 
-@(private)
 exchange_fill :: proc(x: ^Exchange) -> Exchange_Step {
 	if x._read_at < x._read_used {
 		return .Continue
@@ -714,7 +698,6 @@ exchange_fill :: proc(x: ^Exchange) -> Exchange_Step {
 
 	return .Waiting
 }
-@(private)
 exchange_head_step :: proc(x: ^Exchange) -> Exchange_Step {
 	if x._response_head_used == HEAD_BUFFER_SIZE {
 		exchange_fail(x, {kind = .Header_Oversized, phase = .Protocol})
@@ -794,7 +777,6 @@ exchange_head_step :: proc(x: ^Exchange) -> Exchange_Step {
 
 	return .Continue
 }
-@(private)
 exchange_body_finished :: proc(x: ^Exchange) -> Exchange_Step {
 	// Surplus belongs to the retiring stream, never to a future request. The
 	// completed HTTP response is still valid, but its connection is not reusable.
@@ -806,7 +788,6 @@ exchange_body_finished :: proc(x: ^Exchange) -> Exchange_Step {
 
 	return .Barrier // Fresh caller monotonic sample before publishing success.
 }
-@(private)
 exchange_body_step :: proc(x: ^Exchange) -> Exchange_Step {
 	if x._head.framing == .None || x._head.framing == .Length && x._body_remaining == 0 {
 		return exchange_body_finished(x)
@@ -942,7 +923,6 @@ stream_exchange_begin :: proc(
 	return {}
 }
 
-@(private)
 stream_encoding :: proc(x: ^Stream_Exchange) -> surf.HTTP_Error {
 	x.decoded = false
 
@@ -992,7 +972,6 @@ stream_encoding :: proc(x: ^Stream_Exchange) -> surf.HTTP_Error {
 	return {}
 }
 
-@(private)
 stream_copy_head :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	if error := exchange_copy_head(&x.base); error.kind != .None {
 		exchange_fail(&x.base, error)
@@ -1165,7 +1144,6 @@ stream_exchange_take_redirect :: proc(x: ^Stream_Exchange, destination: ^surf.Re
 	return true
 }
 
-@(private)
 stream_entity_step :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	if x.encoded_at < x.encoded_used || x.entity_done {
 		return .Continue
@@ -1237,7 +1215,6 @@ stream_entity_step :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	return .Continue
 }
 
-@(private)
 stream_publish_head :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	if !x.head_pending {
 		return .Continue
@@ -1274,7 +1251,6 @@ stream_publish_head :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	return .Continue
 }
 
-@(private)
 stream_body_step :: proc(x: ^Stream_Exchange, work: ^int) -> Exchange_Step {
 	if x.rx_done {
 		return .Waiting
@@ -1405,7 +1381,6 @@ Stream_Exchange :: struct {
 	status:                                                      int,
 }
 
-@(private)
 stream_write_ready :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	base := &x.base
 	result := base._write.result
@@ -1439,7 +1414,6 @@ stream_write_ready :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	return .Continue
 }
 
-@(private)
 stream_stop_upload :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	base := &x.base
 
@@ -1469,7 +1443,6 @@ stream_stop_upload :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	return .Continue
 }
 
-@(private)
 stream_write_step :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	base := &x.base
 
@@ -1657,7 +1630,6 @@ Exchange :: struct {
 	_cancelled, _peer_eof, _reuse_eligible, _result_taken: bool,
 }
 
-@(private)
 exchange_operation_done :: proc(op: ^net.Async_Operation) {
 	state := cast(^Operation_State)op.user_data
 	x := state.owner
@@ -1672,7 +1644,6 @@ exchange_operation_done :: proc(op: ^net.Async_Operation) {
 
 	// Notification may reenter its owner; no operation/Exchange access follows.
 }
-@(private)
 exchange_write_result :: proc(x: ^Exchange) -> surf.HTTP_Error {
 	if !x._write.ready {
 		return {}
@@ -1708,7 +1679,6 @@ exchange_write_result :: proc(x: ^Exchange) -> surf.HTTP_Error {
 
 	return {}
 }
-@(private)
 exchange_write_step :: proc(x: ^Exchange) -> Exchange_Step {
 	if x._write.accepted {
 		return .Waiting

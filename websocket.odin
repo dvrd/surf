@@ -416,7 +416,6 @@ websocket_set_deadline :: proc(conn: ^WebSocket_Conn, deadline: time.Time) -> We
 
 WebSocket_MAX_CONTROL_FRAMES_WITHOUT_MESSAGE :: 1024
 
-@(private)
 WebSocket_STACK_FRAME_PAYLOAD :: 2048
 
 WebSocket_Conn_Phase :: enum {
@@ -926,7 +925,6 @@ websocket_release_message :: proc(conn: ^WebSocket_Conn) {
 }
 
 // Wire size of a frame header, known from its second byte.
-@(private)
 websocket_frame_header_size :: proc(second: u8) -> int {
 	size := 2
 
@@ -945,7 +943,6 @@ websocket_frame_header_size :: proc(second: u8) -> int {
 }
 
 // Writes code and reason into dst and validates the result as a close payload.
-@(private)
 websocket_close_payload :: proc(dst: ^[125]u8, code: u16, reason: string) -> (int, websocket.Frame_Error) {
 	if len(reason) > 123 {
 		return 0, .Control_Payload_Oversized
@@ -958,7 +955,6 @@ websocket_close_payload :: proc(dst: ^[125]u8, code: u16, reason: string) -> (in
 }
 
 // Close code sent for a peer close payload that failed validation.
-@(private)
 websocket_close_validation_code :: proc(frame_err: websocket.Frame_Error) -> u16 {
 	if frame_err == .Invalid_UTF8 {
 		return 1007
@@ -968,7 +964,6 @@ websocket_close_validation_code :: proc(frame_err: websocket.Frame_Error) -> u16
 }
 
 // 1005 means no status was present; it is never sent as a wire code.
-@(private)
 websocket_close_code :: proc(body: []u8) -> u16 {
 	if len(body) < 2 {
 		return 1005
@@ -978,7 +973,6 @@ websocket_close_code :: proc(body: []u8) -> u16 {
 }
 
 // Close codes that end a connection without reporting a peer error.
-@(private)
 websocket_close_code_normal :: proc(code: u16) -> bool {
 	switch code {
 	case 1000, 1001, 1005:

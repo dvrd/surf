@@ -169,14 +169,12 @@ WebSocket_Async_Phase :: enum {
 	Terminal,
 }
 
-@(private)
 WebSocket_Async_IO :: enum {
 	Idle,
 	Pending,
 	Done,
 }
 
-@(private)
 WebSocket_Async_Writer :: enum {
 	None,
 	Request,
@@ -184,7 +182,6 @@ WebSocket_Async_Writer :: enum {
 	Control,
 }
 
-@(private)
 websocket_async_limits :: proc(config: WebSocket_Async_Config) -> (WebSocket_Async_Config, WebSocket_Async_Error) {
 	settings := config
 	if settings.target == "" {
@@ -254,7 +251,6 @@ websocket_async_limits :: proc(config: WebSocket_Async_Config) -> (WebSocket_Asy
 	return settings, {}
 }
 
-@(private)
 websocket_async_name :: proc(host: string) -> string {
 	if len(host) == 0 || host[0] == '[' {
 		return ""
@@ -307,7 +303,6 @@ websocket_async_bind :: proc(
 	return {}
 }
 
-@(private)
 websocket_async_owner_ok :: proc(session: ^WebSocket_Async) -> bool {
 	if session == nil || !session.bound {
 		return false
@@ -470,12 +465,10 @@ websocket_async_subprotocol :: proc(session: ^WebSocket_Async) -> string {
 	return cast(string)session.selected_protocol[:session.selected_protocol_size]
 }
 
-@(private)
 websocket_async_cancelled :: proc(op: ^WebSocket_Async_Op) -> bool {
 	return op != nil && op.pending && intrinsics.atomic_load(&op.cancel_flag) != 0
 }
 
-@(private)
 websocket_async_message_error :: proc(error: websocket.Message_Error) -> WebSocket_Async_Error {
 	kind := WebSocket_Async_Error_Kind.Protocol_Failed
 
@@ -497,7 +490,6 @@ websocket_async_message_error :: proc(error: websocket.Message_Error) -> WebSock
 	return {kind = kind, message = error.kind}
 }
 
-@(private)
 websocket_async_complete :: proc(op: ^WebSocket_Async_Op, error: WebSocket_Async_Error) {
 	if op == nil || !op.pending {
 		return
@@ -577,7 +569,6 @@ websocket_async_on_cancel :: proc(data: rawptr) -> runtime_async.Resume_Result {
 	return result
 }
 
-@(private)
 websocket_async_connect :: proc(session: ^WebSocket_Async) -> runtime_async.Resume_Result {
 	if websocket_async_cancelled(session.upgrade_op) || session.task_cancelled {
 		websocket_async_finish_early(session, {kind = .Cancelled})
@@ -625,7 +616,6 @@ websocket_async_connect :: proc(session: ^WebSocket_Async) -> runtime_async.Resu
 	return .Yield
 }
 
-@(private)
 websocket_async_wrap :: proc(session: ^WebSocket_Async, socket: runtime_async.Socket) -> WebSocket_Async_Error {
 	if error := adapter.init_executor(&session.loop, session.runtime, &session.task, {}); error.kind != .None {
 		return websocket_async_runtime_error(error)
@@ -694,7 +684,6 @@ websocket_async_wrap :: proc(session: ^WebSocket_Async, socket: runtime_async.So
 	return {}
 }
 
-@(private)
 websocket_async_handshake_done :: proc(op: ^tls.Async_Handshake_Operation) {
 	session := cast(^WebSocket_Async)op.user_data
 	session.handshake_error = op.result
@@ -702,7 +691,6 @@ websocket_async_handshake_done :: proc(op: ^tls.Async_Handshake_Operation) {
 	session.handshake_ready = true
 }
 
-@(private)
 websocket_async_read_done :: proc(op: ^net.Async_Operation) {
 	session := cast(^WebSocket_Async)op.user_data
 	session.inbox_at = 0
@@ -711,7 +699,6 @@ websocket_async_read_done :: proc(op: ^net.Async_Operation) {
 	session.read_state = .Done
 }
 
-@(private)
 websocket_async_write_done :: proc(op: ^net.Async_Operation) {
 	session := cast(^WebSocket_Async)op.user_data
 	session.wire_len = op.result.count
@@ -719,14 +706,12 @@ websocket_async_write_done :: proc(op: ^net.Async_Operation) {
 	session.write_state = .Done
 }
 
-@(private)
 websocket_async_close_done :: proc(op: ^net.Async_Operation) {
 	session := cast(^WebSocket_Async)op.user_data
 	session.read_error = op.result.err
 	session.close_state = .Done
 }
 
-@(private)
 websocket_async_pump :: proc(session: ^WebSocket_Async) -> bool {
 	progressed := false
 
@@ -743,7 +728,6 @@ websocket_async_pump :: proc(session: ^WebSocket_Async) -> bool {
 	return progressed
 }
 
-@(private)
 websocket_async_step :: proc(session: ^WebSocket_Async) -> bool {
 	if session.phase == .Terminal {
 		return false
@@ -807,7 +791,6 @@ websocket_async_step :: proc(session: ^WebSocket_Async) -> bool {
 	return false
 }
 
-@(private)
 websocket_async_secure_step :: proc(session: ^WebSocket_Async) -> bool {
 	if !session.handshake_ready {
 		return false
@@ -863,7 +846,6 @@ websocket_async_secure_step :: proc(session: ^WebSocket_Async) -> bool {
 	return true
 }
 
-@(private)
 websocket_async_upgrade_step :: proc(session: ^WebSocket_Async) -> bool {
 	if session.upgrade_op == nil {
 		return false
@@ -950,7 +932,6 @@ websocket_async_upgrade_step :: proc(session: ^WebSocket_Async) -> bool {
 	return websocket_async_arm_upgrade_read(session)
 }
 
-@(private)
 websocket_async_take_upgrade :: proc(session: ^WebSocket_Async) -> bool {
 	if session.read_state == .Done {
 		error := session.read_error
@@ -977,7 +958,6 @@ websocket_async_take_upgrade :: proc(session: ^WebSocket_Async) -> bool {
 	return true
 }
 
-@(private)
 websocket_async_arm_upgrade_read :: proc(session: ^WebSocket_Async) -> bool {
 	if session.read_state == .Pending {
 		return false
@@ -995,7 +975,6 @@ websocket_async_arm_upgrade_read :: proc(session: ^WebSocket_Async) -> bool {
 	return session.phase == .Failed
 }
 
-@(private)
 websocket_async_open_step :: proc(session: ^WebSocket_Async) -> bool {
 	if websocket_async_cancelled(session.read_op) {
 		if session.read_state == .Pending {
@@ -1103,7 +1082,6 @@ websocket_async_open_step :: proc(session: ^WebSocket_Async) -> bool {
 	return false
 }
 
-@(private)
 websocket_async_parse :: proc(session: ^WebSocket_Async) -> bool {
 	progressed := false
 
@@ -1205,7 +1183,6 @@ websocket_async_parse :: proc(session: ^WebSocket_Async) -> bool {
 	}
 }
 
-@(private)
 websocket_async_fill_payload :: proc(session: ^WebSocket_Async) -> bool {
 	if session.inbox_at >= session.inbox_len {
 		return false
@@ -1247,7 +1224,6 @@ websocket_async_fill_payload :: proc(session: ^WebSocket_Async) -> bool {
 	return true
 }
 
-@(private)
 websocket_async_finish_control :: proc(session: ^WebSocket_Async, body: []u8) -> bool {
 	session.payload_need = 0
 	#partial switch session.header.opcode {
@@ -1293,7 +1269,6 @@ websocket_async_finish_control :: proc(session: ^WebSocket_Async, body: []u8) ->
 	return true
 }
 
-@(private)
 websocket_async_deliver :: proc(session: ^WebSocket_Async) {
 	op := session.read_op
 	session.read_op = nil
@@ -1316,7 +1291,6 @@ websocket_async_deliver :: proc(session: ^WebSocket_Async) {
 	websocket_async_complete(op, {n = n})
 }
 
-@(private)
 websocket_async_control_opcode :: proc(opcode: websocket.Opcode) -> bool {
 	#partial switch opcode {
 	case .Close, .Ping, .Pong:
@@ -1326,7 +1300,6 @@ websocket_async_control_opcode :: proc(opcode: websocket.Opcode) -> bool {
 	return false
 }
 
-@(private)
 websocket_async_pull_header :: proc(session: ^WebSocket_Async, need: int) -> bool {
 	for session.header_have < need && session.inbox_at < session.inbox_len {
 		session.header_raw[session.header_have] = session.inbox[session.inbox_at]
@@ -1337,7 +1310,6 @@ websocket_async_pull_header :: proc(session: ^WebSocket_Async, need: int) -> boo
 	return session.header_have >= need
 }
 
-@(private)
 websocket_async_header_need :: proc(session: ^WebSocket_Async) -> int {
 	if session.header_have < 2 {
 		return 2
@@ -1346,7 +1318,6 @@ websocket_async_header_need :: proc(session: ^WebSocket_Async) -> int {
 	return websocket_frame_header_size(session.header_raw[1])
 }
 
-@(private)
 websocket_async_send_next :: proc(session: ^WebSocket_Async) -> bool {
 	if session.write_state != .Idle || session.phase == .Failed {
 		return false
@@ -1391,7 +1362,6 @@ websocket_async_send_next :: proc(session: ^WebSocket_Async) -> bool {
 	return websocket_async_arm_frame(session, opcode, remain[:chunk], fin, .Frame)
 }
 
-@(private)
 websocket_async_arm_frame :: proc(
 	session: ^WebSocket_Async,
 	opcode: websocket.Opcode,
@@ -1419,7 +1389,6 @@ websocket_async_arm_frame :: proc(
 	return websocket_async_arm_write(session, session.wire[:size], writer)
 }
 
-@(private)
 websocket_async_finish_write :: proc(session: ^WebSocket_Async) {
 	writer := session.writer
 	error := session.write_error
@@ -1470,7 +1439,6 @@ websocket_async_finish_write :: proc(session: ^WebSocket_Async) {
 	}
 }
 
-@(private)
 websocket_async_dequeue :: proc(session: ^WebSocket_Async) {
 	if session.queue_count == 0 {
 		return
@@ -1482,7 +1450,6 @@ websocket_async_dequeue :: proc(session: ^WebSocket_Async) {
 	session.queue_bytes -= len(op.buffer)
 }
 
-@(private)
 websocket_async_discard_queue :: proc(session: ^WebSocket_Async) {
 	for session.queue_count > 0 {
 		op := session.queue[session.queue_head]
@@ -1494,7 +1461,6 @@ websocket_async_discard_queue :: proc(session: ^WebSocket_Async) {
 	session.fragment_len = 0
 }
 
-@(private)
 websocket_async_arm_read :: proc(session: ^WebSocket_Async) -> bool {
 	if session.read_state != .Idle || session.phase == .Failed || session.phase == .Terminal {
 		return false
@@ -1518,7 +1484,6 @@ websocket_async_arm_read :: proc(session: ^WebSocket_Async) -> bool {
 	return true
 }
 
-@(private)
 websocket_async_arm_write :: proc(session: ^WebSocket_Async, src: []u8, writer: WebSocket_Async_Writer) -> bool {
 	if session.write_state != .Idle {
 		return false
@@ -1536,7 +1501,6 @@ websocket_async_arm_write :: proc(session: ^WebSocket_Async, src: []u8, writer: 
 	return true
 }
 
-@(private)
 websocket_async_stream :: proc(session: ^WebSocket_Async) -> net.Async_Connection {
 	if session.tls_ready {
 		return tls.async_connection(&session.secure_conn)
@@ -1545,7 +1509,6 @@ websocket_async_stream :: proc(session: ^WebSocket_Async) -> net.Async_Connectio
 	return adapter.stream(&session.transport)
 }
 
-@(private)
 websocket_async_finish_early :: proc(session: ^WebSocket_Async, error: WebSocket_Async_Error) {
 	websocket_async_fail(session, error)
 
@@ -1558,7 +1521,6 @@ websocket_async_finish_early :: proc(session: ^WebSocket_Async, error: WebSocket
 	session.phase = .Terminal
 }
 
-@(private)
 websocket_async_fail :: proc(session: ^WebSocket_Async, error: WebSocket_Async_Error) {
 	if session.phase == .Failed || session.phase == .Terminal {
 		return
@@ -1567,7 +1529,6 @@ websocket_async_fail :: proc(session: ^WebSocket_Async, error: WebSocket_Async_E
 	session.phase = .Failed
 }
 
-@(private)
 websocket_async_fail_ops :: proc(session: ^WebSocket_Async, error: WebSocket_Async_Error) {
 	upgrade := session.upgrade_op
 	read := session.read_op
@@ -1595,7 +1556,6 @@ websocket_async_fail_ops :: proc(session: ^WebSocket_Async, error: WebSocket_Asy
 	websocket_async_complete(close, error)
 }
 
-@(private)
 websocket_async_begin_transport_close :: proc(session: ^WebSocket_Async) {
 	if session.close_started {
 		return
@@ -1614,7 +1574,6 @@ websocket_async_begin_transport_close :: proc(session: ^WebSocket_Async) {
 	}
 }
 
-@(private)
 websocket_async_release :: proc(session: ^WebSocket_Async) {
 	if session.released {
 		return
@@ -1623,7 +1582,6 @@ websocket_async_release :: proc(session: ^WebSocket_Async) {
 	websocket.message_release(&session.message)
 }
 
-@(private)
 websocket_async_runtime_error :: proc(error: runtime_async.Error) -> WebSocket_Async_Error {
 	kind := WebSocket_Async_Error_Kind.IO_Failed
 	if error.kind == .Timeout {
@@ -1646,7 +1604,6 @@ websocket_async_runtime_error :: proc(error: runtime_async.Error) -> WebSocket_A
 	return {kind = kind, transport = transport}
 }
 
-@(private)
 websocket_async_net_error :: proc(error: net.Connection_Error) -> WebSocket_Async_Error {
 	kind := WebSocket_Async_Error_Kind.IO_Failed
 	if error.kind == .Timeout {
@@ -1665,7 +1622,6 @@ websocket_async_net_error :: proc(error: net.Connection_Error) -> WebSocket_Asyn
 	return {kind = kind, transport = error}
 }
 
-@(private)
 websocket_async_upgrade_io :: proc(error: net.Connection_Error) -> WebSocket_Async_Error {
 	mapped := websocket_async_net_error(error)
 	if mapped.kind == .IO_Failed || mapped.kind == .EOF {

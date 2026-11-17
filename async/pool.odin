@@ -15,7 +15,6 @@ import "core:net"
 import scopes "core:sync/budget"
 import "core:time"
 
-@(private)
 pool_session_locked :: proc(k: ^Kernel, handle: Cell_Handle) -> ^Session_Model {
 	if handle.slot == 0 || u64(handle.slot) > u64(len(k.sessions)) || handle.generation == 0 {
 		return nil
@@ -29,7 +28,6 @@ pool_session_locked :: proc(k: ^Kernel, handle: Cell_Handle) -> ^Session_Model {
 
 	return slot
 }
-@(private)
 pool_expired :: proc(s: ^Session_Model, k: ^Kernel, now: i64) -> bool {
 	// Compare elapsed intervals without signed subtraction overflow. Future times
 	// are not expired; caller supplies one monotonic clock domain.
@@ -47,7 +45,6 @@ Pool_Selection :: struct {
 	new_origin, new_session, waiting: bool,
 }
 
-@(private)
 pool_select_locked :: proc(k: ^Kernel, key: Origin_Key, now: i64, allow_new: bool) -> (Pool_Selection, Client_Error) {
 	if k == nil || k.self != k {
 		return {}, {kind = .Invalid_State}
@@ -459,7 +456,6 @@ origin_destroy :: proc(owner: ^Prepared_Origin) {
 	kernel_free(storage, 1, allocator)
 }
 
-@(private)
 network_alias :: proc(s: ^Client_State, p: rawptr, n: int) -> bool {
 	return(
 		ranges_overlap(p, n, s, size_of(Client_State)) ||
@@ -469,7 +465,6 @@ network_alias :: proc(s: ^Client_State, p: rawptr, n: int) -> bool {
 		ranges_overlap(p, n, raw_data(s.dns_ids), len(s.dns_ids) * size_of(u16)) \
 	)
 }
-@(private)
 network_saturate :: proc(counter: ^u64, amount: u64) {
 	counter^ += min(amount, max(u64) - counter^)
 }
@@ -861,7 +856,6 @@ network_queue_changed_locked :: proc(s: ^Client_State) {
 
 // State.mu is held. The exact generation is cleared BEFORE physical disposal;
 // unused reserved draws are burned, never put back in the fresh-ID ring.
-@(private)
 network_queue_forget_locked :: proc(s: ^Client_State, handle: Request_Handle) {
 	if handle.owner_id != s.kernel.owner_id || handle.slot == 0 || u64(handle.slot) > u64(len(s.requests)) {
 		return
@@ -1089,7 +1083,6 @@ network_queue_committed_locked :: proc(
 	return {}
 }
 
-@(private)
 pool_dispatchable :: proc(request: ^Request_Slot, now: i64, allow_waiting_dns: bool = false) -> bool {
 	return(
 		request != nil &&
@@ -1099,7 +1092,6 @@ pool_dispatchable :: proc(request: ^Request_Slot, now: i64, allow_waiting_dns: b
 		(request.deadline.at == 0 || now < request.deadline.at) \
 	)
 }
-@(private)
 pool_head_locked :: proc(k: ^Kernel, origin: Cell_Handle, now: i64, allow_waiting_dns: bool = false) -> ^Request_Slot {
 	slot := &k.origins[int(origin.slot) - 1]
 
@@ -1115,7 +1107,6 @@ pool_head_locked :: proc(k: ^Kernel, origin: Cell_Handle, now: i64, allow_waitin
 
 	return request
 }
-@(private)
 pool_assign_locked :: proc(
 	k: ^Kernel,
 	origin: Cell_Handle,
@@ -1307,7 +1298,6 @@ pool_dispatch :: proc(k: ^Kernel, work: int, now: i64) -> (Assignment, int, Clie
 	return {}, used, {kind = .Pending}
 }
 
-@(private)
 pool_deadline :: proc(start, duration: i64) -> i64 {
 	if start > max(i64) - duration {
 		return max(i64)

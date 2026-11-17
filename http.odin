@@ -119,7 +119,6 @@ execute :: proc(request: http.Request, config: Config, allocator := context.allo
 	return execute_with_upload(request, config, nil, allocator)
 }
 
-@(private)
 execute_with_upload :: proc(
 	request: http.Request,
 	config: Config,
@@ -166,7 +165,6 @@ execute_with_upload :: proc(
 	return response, error
 }
 
-@(private)
 execute_internal :: proc(
 	request: http.Request,
 	config: Config,
@@ -359,7 +357,6 @@ execute_tls :: proc(
 
 // HTTP/1.1 over an established TLS connection. The TLS diagnostic behind an I/O
 // failure is kept so classification can tell record failures from transport ones.
-@(private)
 exchange_tls :: proc(
 	connection: ^tls_api.Conn,
 	request: http.Request,
@@ -547,7 +544,6 @@ exchange_scoped :: proc(
 
 // One exchange on a connected stream. A nil upload sends request.body; deadline
 // only bounds upload source reads.
-@(private)
 exchange_run :: proc(
 	stream: trans.Connection,
 	request: http.Request,
@@ -608,13 +604,11 @@ exchange_run :: proc(
 	return response, error
 }
 
-@(private)
 HTTP_Exchange_Outcome :: struct {
 	write_started: bool,
 	status:        int,
 }
 
-@(private)
 exchange_internal :: proc(
 	stream: trans.Connection,
 	request: http.Request,
@@ -663,7 +657,6 @@ exchange_internal :: proc(
 	return exchange_read_response(stream, request, limit, allocator, outcome)
 }
 
-@(private)
 exchange_read_response :: proc(
 	stream: trans.Connection,
 	request: http.Request,
@@ -1293,7 +1286,6 @@ response_take_body :: proc(response: ^Response) -> (chunk: owned.Chunk, error: o
 	return
 }
 
-@(private)
 connection_setup_deadline :: proc(config: Config, total: time.Time) -> time.Time {
 	if config.setup_timeout <= 0 {
 		return total
@@ -1305,7 +1297,6 @@ connection_setup_deadline :: proc(config: Config, total: time.Time) -> time.Time
 	return time.time_add(now, budget)
 }
 
-@(private)
 bounded_socket :: proc(url: http.URL, config: Config, deadline: time.Time) -> (trans.TCP_Socket, HTTP_Error) {
 	endpoints, resolve_error := trans.resolve_endpoints_until(url.host, url.port, deadline, config.resolver)
 
@@ -1322,7 +1313,6 @@ bounded_socket :: proc(url: http.URL, config: Config, deadline: time.Time) -> (t
 	return socket, {}
 }
 
-@(private)
 Budget_Context :: struct {
 	binding:               charged.Binding,
 	stream:                resources.Lease,
@@ -1333,7 +1323,6 @@ Budget_Context :: struct {
 
 // Scope/coverage handles borrow host ownership during entry. An annotation is a
 // trusted host promise about an arena's backing, not inference from its pointer.
-@(private)
 budget_begin :: proc(
 	scope, coverage: resources.Scope,
 	backing: mem.Allocator,
@@ -1393,19 +1382,16 @@ budget_begin :: proc(
 	return ctx, allocator, {}
 }
 
-@(private)
 budget_retain_allocator :: proc(source: mem.Allocator) -> (charged.Binding, HTTP_Error) {
 	binding, error := charged.retain_allocator(source)
 
 	return binding, budget_allocator_error(error)
 }
-@(private)
 budget_create_allocator :: proc(scope: resources.Scope, backing: mem.Allocator) -> (charged.Binding, HTTP_Error) {
 	binding, error := charged.create(scope, {backing = backing})
 
 	return binding, budget_allocator_error(error)
 }
-@(private)
 budget_allocator_error :: proc(error: charged.Error) -> HTTP_Error {
 	if error.kind == .None {
 		return {}
@@ -1419,7 +1405,6 @@ budget_allocator_error :: proc(error: charged.Error) -> HTTP_Error {
 
 	return result
 }
-@(private)
 budget_error :: proc(reason: resources.Error) -> HTTP_Error {
 	kind: http.Error_Kind = .Allocation_Failed
 
@@ -1429,7 +1414,6 @@ budget_error :: proc(reason: resources.Error) -> HTTP_Error {
 
 	return {kind = kind, budget = reason, phase = .Admission, write_effect = .Not_Sent}
 }
-@(private)
 budget_cleanup :: proc(ctx: ^Budget_Context) {
 	old := ctx^
 	ctx^ = {}
@@ -1440,7 +1424,6 @@ budget_cleanup :: proc(ctx: ^Budget_Context) {
 	resources.release_scope(&old.coverage)
 	resources.release(&old.stream)
 }
-@(private)
 budget_response :: proc(ctx: ^Budget_Context, response: ^Response) {
 	response._allocator_scope = ctx.coverage
 	ctx.coverage = {}
@@ -1448,7 +1431,6 @@ budget_response :: proc(ctx: ^Budget_Context, response: ^Response) {
 
 // Called only after the context has reached its final caller-owned stack address.
 // Returned temporary allocator views must not escape the blocking operation.
-@(private)
 budget_temporary :: proc(ctx: ^Budget_Context, allocator: mem.Allocator) -> mem.Allocator {
 	assert(!ctx.temporary_initialized)
 	mem.dynamic_arena_init(

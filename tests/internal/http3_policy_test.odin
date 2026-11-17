@@ -188,7 +188,6 @@ surf_http3_peer_post_bad_cert :: proc(t: ^testing.T) {
 	testing.expect_value(t, error.write_effect, .Not_Sent)
 }
 
-@(private)
 surf_peer_setup :: proc(
 	t: ^testing.T,
 	bogus: bool,
@@ -228,7 +227,6 @@ surf_peer_setup :: proc(
 	return
 }
 
-@(private)
 surf_roots_free :: proc(pool: ^tls.Root_Pool) {
 	if pool == nil {
 		return

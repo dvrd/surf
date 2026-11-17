@@ -10,7 +10,6 @@ import charged "core:mem/budget"
 import scopes "core:sync/budget"
 import "core:io"
 
-@(private)
 range_overlap :: proc(a: rawptr, an: int, b: rawptr, bn: int) -> bool {
 	if an <= 0 || bn <= 0 {
 		return false
@@ -58,7 +57,6 @@ chunk_empty :: proc(chunk: ^owned.Chunk) -> bool {
 	)
 }
 
-@(private)
 allocation_error :: proc(cause: mem.Allocator_Error) -> Error {
 	return {kind = .Allocation_Failed, http = {kind = .Allocation_Failed, allocation = cause}}
 }
@@ -109,7 +107,6 @@ bank_create :: proc(input: Limits, allocator: mem.Allocator) -> (^Bank, Error) {
 	return bank, {}
 }
 
-@(private)
 bank_drop :: proc(bank: ^Bank) {
 	sync.lock(&bank.mu)
 	assert(bank.references > 0)
@@ -220,7 +217,6 @@ channel_create :: proc(bank: ^Bank, input: Options) -> (^Channel, Error) {
 	return cell, {}
 }
 
-@(private)
 bank_unclaim :: proc(bank: ^Bank, index: int) {
 	sync.lock(&bank.mu)
 	bank.cells[index] = {}
@@ -301,7 +297,6 @@ set_notify :: proc(cell: ^Channel, source: signal.Signal) {
 	signal.release(&previous)
 }
 
-@(private)
 notify :: proc(cell: ^Channel) {
 	sync.lock(&cell.mu)
 	wake, _ := signal.retain(cell.wake)
@@ -310,7 +305,6 @@ notify :: proc(cell: ^Channel) {
 	signal.release(&wake)
 }
 
-@(private)
 create_array :: proc($T: typeid, count: int, allocator: mem.Allocator) -> ([]T, mem.Allocator_Error) {
 	if count < 0 || count > max(int) / size_of(T) {
 		return nil, .Out_Of_Memory
@@ -335,7 +329,6 @@ create_array :: proc($T: typeid, count: int, allocator: mem.Allocator) -> ([]T, 
 	return (cast([^]T)raw_data(storage))[:count], nil
 }
 
-@(private)
 create_value :: proc($T: typeid, allocator: mem.Allocator) -> (^T, mem.Allocator_Error) {
 	storage, error := create_array(T, 1, allocator)
 
@@ -449,7 +442,6 @@ next :: proc(cell: ^Channel, destination: ^owned.Chunk) -> (Read_Status, Error) 
 	return .Pending, {}
 }
 
-@(private)
 output_release :: proc(storage: []u8, data: rawptr) {
 	slot := cast(^Output)data
 	cell := slot.channel

@@ -111,7 +111,6 @@ buffered_http_execute_managed :: proc(
 	return copied, result
 }
 
-@(private)
 buffered_http_allocation_error :: proc(error: mem.Allocator_Error) -> HTTP_Error {
 	return {kind = .Allocation_Failed, phase = .Configuration, write_effect = .Not_Sent, allocation = error}
 }
@@ -186,7 +185,6 @@ buffered_http_execute_owned :: proc(
 	return
 }
 
-@(private)
 buffered_http_scratch :: proc(scope: resources.Scope) -> (resources.Lease, HTTP_Error) {
 	if scope == (resources.Scope{}) {
 		return {}, {}
@@ -198,7 +196,6 @@ buffered_http_scratch :: proc(scope: resources.Scope) -> (resources.Lease, HTTP_
 
 	return lease, {}
 }
-@(private)
 buffered_http_copy_error :: proc(previous: Buffered_HTTP_Result, error: mem.Allocator_Error) -> Buffered_HTTP_Result {
 	result := previous
 	result.ok, result.transport_ok = false, false
@@ -213,7 +210,6 @@ buffered_http_copy_error :: proc(previous: Buffered_HTTP_Result, error: mem.Allo
 	return result
 }
 
-@(private)
 buffered_http_owned_copy :: proc(
 	reply: ^Buffered_HTTP_Reply,
 	status: int,
@@ -230,7 +226,6 @@ buffered_http_owned_copy :: proc(
 	return {status = status, body = storage[:], body_storage = storage, allocator = allocator}, nil
 }
 
-@(private)
 buffered_http_validate :: proc(
 	method, url: string,
 	headers: []string,
@@ -282,7 +277,6 @@ buffered_http_validate :: proc(
 	return {}
 }
 
-@(private)
 buffered_http_perform :: proc(
 	method, url: string,
 	body: []byte,
@@ -456,7 +450,6 @@ buffered_http_perform :: proc(
 // A timeout after the TCP connection exists is Unknown even when no HTTP request
 // bytes were written. Unknown is the zero effect and is never replay-safe.
 // Dial and certificate failures stay Not_Sent.
-@(private)
 buffered_tcp_timeout :: proc(error: HTTP_Error) -> HTTP_Error {
 	result := error
 	if result.kind != .None &&
@@ -469,7 +462,6 @@ buffered_tcp_timeout :: proc(error: HTTP_Error) -> HTTP_Error {
 	return result
 }
 
-@(private)
 buffered_http_method :: proc(method: string) -> (http.Method, bool) {
 	switch method {
 	case "GET":
@@ -491,7 +483,6 @@ buffered_http_method :: proc(method: string) -> (http.Method, bool) {
 	return {}, false
 }
 
-@(private)
 buffered_http_h2 :: proc(
 	connection: ^tls_api.Conn,
 	method, url: string,
@@ -541,7 +532,6 @@ buffered_http_h2 :: proc(
 // The buffered header-list convention: "Name: value" sends the value, "Name:"
 // suppresses the field and "Name;" sends it with an empty value. A line with
 // neither separator is not present.
-@(private)
 buffered_http_header :: proc(header: string) -> (name, value: string, suppress, present: bool) {
 	if colon := strings.index_byte(header, ':'); colon >= 0 {
 		value = strings.trim(header[colon + 1:], " \t")
@@ -557,7 +547,6 @@ buffered_http_header :: proc(header: string) -> (name, value: string, suppress, 
 }
 
 // Passes application fields through the shared HTTP/2 encoder.
-@(private)
 buffered_http_h2_headers :: proc(headers: []string, storage: []http.Header) -> ([]http.Header, HTTP_Error) {
 	count := 0
 
@@ -594,7 +583,6 @@ buffered_http_h2_headers :: proc(headers: []string, storage: []http.Header) -> (
 	return storage[:count], {}
 }
 
-@(private)
 buffered_http_from_response :: proc(
 	response: ^Response,
 	error: HTTP_Error,
@@ -644,7 +632,6 @@ buffered_http_from_response :: proc(
 	return {status = status, error = call}
 }
 
-@(private)
 buffered_http_exchange :: proc(
 	stream: net.Connection,
 	method: string,
@@ -678,7 +665,6 @@ buffered_http_exchange :: proc(
 	return buffered_http_read(stream, reply, &outcome)
 }
 
-@(private)
 buffered_http_upload :: proc(stream: net.Connection, file: ^os.File, size: i64, deadline: time.Time) -> HTTP_Error {
 	remaining := size
 	buffer: [UPLOAD_BUFFER_SIZE]u8
@@ -727,7 +713,6 @@ buffered_http_upload :: proc(stream: net.Connection, file: ^os.File, size: i64, 
 	return {}
 }
 
-@(private)
 buffered_http_read :: proc(
 	stream: net.Connection,
 	reply: ^Buffered_HTTP_Reply,
@@ -776,7 +761,6 @@ buffered_http_read :: proc(
 	return {status = outcome.status, ok = outcome.status >= 200 && outcome.status < 300, transport_ok = true}
 }
 
-@(private)
 buffered_http_read_error :: proc(error: HTTP_Error, outcome: HTTP_Exchange_Outcome) -> HTTP_Error {
 	call := error
 
@@ -805,7 +789,6 @@ buffered_http_read_error :: proc(error: HTTP_Error, outcome: HTTP_Exchange_Outco
 	return call
 }
 
-@(private)
 buffered_http_io :: proc(
 	transport: net.Connection_Error,
 	during_write: bool,
@@ -823,7 +806,6 @@ buffered_http_io :: proc(
 	return http_error_classify(error, error.phase, effect, outcome.status)
 }
 
-@(private)
 buffered_source_io :: proc(error: os.Error) -> io.Error {
 	if value, ok := error.(io.Error); ok {
 		return value
@@ -835,14 +817,12 @@ buffered_source_io :: proc(error: os.Error) -> io.Error {
 	return .Unknown
 }
 
-@(private)
 Buffered_HTTP_Writer :: struct {
 	dst:      []u8,
 	used:     int,
 	overflow: bool,
 }
 
-@(private)
 buffered_http_put :: proc(w: ^Buffered_HTTP_Writer, parts: ..string) {
 	for part in parts {
 		if len(part) > len(w.dst) - w.used {
@@ -856,7 +836,6 @@ buffered_http_put :: proc(w: ^Buffered_HTTP_Writer, parts: ..string) {
 
 // Method bytes are copied unchanged. A body buffer is sent only for the exact
 // tokens PUT and POST; a file upload sends exactly upload_size bytes for any method.
-@(private)
 buffered_http_encode :: proc(
 	dst: []u8,
 	method: string,

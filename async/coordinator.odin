@@ -16,7 +16,6 @@ import exchange_api "exchange"
 import "core:net"
 import "core:os"
 
-@(private)
 network_coordinator_wake :: proc(notification: signal.Signal) {
 	owner, valid := signal.retain(notification)
 
@@ -83,7 +82,6 @@ network_close_state :: proc(s: ^Client_State) {
 
 // The caller's registration reference keeps State alive through arbitrary input
 // and lease disposal callbacks. No physical callback runs under either mutex.
-@(private)
 network_coordinator_complete :: proc(
 	s: ^Client_State,
 	handle: Request_Handle,
@@ -127,7 +125,6 @@ network_coordinator_complete :: proc(
 
 // One request-capacity inspection. Active request completion belongs solely to
 // its actor; the coordinator only delivers a cancellation mailbox notification.
-@(private)
 network_coordinator_request_step :: proc(s: ^Client_State, now: runtime_async.Deadline) -> bool {
 	sync.lock(&s.mu)
 
@@ -201,19 +198,16 @@ network_coordinator_request_step :: proc(s: ^Client_State, now: runtime_async.De
 // One request metadata cell and at most one finite16-ID transfer. Only the
 // unassigned origin FIFO head is unparked; no later waiter bypasses that head.
 // Lock order: s.mu, then s.kernel.mu. Release in reverse.
-@(private)
 network_lock_both :: proc(s: ^Client_State) {
 	sync.lock(&s.mu)
 	sync.lock(&s.kernel.mu)
 }
 
-@(private)
 network_unlock_both :: proc(s: ^Client_State) {
 	sync.unlock(&s.kernel.mu)
 	sync.unlock(&s.mu)
 }
 
-@(private)
 network_coordinator_dns_step :: proc(s: ^Client_State) -> bool {
 	sync.lock(&s.mu)
 	index := int(s.coordinator.dns_cursor) % len(s.requests)
@@ -282,7 +276,6 @@ network_coordinator_dns_step :: proc(s: ^Client_State) -> bool {
 	return installed
 }
 
-@(private)
 network_coordinator_dispatch_step :: proc(s: ^Client_State, now: i64) -> bool {
 	sync.lock(&s.mu)
 
@@ -311,7 +304,6 @@ network_coordinator_dispatch_step :: proc(s: ^Client_State, now: i64) -> bool {
 	return error.kind != .Pending && assignment.request.slot == 0
 }
 
-@(private)
 network_coordinator_idle_step :: proc(s: ^Client_State, now: i64) -> bool {
 	network_lock_both(s)
 	needs_scan :=
@@ -463,7 +455,6 @@ network_coordinator_done :: proc(data: rawptr) {
 	network_task_done(s, 0, drained)
 }
 
-@(private)
 admission_request_locked :: proc(k: ^Kernel, h: Request_Handle) -> ^Request_Slot {
 	if h.owner_id != k.owner_id || h.slot == 0 || u64(h.slot) > u64(len(k.requests)) || h.generation == 0 {
 		return nil
@@ -477,7 +468,6 @@ admission_request_locked :: proc(k: ^Kernel, h: Request_Handle) -> ^Request_Slot
 
 	return r
 }
-@(private)
 admission_origin_locked :: proc(k: ^Kernel, h: Cell_Handle) -> ^Origin_Slot {
 	if h.slot == 0 || u64(h.slot) > u64(len(k.origins)) || h.generation == 0 {
 		return nil
@@ -491,7 +481,6 @@ admission_origin_locked :: proc(k: ^Kernel, h: Cell_Handle) -> ^Origin_Slot {
 
 	return o
 }
-@(private)
 admission_alias :: proc(k: ^Kernel, p: rawptr, size: int) -> bool {
 	region := mem.byte_slice(p, size)
 
@@ -514,7 +503,6 @@ admission_alias :: proc(k: ^Kernel, p: rawptr, size: int) -> bool {
 
 	return false
 }
-@(private)
 admission_region :: proc(storage: []u8, p: rawptr, size: int) -> bool {
 	if size == 0 {
 		return true
@@ -528,7 +516,6 @@ admission_region :: proc(storage: []u8, p: rawptr, size: int) -> bool {
 
 	return at >= start && at - start <= uintptr(len(storage)) && uintptr(size) <= uintptr(len(storage)) - (at - start)
 }
-@(private)
 admission_input :: proc(k: ^Kernel, input: ^Request_Owner) -> (http.URL, Client_Error) {
 	if input == nil ||
 	   admission_alias(k, input, size_of(Request_Owner)) ||
@@ -787,7 +774,6 @@ kernel_commit :: proc(
 	return {}
 }
 
-@(private)
 admission_unlink_waiter_locked :: proc(k: ^Kernel, index: u32, r: ^Request_Slot, o: ^Origin_Slot) -> Client_Error {
 	previous, next := r.queue_previous, r.queue_next
 
@@ -834,7 +820,6 @@ admission_unlink_waiter_locked :: proc(k: ^Kernel, index: u32, r: ^Request_Slot,
 
 // Detach a Preparing/accepted session claim using only verified07 origin
 // bookkeeping. The caller preflights all fields before this mutation phase.
-@(private)
 admission_detach_claim_locked :: proc(k: ^Kernel, h: Request_Handle, r: ^Request_Slot) -> Client_Error {
 	if r.origin.slot == 0 {
 		if r.session.slot != 0 {
@@ -1066,11 +1051,9 @@ kernel_stage :: proc(k: ^Kernel, h: Request_Handle) -> (Request_Stage, Client_Er
 	return r.stage, {}
 }
 
-@(private)
 network_valid :: proc(s: ^Client_State) -> bool {
 	return s != nil && s.self == s
 }
-@(private)
 network_snapshot_error :: proc(error: net.Resolver_Snapshot_Error) -> Client_Error {
 	if error.kind == .Allocation_Failed {
 		return {kind = .Allocation_Failed, http = {kind = .Allocation_Failed, allocation = error.allocation}}
@@ -1098,7 +1081,6 @@ network_snapshot_error :: proc(error: net.Resolver_Snapshot_Error) -> Client_Err
 		http = {kind = .Invalid_Config, network = net.DNS_Error.Invalid_Resolv_Config_Error},
 	}
 }
-@(private)
 network_scope_probe :: proc(scope: scopes.Scope) -> Client_Error {
 	if scope == (scopes.Scope{}) {
 		return {}
@@ -1114,7 +1096,6 @@ network_scope_probe :: proc(scope: scopes.Scope) -> Client_Error {
 
 	return {}
 }
-@(private)
 network_backing :: proc(scope: scopes.Scope, allocator: mem.Allocator) -> (State_Backing, Client_Error) {
 	if allocator.procedure == nil || .Free not_in mem.query_features(allocator) {
 		return {}, {kind = .Invalid_Config}
@@ -1341,7 +1322,6 @@ network_prepare :: proc(
 
 // Destroy stable subowners IN PLACE. The last raw free can physically destroy
 // State; its independent bootstrap lease is released afterward from locals only.
-@(private)
 network_cleanup_storage :: proc(s: ^Client_State) {
 	assert(network_valid(s))
 	s.phase = .Disposing
@@ -1418,7 +1398,6 @@ network_dispose_prepared :: proc(s: ^Client_State) -> Client_Error {
 	return {}
 }
 
-@(private)
 completion_empty :: proc(response: ^surf.Response) -> bool {
 	return(
 		response != nil &&
@@ -1431,7 +1410,6 @@ completion_empty :: proc(response: ^surf.Response) -> bool {
 		response._allocator_scope == (scopes.Scope{}) \
 	)
 }
-@(private)
 completion_queue_unlink_locked :: proc(k: ^Kernel, index: u32, r: ^Request_Slot) {
 	if !r.completion_queued {
 		return
@@ -1454,7 +1432,6 @@ completion_queue_unlink_locked :: proc(k: ^Kernel, index: u32, r: ^Request_Slot)
 	r.completion_previous, r.completion_next = 0, 0
 	r.completion_queued = false
 }
-@(private)
 completion_queue_append_locked :: proc(k: ^Kernel, index: u32, r: ^Request_Slot) {
 	assert(!r.completion_queued)
 	r.completion_previous = k.completion_tail
@@ -1538,7 +1515,6 @@ kernel_begin_complete :: proc(
 	return result, {}
 }
 
-@(private)
 completion_late_failure :: proc(k: ^Kernel, r: ^Request_Slot, now: runtime_async.Deadline) -> surf.HTTP_Error {
 	effect := surf.HTTP_Write_Effect.Unknown
 
@@ -1685,7 +1661,6 @@ kernel_poll :: proc(k: ^Kernel) -> (Completion, bool) {
 
 // Both synchronous consumers use the same Returning machinery as asynchronous
 // cleanup. No generation is recycled until Response/origin callbacks finish.
-@(private)
 completion_detach_locked :: proc(k: ^Kernel, h: Request_Handle, r: ^Request_Slot) -> (Request_Disposal, Client_Error) {
 	if r.state != .Completed {
 		return {}, {kind = .Pending}
@@ -1744,7 +1719,6 @@ completion_detach_locked :: proc(k: ^Kernel, h: Request_Handle, r: ^Request_Slot
 
 	return result, {}
 }
-@(private)
 completion_dispose_and_finish :: proc(k: ^Kernel, h: Request_Handle, disposal: ^Request_Disposal) -> Client_Error {
 	origin := disposal.origin.origin
 	request_disposal_destroy(disposal)
@@ -1850,7 +1824,6 @@ kernel_release :: proc(k: ^Kernel, h: Request_Handle) -> Client_Error {
 	return completion_dispose_and_finish(k, h, &disposal)
 }
 
-@(private)
 client_drained_locked :: proc(s: ^Client_State, own_call: bool) -> bool {
 	callers := s.producer_calls
 
@@ -1962,7 +1935,6 @@ client_destroy :: proc(c: ^Client) -> Client_Error {
 	return {}
 }
 
-@(private)
 client_rollback :: proc(s: ^Client_State, preparing: Preparing_Request) {
 	sync.lock(&s.mu)
 	disposal, error := kernel_rollback(&s.kernel, preparing)
@@ -2009,7 +1981,6 @@ client_submit :: proc(
 	return client_submit_state(s, request, selected, nil)
 }
 
-@(private)
 client_submit_state :: proc(
 	s: ^Client_State,
 	request: http.Request,
@@ -2129,13 +2100,11 @@ client_submit_state :: proc(
 	return preparing.request, {}
 }
 
-@(private)
 Submission_Budget :: struct {
 	now, cutoff: runtime_async.Deadline,
 }
 
 // Select the immutable total cutoff before validation or any owned allocation.
-@(private)
 submission_budget :: proc(s: ^Client_State, deadline: runtime_async.Deadline) -> (Submission_Budget, Client_Error) {
 	sync.lock(&s.mu)
 	published := s.phase == .Published

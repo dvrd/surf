@@ -9,13 +9,11 @@ import "core:strings"
 import "core:time"
 import "base:intrinsics"
 
-@(private)
 Http3_Body :: struct {
 	body:       [dynamic]u8,
 	limit:      int,
 	allocation: mem.Allocator_Error,
 }
-@(private)
 http3_body_write :: proc(data: rawptr, chunk: []u8, final: bool) -> (int, http3.Body_Status) {
 	b := cast(^Http3_Body)data
 
@@ -32,7 +30,6 @@ http3_body_write :: proc(data: rawptr, chunk: []u8, final: bool) -> (int, http3.
 
 	return n, .Ready
 }
-@(private)
 http3_body_init :: proc(b: ^Http3_Body, config: Config, allocator: mem.Allocator) -> HTTP_Error {
 	b.limit = config.max_body_size
 
@@ -216,13 +213,11 @@ execute_http3 :: proc(
 	return response, {}
 }
 
-@(private)
 HTTP3_Upload :: struct {
 	source: ^Upload_Source,
 	error:  io.Error,
 }
 
-@(private)
 http3_upload_read :: proc(data: rawptr, destination: []u8) -> (int, bool) {
 	source := cast(^HTTP3_Upload)data
 	n, error := io.read(source.source.stream, destination)
@@ -255,7 +250,6 @@ http3_dial_port :: proc(cache: ^Alt_Svc_Cache, host: string, url_port: int, now:
 
 // An IP literal does not query a resolver. A hostname uses the caller's
 // nameservers, or the platform resolver, and must finish inside deadline.
-@(private)
 http3_resolve :: proc(
 	host: string,
 	port: int,
@@ -276,7 +270,6 @@ http3_resolve :: proc(
 	return endpoints.items[0], {}
 }
 
-@(private)
 http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) -> HTTP_Error {
 	effect := HTTP_Write_Effect.Not_Sent
 	if result.sent {
@@ -318,7 +311,6 @@ http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) 
 	return {kind = .IO_Failed, phase = .Protocol, write_effect = effect}
 }
 
-@(private)
 http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -> (Response, HTTP_Error) {
 	if result == nil {
 		return {}, {kind = .IO_Failed, phase = .Protocol, write_effect = .Response_Received}
@@ -490,12 +482,10 @@ alt_svc_lookup :: proc(
 	return 0, false
 }
 
-@(private)
 is_digit :: proc(c: rune) -> bool {
 	return c >= '0' && c <= '9'
 }
 
-@(private)
 alt_svc_h3 :: proc(value: string) -> (port, ma: int, ok: bool) {
 	at := strings.index(value, "h3=\"")
 	if at < 0 {
@@ -566,7 +556,6 @@ response_trailer :: proc(response: ^Response, name: string) -> (string, bool) {
 	return "", false
 }
 
-@(private)
 http3_response_trailers :: proc(
 	response: ^Response,
 	result: ^http3.Client_Result,
@@ -615,7 +604,6 @@ http3_response_trailers :: proc(
 	return {}
 }
 
-@(private)
 http3_request_trailers_valid :: proc(headers: []http.Header) -> bool {
 	fields: [32]http3.Field
 	names: [4096]u8
@@ -625,7 +613,6 @@ http3_request_trailers_valid :: proc(headers: []http.Header) -> bool {
 }
 
 // Lowercased trailer fields in caller storage; false when they do not fit.
-@(private)
 http3_trailer_fields :: proc(
 	fields: ^[32]http3.Field,
 	names: ^[4096]u8,
@@ -827,7 +814,6 @@ websocket_http3_open :: proc(
 	committed = true
 	return {}
 }
-@(private)
 h3_tunnel_deadline :: proc(t: ^HTTP3_Tunnel, write: bool) -> time.Time {
 	deadline := t.read_deadline
 
@@ -841,7 +827,6 @@ h3_tunnel_deadline :: proc(t: ^HTTP3_Tunnel, write: bool) -> time.Time {
 
 	return deadline
 }
-@(private)
 h3_tunnel_progress :: proc(t: ^HTTP3_Tunnel, write: bool) -> WebSocket_Stream_Error {
 	if t.client == nil || t.wire.owner == nil {
 		return {kind = .Invalid_Stream}
@@ -863,7 +848,6 @@ h3_tunnel_progress :: proc(t: ^HTTP3_Tunnel, write: bool) -> WebSocket_Stream_Er
 		transport = {kind = .Timeout if e == .Deadline else .Cancelled if e == .Cancelled else .Protocol_Failed},
 	}
 }
-@(private)
 h3_tunnel_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_Stream_Error) {
 	t := cast(^HTTP3_Tunnel)data
 
@@ -879,7 +863,6 @@ h3_tunnel_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_Stream_Error)
 		}
 	}
 }
-@(private)
 h3_tunnel_write :: proc(data: rawptr, src: []u8) -> (int, WebSocket_Stream_Error) {
 	t := cast(^HTTP3_Tunnel)data
 
@@ -899,7 +882,6 @@ h3_tunnel_write :: proc(data: rawptr, src: []u8) -> (int, WebSocket_Stream_Error
 		}
 	}
 }
-@(private)
 h3_tunnel_abort :: proc(data: rawptr) -> WebSocket_Stream_Error {
 	t := cast(^HTTP3_Tunnel)data
 	http3.client_connect_abort(&t.wire)
@@ -907,7 +889,6 @@ h3_tunnel_abort :: proc(data: rawptr) -> WebSocket_Stream_Error {
 
 	return {}
 }
-@(private)
 h3_tunnel_unlink :: proc(t: ^HTTP3_Tunnel) {
 	if t.client != nil {
 		for &entry in t.client.http3_tunnels {
@@ -917,7 +898,6 @@ h3_tunnel_unlink :: proc(t: ^HTTP3_Tunnel) {
 		}
 	}; t.client = nil
 }
-@(private)
 h3_tunnel_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 	t := cast(^HTTP3_Tunnel)data
 
@@ -939,13 +919,11 @@ h3_tunnel_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 
 	return {}
 }
-@(private)
 h3_tunnel_read_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
 	(cast(^HTTP3_Tunnel)data).read_deadline = deadline
 
 	return {}
 }
-@(private)
 h3_tunnel_write_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
 	(cast(^HTTP3_Tunnel)data).write_deadline = deadline
 

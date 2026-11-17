@@ -12,7 +12,6 @@ import "core:sync"
 import "core:io"
 import "core:mem/owned"
 
-@(private)
 session_stream_channel :: proc(a: ^Session_Actor) -> ^stream_api.Channel {
 	sync.lock(&a.owner.kernel.mu)
 	defer sync.unlock(&a.owner.kernel.mu)
@@ -27,7 +26,6 @@ session_stream_channel :: proc(a: ^Session_Actor) -> ^stream_api.Channel {
 	return request.stream
 }
 
-@(private)
 session_stream_begin :: proc(
 	a: ^Session_Actor,
 	cell: ^stream_api.Channel,
@@ -71,7 +69,6 @@ session_stream_begin :: proc(
 	return {}
 }
 
-@(private)
 session_stream_dispose :: proc(a: ^Session_Actor) {
 	engine := a.stream_exchange
 
@@ -87,7 +84,6 @@ session_stream_dispose :: proc(a: ^Session_Actor) {
 	stream_api.release(cell)
 }
 
-@(private)
 session_engine_quiescent :: proc(a: ^Session_Actor) -> bool {
 	if a.stream_exchange != nil {
 		return exchange_api.stream_exchange_quiescent(a.stream_exchange)
@@ -96,7 +92,6 @@ session_engine_quiescent :: proc(a: ^Session_Actor) -> bool {
 	return exchange_api.exchange_quiescent(&a.exchange)
 }
 
-@(private)
 session_engine_drive :: proc(a: ^Session_Actor, now: i64, cancelled: bool) -> exchange_api.Drive_Result {
 	if a.stream_exchange != nil {
 		return exchange_api.stream_exchange_drive(
@@ -110,7 +105,6 @@ session_engine_drive :: proc(a: ^Session_Actor, now: i64, cancelled: bool) -> ex
 	return exchange_api.exchange_drive(&a.exchange, now, cancelled, a.owner.config.config.capacities.work_per_resume)
 }
 
-@(private)
 session_stream_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> runtime_async.Resume_Result {
 	engine := a.stream_exchange
 	cancelled := (session_cancelled(a) || runtime_async.cancelled(&a.task)) && now.at < a.cutoff.at
@@ -213,7 +207,6 @@ session_stream_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> r
 	return session_finish_reuse(a, result.reuse_eligible)
 }
 
-@(private)
 stream_client_error :: proc(cause: stream_api.Error) -> Client_Error {
 	if cause.kind == .Allocation_Failed {
 		return {kind = .Allocation_Failed, http = cause.http}
@@ -286,7 +279,6 @@ client_submit_stream :: proc(
 	return client_submit_state(s, request, selected, cell)
 }
 
-@(private)
 client_stream_ref :: proc(s: ^Client_State, handle: Request_Handle) -> (^stream_api.Channel, Client_Error) {
 	sync.lock(&s.kernel.mu)
 	defer sync.unlock(&s.kernel.mu)
@@ -410,7 +402,6 @@ client_upload_finish :: proc(c: ^Client, handle: Request_Handle, source_error: i
 	return stream_client_error(stream_api.upload_finish(cell, source_error))
 }
 
-@(private)
 client_stream_destination_alias :: proc(s: ^Client_State, c: ^Client, destination: rawptr, size: int) -> bool {
 	if ranges_overlap(destination, size, c, size_of(Client)) ||
 	   ranges_overlap(destination, size, s, size_of(Client_State)) ||
@@ -433,7 +424,6 @@ client_stream_destination_alias :: proc(s: ^Client_State, c: ^Client, destinatio
 
 // Sample through the registered-task witness before producer ownership moves.
 // No user allocator/destructor or injected clock executes under ledger locks.
-@(private)
 client_upload_gate :: proc(s: ^Client_State, handle: Request_Handle) -> Client_Error {
 	now, clock := network_clock(s)
 

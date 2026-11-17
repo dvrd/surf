@@ -18,7 +18,6 @@ Surf_Large_H3 :: struct {
 	error:    [256]u8,
 	error_n:  int,
 }
-@(private)
 surf_large_h3_handler :: proc(
 	data: rawptr,
 	r: ^h3.Server_Request,
