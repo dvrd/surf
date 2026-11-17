@@ -30,7 +30,11 @@ surf_alt_svc_authenticated_only :: proc(t: ^testing.T) {
 @(test)
 surf_http3_post_is_not_replayed :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 10 * time.Second)
-	request := http.Request{method = .POST, url = "https://127.0.0.1:9/saba"}
+	request := http.Request {
+		method = .POST,
+		url    = "https://127.0.0.1:9/saba",
+	}
+
 	_, error := execute(request, {http3 = true, timeout = 2 * time.Second})
 	testing.expect_value(t, error.kind, .IO_Failed)
 	testing.expect_value(t, error.phase, .Protocol)
@@ -39,7 +43,11 @@ surf_http3_post_is_not_replayed :: proc(t: ^testing.T) {
 
 @(test)
 surf_http3_cleartext_refused :: proc(t: ^testing.T) {
-	request := http.Request{method = .GET, url = "http://127.0.0.1:9/saba"}
+	request := http.Request {
+		method = .GET,
+		url    = "http://127.0.0.1:9/saba",
+	}
+
 	_, error := execute(request, {http3 = true, allow_http = true, timeout = 2 * time.Second})
 	testing.expect_value(t, error.kind, .Insecure_URL)
 	testing.expect_value(t, error.phase, .Configuration)
@@ -49,7 +57,11 @@ surf_http3_cleartext_refused :: proc(t: ^testing.T) {
 @(test)
 surf_http3_get_falls_back_once :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 10 * time.Second)
-	request := http.Request{method = .GET, url = "https://127.0.0.1:9/saba"}
+	request := http.Request {
+		method = .GET,
+		url    = "https://127.0.0.1:9/saba",
+	}
+
 	_, error := execute(request, {http3 = true, timeout = 2 * time.Second})
 	testing.expect(t, error.kind != .None)
 	testing.expect(t, error.phase != .Protocol)
@@ -89,6 +101,7 @@ surf_http3_hostname_resolves :: proc(t: ^testing.T) {
 	host, host_error := http3_resolve("localhost", port, time.time_add(now, time.Second), {})
 	testing.expect_value(t, host_error.kind, .None)
 	testing.expect_value(t, host.port, 9443)
+
 	switch resolved in host.address {
 	case net.IP4_Address:
 		testing.expect_value(t, resolved, net.IP4_Loopback)
@@ -107,8 +120,21 @@ surf_http3_hostname_resolves :: proc(t: ^testing.T) {
 	testing.expect_value(t, bad.phase, .Configuration)
 	testing.expect_value(t, bad.write_effect, .Not_Sent)
 
-	url := http.URL{host = "localhost", authority = "localhost:9", port = 9, target = "/", secure = true}
-	_, dial_error := execute_http3(url, {method = .GET}, {}, time.time_add(time.now(), 2 * time.Second), context.allocator)
+	url := http.URL {
+		host      = "localhost",
+		authority = "localhost:9",
+		port      = 9,
+		target    = "/",
+		secure    = true,
+	}
+
+	_, dial_error := execute_http3(
+		url,
+		{method = .GET},
+		{},
+		time.time_add(time.now(), 2 * time.Second),
+		context.allocator,
+	)
 	testing.expect(t, dial_error.kind != .None)
 	testing.expect_value(t, dial_error.write_effect, .Not_Sent)
 	testing.expect(t, dial_error.phase != .DNS && dial_error.phase != .Configuration)
@@ -122,9 +148,19 @@ surf_http3_peer_get :: proc(t: ^testing.T) {
 	url, want, roots, ok := surf_peer_setup(t, false, url_buf[:], body_buf[:])
 	if !ok do return
 	defer surf_roots_free(roots)
-	response, error := execute({method = .GET, url = url}, {http3 = true, timeout = 8 * time.Second, tls = {root_cas = roots.roots[:roots.count]}})
+	response, error := execute(
+		{method = .GET, url = url},
+		{http3 = true, timeout = 8 * time.Second, tls = {root_cas = roots.roots[:roots.count]}},
+	)
 	defer response_destroy(&response)
-	fmt.printf("surf-h3 get status %d err %v phase %v effect %v body %s\n", response.status, error.kind, error.phase, error.write_effect, string(response.body))
+	fmt.printf(
+		"surf-h3 get status %d err %v phase %v effect %v body %s\n",
+		response.status,
+		error.kind,
+		error.phase,
+		error.write_effect,
+		string(response.body),
+	)
 	testing.expect_value(t, error.kind, .None)
 	testing.expect_value(t, response.status, 200)
 	testing.expect(t, string(response.body) == want, string(response.body))
@@ -138,7 +174,10 @@ surf_http3_peer_post_bad_cert :: proc(t: ^testing.T) {
 	url, _, roots, ok := surf_peer_setup(t, true, url_buf[:], body_buf[:])
 	if !ok do return
 	defer surf_roots_free(roots)
-	_, error := execute({method = .POST, url = url}, {http3 = true, timeout = 8 * time.Second, tls = {root_cas = roots.roots[:roots.count]}})
+	_, error := execute(
+		{method = .POST, url = url},
+		{http3 = true, timeout = 8 * time.Second, tls = {root_cas = roots.roots[:roots.count]}},
+	)
 	fmt.printf("surf-h3 post phase %v effect %v kind %v\n", error.phase, error.write_effect, error.kind)
 	testing.expect_value(t, error.kind, .IO_Failed)
 	testing.expect_value(t, error.phase, .TLS)
@@ -146,7 +185,15 @@ surf_http3_peer_post_bad_cert :: proc(t: ^testing.T) {
 }
 
 @(private)
-surf_peer_setup :: proc(t: ^testing.T, bogus: bool, url_buf, body_buf: []u8) -> (url, body: string, roots: ^tls.Root_Pool, ok: bool) {
+surf_peer_setup :: proc(
+	t: ^testing.T,
+	bogus: bool,
+	url_buf, body_buf: []u8,
+) -> (
+	url, body: string,
+	roots: ^tls.Root_Pool,
+	ok: bool,
+) {
 	port_buf: [32]u8
 	cert_buf: [512]u8
 	port_s := os.get_env_buf(port_buf[:], "H3_PEER_PORT")
@@ -180,12 +227,12 @@ surf_roots_free :: proc(pool: ^tls.Root_Pool) {
 
 @(test)
 surf_alt_svc_isolated_by_origin_port :: proc(t: ^testing.T) {
- cache: Alt_Svc_Cache
- now := time.now()
- testing.expect(t, alt_svc_note(&cache, "localhost", "h3=\":9443\"; ma=60", true, true, now, 8443))
- testing.expect_value(t, http3_dial_port(&cache, "localhost", 8443, now), 9443)
- testing.expect_value(t, http3_dial_port(&cache, "localhost", 443, now), 443)
- testing.expect(t, alt_svc_note(&cache, "localhost", "h3=\":9444\"; ma=60", true, true, now, 443))
- testing.expect_value(t, http3_dial_port(&cache, "localhost", 443, now), 9444)
- testing.expect_value(t, http3_dial_port(&cache, "localhost", 8443, now), 9443)
+	cache: Alt_Svc_Cache
+	now := time.now()
+	testing.expect(t, alt_svc_note(&cache, "localhost", "h3=\":9443\"; ma=60", true, true, now, 8443))
+	testing.expect_value(t, http3_dial_port(&cache, "localhost", 8443, now), 9443)
+	testing.expect_value(t, http3_dial_port(&cache, "localhost", 443, now), 443)
+	testing.expect(t, alt_svc_note(&cache, "localhost", "h3=\":9444\"; ma=60", true, true, now, 443))
+	testing.expect_value(t, http3_dial_port(&cache, "localhost", 443, now), 9444)
+	testing.expect_value(t, http3_dial_port(&cache, "localhost", 8443, now), 9443)
 }

@@ -9,7 +9,13 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-perform :: proc(base, path, file_path: string, length: i64, method: http.Method, config: surf.Config, expected_status: int = 200) -> i64 {
+perform :: proc(
+	base, path, file_path: string,
+	length: i64,
+	method: http.Method,
+	config: surf.Config,
+	expected_status: int = 200,
+) -> i64 {
 	file, open_error := os.open(file_path)
 	assert(open_error == nil)
 	defer os.close(file)
@@ -20,7 +26,11 @@ perform :: proc(base, path, file_path: string, length: i64, method: http.Method,
 	defer mem.tracking_allocator_destroy(&tracker)
 	previous := context.allocator
 	context.allocator = mem.tracking_allocator(&tracker)
-	response, error := surf.execute_upload({method = method, url = url}, {stream = os.to_stream(file), content_length = length}, config)
+	response, error := surf.execute_upload(
+		{method = method, url = url},
+		{stream = os.to_stream(file), content_length = length},
+		config,
+	)
 	if path == "/short" {
 		assert(error.kind == .Unexpected_EOF && error.phase == .Write && error.write_effect == .Unknown)
 	} else if path == "/stall" {
@@ -35,9 +45,13 @@ perform :: proc(base, path, file_path: string, length: i64, method: http.Method,
 	assert(tracker.peak_memory_allocated < 4 * 1024 * 1024)
 	position, position_error := os.seek(file, 0, .Current)
 	assert(position_error == nil)
-	if path == "/stall" {assert(position < length)}
-	else if path == "/short" {assert(position < length)}
-	else {assert(position == length)}
+	if path == "/stall" {
+		assert(position < length)
+	} else if path == "/short" {
+		assert(position < length)
+	} else {
+		assert(position == length)
+	}
 	fmt.println(path, "consumed", position, "peak_owned_bytes", tracker.peak_memory_allocated)
 	return position
 }
@@ -54,7 +68,12 @@ main :: proc() {
 	defer delete(short_path)
 	defer delete(root_path)
 	assert(http_url != "" && tls_url != "" && file_path != "" && short_path != "" && root_path != "")
-	plain := surf.Config{allow_http = true, max_body_size = 8, timeout = 10 * time.Second}
+	plain := surf.Config {
+		allow_http    = true,
+		max_body_size = 8,
+		timeout       = 10 * time.Second,
+	}
+
 	large: i64 = 65 * 1024 * 1024
 	perform(http_url, "/put", file_path, large, .PUT, plain)
 	perform(http_url, "/post", file_path, 17, .POST, plain)
@@ -69,7 +88,12 @@ main :: proc() {
 	defer free(pool)
 	defer tls.root_pool_destroy(pool)
 	assert(tls.root_pool_load_file(pool, root_path).kind == .None)
-	secure := surf.Config{tls = {root_cas = pool.roots[:pool.count]}, max_body_size = 8, timeout = 20 * time.Second}
+	secure := surf.Config {
+		tls = {root_cas = pool.roots[:pool.count]},
+		max_body_size = 8,
+		timeout = 20 * time.Second,
+	}
+
 	perform(tls_url, "/tls-put", file_path, 2 * 1024 * 1024, .PUT, secure)
 	perform(tls_url, "/tls-post", file_path, 17, .POST, secure)
 	perform(tls_url, "/tls-delete", file_path, 9, .DELETE, secure)

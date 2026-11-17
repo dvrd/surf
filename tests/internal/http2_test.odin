@@ -37,11 +37,19 @@ Http102_Call :: struct {
 http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 180 * time.Second)
 	peer := http102_start(t, "h2")
-	if peer == nil {return}
+
+	if peer == nil {
+		return
+	}
+
 	defer free(peer)
 	defer http102_stop(peer)
 	pool := http102_roots(t, "async/tests/connection/testdata/peer/credentials/root.pem")
-	if pool == nil {return}
+
+	if pool == nil {
+		return
+	}
+
 	defer free(pool)
 	defer tls.root_pool_destroy(pool)
 	offered := [?]string{"http/1.1", "h2"}
@@ -55,10 +63,17 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	testing.expect_value(t, once.status, 200)
 	testing.expect(t, string(once.body) == "/echo")
 	response_destroy(&once)
-	if testing.failed(t) {return}
+
+	if testing.failed(t) {
+		return
+	}
 
 	client := http102_client(t, cfg, {})
-	if client == nil {return}
+
+	if client == nil {
+		return
+	}
+
 	defer free(client)
 	defer http_client_close(client)
 	before_conn := http102_count(&peer.log, "\"event\":\"conn\"")
@@ -75,13 +90,16 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	response_destroy(&results[0].response)
 	response_destroy(&results[1].response)
 	testing.expect_value(t, http_client_dials(client), 1)
-	testing.expect_value(t, http102_count(&peer.log, "\"event\":\"conn\"")-before_conn, 1)
+	testing.expect_value(t, http102_count(&peer.log, "\"event\":\"conn\"") - before_conn, 1)
 	again, again_error := http_client_exchange(client, {method = .GET, url = again_url})
 	testing.expect_value(t, again_error.kind, .None)
 	testing.expect(t, string(again.body) == "/again")
 	response_destroy(&again)
 	testing.expect_value(t, http_client_dials(client), 1)
-	if testing.failed(t) {return}
+
+	if testing.failed(t) {
+		return
+	}
 
 	reset_buf, after_buf: [96]u8
 	reset_url := http102_url(reset_buf[:], peer.port, "/reset")
@@ -95,11 +113,18 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	testing.expect_value(t, after_error.kind, .None)
 	testing.expect(t, string(after.body) == "/after-reset")
 	response_destroy(&after)
-	testing.expect_value(t, http102_count(&peer.log, "\"path\":\"/reset\"")-resets_before, 1)
-	if testing.failed(t) {return}
+	testing.expect_value(t, http102_count(&peer.log, "\"path\":\"/reset\"") - resets_before, 1)
+
+	if testing.failed(t) {
+		return
+	}
 
 	stall := http102_client(t, http102_config(pool.roots[:pool.count], offered[:], 1500 * time.Millisecond), {})
-	if stall == nil {return}
+
+	if stall == nil {
+		return
+	}
+
 	defer free(stall)
 	defer http_client_close(stall)
 	stall_buf: [96]u8
@@ -113,28 +138,46 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	testing.expect_value(t, stall_error.write_effect, .Unknown)
 	testing.expect_value(t, http_client_dials(stall), 1)
 	testing.expect(t, elapsed < 4 * time.Second)
-	if testing.failed(t) {return}
+
+	if testing.failed(t) {
+		return
+	}
 
 	canceller := http102_client(t, http102_config(pool.roots[:pool.count], offered[:], 8 * time.Second), {})
-	if canceller == nil {return}
+
+	if canceller == nil {
+		return
+	}
+
 	defer free(canceller)
 	defer http_client_close(canceller)
 	cancel_buf: [96]u8
 	cancel_url := http102_url(cancel_buf[:], peer.port, "/cancel")
 	seen := http102_count(&peer.log, "\"path\":\"/cancel\"")
-	call := Http102_Call{client = canceller, url = cancel_url}
+	call := Http102_Call {
+		client = canceller,
+		url    = cancel_url,
+	}
+
 	worker := thread.create_and_start_with_poly_data(&call, http102_call)
 	testing.expect(t, worker != nil)
-	if worker == nil {return}
+
+	if worker == nil {
+		return
+	}
+
 	cancel_started := time.now()
 	armed := false
+
 	for time.diff(time.now(), time.time_add(cancel_started, 5 * time.Second)) > 0 {
 		if http102_count(&peer.log, "\"path\":\"/cancel\"") > seen {
 			armed = true
 			break
 		}
+
 		time.sleep(20 * time.Millisecond)
 	}
+
 	testing.expect(t, armed)
 	http_client_cancel(canceller)
 	thread.join(worker)
@@ -144,10 +187,17 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	testing.expect_value(t, call.error.write_effect, .Unknown)
 	testing.expect_value(t, http_client_dials(canceller), 1)
 	testing.expect(t, time.diff(cancel_started, time.now()) < 4 * time.Second)
-	if testing.failed(t) {return}
+
+	if testing.failed(t) {
+		return
+	}
 
 	limited := http102_client(t, cfg, {max_streams = 1})
-	if limited == nil {return}
+
+	if limited == nil {
+		return
+	}
+
 	defer free(limited)
 	defer http_client_close(limited)
 	a_buf, b_buf: [96]u8
@@ -159,22 +209,41 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	pair_results: [2]HTTP_Result
 	_ = http_client_multiplex(limited, pair[:], pair_results[:])
 	admitted, refused := 0, 0
+
 	for &result in pair_results {
 		if result.error.kind == .None && result.response.status == 200 {
 			admitted += 1
-		} else if result.error.kind == .IO_Failed && result.error.phase == .Admission && result.error.write_effect == .Not_Sent {
+		} else if result.error.kind == .IO_Failed &&
+		   result.error.phase == .Admission &&
+		   result.error.write_effect == .Not_Sent {
 			refused += 1
 		}
+
 		response_destroy(&result.response)
 	}
+
 	testing.expect_value(t, admitted, 1)
 	testing.expect_value(t, refused, 1)
 	testing.expect_value(t, http_client_dials(limited), 1)
-	testing.expect_value(t, http102_count(&peer.log, "\"path\":\"/limit-a\"")-a_before + http102_count(&peer.log, "\"path\":\"/limit-b\"")-b_before, 1)
-	if testing.failed(t) {return}
+	testing.expect_value(
+		t,
+		http102_count(&peer.log, "\"path\":\"/limit-a\"") -
+		a_before +
+		http102_count(&peer.log, "\"path\":\"/limit-b\"") -
+		b_before,
+		1,
+	)
+
+	if testing.failed(t) {
+		return
+	}
 
 	capped := http102_client(t, cfg, {max_bytes = 64})
-	if capped == nil {return}
+
+	if capped == nil {
+		return
+	}
+
 	defer free(capped)
 	defer http_client_close(capped)
 	big_buf: [96]u8
@@ -185,12 +254,19 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	testing.expect_value(t, big_error.phase, .Body_Limit)
 	testing.expect(t, len(big.body) == 0)
 	testing.expect_value(t, http_client_dials(capped), 1)
-	if testing.failed(t) {return}
+
+	if testing.failed(t) {
+		return
+	}
 
 	requests_before := http102_count(&peer.log, "\"event\":\"request\"")
 	conns_before := http102_count(&peer.log, "\"event\":\"conn\"")
 	bare := http102_client(t, http102_config(nil, offered[:], 3 * time.Second), {})
-	if bare == nil {return}
+
+	if bare == nil {
+		return
+	}
+
 	defer free(bare)
 	defer http_client_close(bare)
 	bare_response, bare_error := http_client_exchange(bare, {method = .GET, url = echo_url})
@@ -201,11 +277,19 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	testing.expect_value(t, http102_count(&peer.log, "\"event\":\"conn\""), conns_before)
 
 	wrong := http102_roots(t, "async/tests/connection/testdata/client/wrong-root.pem")
-	if wrong == nil {return}
+
+	if wrong == nil {
+		return
+	}
+
 	defer free(wrong)
 	defer tls.root_pool_destroy(wrong)
 	rejected := http102_client(t, http102_config(wrong.roots[:wrong.count], offered[:], 3 * time.Second), {})
-	if rejected == nil {return}
+
+	if rejected == nil {
+		return
+	}
+
 	defer free(rejected)
 	defer http_client_close(rejected)
 	rejected_response, rejected_error := http_client_exchange(rejected, {method = .GET, url = echo_url})
@@ -220,11 +304,19 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 http2_peer_http1_selection_uses_http1_client :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 90 * time.Second)
 	peer := http102_start(t, "http1")
-	if peer == nil {return}
+
+	if peer == nil {
+		return
+	}
+
 	defer free(peer)
 	defer http102_stop(peer)
 	pool := http102_roots(t, "async/tests/connection/testdata/peer/credentials/root.pem")
-	if pool == nil {return}
+
+	if pool == nil {
+		return
+	}
+
 	defer free(pool)
 	defer tls.root_pool_destroy(pool)
 	offered := [?]string{"http/1.1", "h2"}
@@ -237,7 +329,11 @@ http2_peer_http1_selection_uses_http1_client :: proc(t: ^testing.T) {
 	testing.expect(t, string(once.body) == "/plain")
 	response_destroy(&once)
 	client := http102_client(t, cfg, {})
-	if client == nil {return}
+
+	if client == nil {
+		return
+	}
+
 	defer free(client)
 	defer http_client_close(client)
 	response, error := http_client_exchange(client, {method = .GET, url = url})
@@ -251,11 +347,19 @@ http2_peer_http1_selection_uses_http1_client :: proc(t: ^testing.T) {
 http2_missing_alpn_stays_on_http1 :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 90 * time.Second)
 	peer := http102_start(t, "http1-noalpn")
-	if peer == nil {return}
+
+	if peer == nil {
+		return
+	}
+
 	defer free(peer)
 	defer http102_stop(peer)
 	pool := http102_roots(t, "async/tests/connection/testdata/peer/credentials/root.pem")
-	if pool == nil {return}
+
+	if pool == nil {
+		return
+	}
+
 	defer free(pool)
 	defer tls.root_pool_destroy(pool)
 	buf: [96]u8
@@ -272,18 +376,30 @@ http2_missing_alpn_stays_on_http1 :: proc(t: ^testing.T) {
 http2_goaway_does_not_send_the_request :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 90 * time.Second)
 	peer := http102_start(t, "goaway")
-	if peer == nil {return}
+
+	if peer == nil {
+		return
+	}
+
 	defer free(peer)
 	defer http102_stop(peer)
 	pool := http102_roots(t, "async/tests/connection/testdata/peer/credentials/root.pem")
-	if pool == nil {return}
+
+	if pool == nil {
+		return
+	}
+
 	defer free(pool)
 	defer tls.root_pool_destroy(pool)
 	offered := [?]string{"h2"}
 	buf: [96]u8
 	url := http102_url(buf[:], peer.port, "/echo")
 	client := http102_client(t, http102_config(pool.roots[:pool.count], offered[:], 5 * time.Second), {})
-	if client == nil {return}
+
+	if client == nil {
+		return
+	}
+
 	defer free(client)
 	defer http_client_close(client)
 	response, error := http_client_exchange(client, {method = .GET, url = url})
@@ -312,11 +428,13 @@ http102_client :: proc(t: ^testing.T, config: Config, limits: HTTP_Origin_Limits
 	client := new(HTTP_Client)
 	error := http_client_init(client, config, limits, context.allocator)
 	testing.expect_value(t, error.kind, .None)
+
 	if error.kind != .None {
 		http_client_close(client)
 		free(client)
 		return nil
 	}
+
 	return client
 }
 
@@ -325,10 +443,12 @@ http102_roots :: proc(t: ^testing.T, path: string) -> ^tls.Root_Pool {
 	pool := new(tls.Root_Pool)
 	load_error := tls.root_pool_load_file(pool, path)
 	testing.expect_value(t, load_error.kind, .None)
+
 	if load_error.kind != .None {
 		free(pool)
 		return nil
 	}
+
 	return pool
 }
 
@@ -338,33 +458,52 @@ http102_url :: proc(dst: []u8, port: int, path: string) -> string {
 	port_text := strconv.write_int(dst[n:], i64(port), 10)
 	n += len(port_text)
 	n += copy(dst[n:], path)
+
 	return string(dst[:n])
 }
 
 @(private)
 http102_body_is :: proc(body: []u8, n: int, value: u8) -> bool {
-	if len(body) != n {return false}
-	for octet in body {if octet != value {return false}}
+	if len(body) != n {
+		return false
+	}
+
+	for octet in body {
+		if octet != value {
+			return false
+		}
+	}
+
 	return true
 }
 
 @(private)
 http102_build :: proc(t: ^testing.T) -> bool {
-	process, start_error := os.process_start({
-		command = {http102_go(), "build", "-o", "/tmp/okami-102-peer", "."},
-		working_dir = "surf/tests/http102",
-		stderr = os.stderr,
-	})
+	process, start_error := os.process_start(
+		{
+			command = {http102_go(), "build", "-o", "/tmp/okami-102-peer", "."},
+			working_dir = "surf/tests/http102",
+			stderr = os.stderr,
+		},
+	)
 	testing.expect(t, start_error == nil)
-	if start_error != nil {return false}
+
+	if start_error != nil {
+		return false
+	}
+
 	state, wait_error := os.process_wait(process)
 	testing.expect(t, wait_error == nil && state.exit_code == 0)
+
 	return wait_error == nil && state.exit_code == 0
 }
 
 @(private)
 http102_go :: proc() -> string {
-	if os.exists("/opt/homebrew/bin/go") {return "/opt/homebrew/bin/go"}
+	if os.exists("/opt/homebrew/bin/go") {
+		return "/opt/homebrew/bin/go"
+	}
+
 	return "/opt/homebrew/Cellar/go/1.26.2/bin/go"
 }
 
@@ -373,61 +512,78 @@ http102_start :: proc(t: ^testing.T, mode: string) -> ^Http102_Peer {
 	peer := new(Http102_Peer)
 	read_end, write_end, pipe_error := os.pipe()
 	testing.expect(t, pipe_error == nil)
+
 	if pipe_error != nil {
 		free(peer)
 		return nil
 	}
+
 	if !http102_build(t) {
 		os.close(read_end)
 		os.close(write_end)
 		free(peer)
 		return nil
 	}
-	process, start_error := os.process_start({
-		command = {"/tmp/okami-102-peer", "-mode", mode},
-		working_dir = "surf/tests/http102",
-		stdout = write_end,
-		stderr = os.stderr,
-	})
+
+	process, start_error := os.process_start(
+		{
+			command = {"/tmp/okami-102-peer", "-mode", mode},
+			working_dir = "surf/tests/http102",
+			stdout = write_end,
+			stderr = os.stderr,
+		},
+	)
 	os.close(write_end)
 	testing.expect(t, start_error == nil)
+
 	if start_error != nil {
 		os.close(read_end)
 		free(peer)
 		return nil
 	}
+
 	peer.process = process
 	peer.up = true
 	peer.log.file = read_end
 	peer.worker = thread.create_and_start_with_poly_data(&peer.log, http102_read_log)
 	testing.expect(t, peer.worker != nil)
+
 	if peer.worker == nil {
 		http102_stop(peer)
 		free(peer)
 		return nil
 	}
+
 	port, ok := http102_wait_int(&peer.log, "\"port\":", 30 * time.Second)
 	testing.expect(t, ok)
+
 	if !ok || port <= 0 || port > 65535 {
 		http102_stop(peer)
 		free(peer)
 		return nil
 	}
+
 	peer.port = port
+
 	return peer
 }
 
 @(private)
 http102_stop :: proc(peer: ^Http102_Peer) {
-	if peer == nil || !peer.up {return}
+	if peer == nil || !peer.up {
+		return
+	}
+
 	_ = os.process_kill(peer.process)
 	_, _ = os.process_wait(peer.process)
 	peer.up = false
+
 	if peer.worker != nil {
 		thread.join(peer.worker)
 		thread.destroy(peer.worker)
 		peer.worker = nil
 	}
+
 	if peer.log.file != nil {
 		os.close(peer.log.file)
 		peer.log.file = nil
@@ -437,19 +593,26 @@ http102_stop :: proc(peer: ^Http102_Peer) {
 @(private)
 http102_read_log :: proc(log: ^Http102_Log) {
 	buf: [512]u8
+
 	for {
 		got, err := os.read(log.file, buf[:])
+
 		if got > 0 {
 			sync.lock(&log.mu)
+
 			for octet in buf[:got] {
 				if log.n < len(log.text) {
 					log.text[log.n] = octet
 					log.n += 1
 				}
 			}
+
 			sync.unlock(&log.mu)
 		}
-		if err != nil || got == 0 {return}
+
+		if err != nil || got == 0 {
+			return
+		}
 	}
 }
 
@@ -460,23 +623,35 @@ http102_count :: proc(log: ^Http102_Log, needle: string) -> int {
 	text := string(log.text[:log.n])
 	count := 0
 	from := 0
+
 	for from < len(text) {
 		at := strings.index(text[from:], needle)
-		if at < 0 {break}
+
+		if at < 0 {
+			break
+		}
+
 		count += 1
 		from += at + len(needle)
 	}
+
 	return count
 }
 
 @(private)
 http102_wait_int :: proc(log: ^Http102_Log, key: string, budget: time.Duration) -> (int, bool) {
 	deadline := time.time_add(time.now(), budget)
+
 	for time.diff(time.now(), deadline) > 0 {
 		value, ok := http102_find_int(log, key)
-		if ok {return value, true}
+
+		if ok {
+			return value, true
+		}
+
 		time.sleep(20 * time.Millisecond)
 	}
+
 	return http102_find_int(log, key)
 }
 
@@ -486,12 +661,27 @@ http102_find_int :: proc(log: ^Http102_Log, key: string) -> (int, bool) {
 	defer sync.unlock(&log.mu)
 	text := string(log.text[:log.n])
 	at := strings.last_index(text, key)
-	if at < 0 {return 0, false}
-	rest := text[at+len(key):]
+
+	if at < 0 {
+		return 0, false
+	}
+
+	rest := text[at + len(key):]
 	i := 0
-	for i < len(rest) && (rest[i] == ' ' || rest[i] == '"') {i += 1}
+
+	for i < len(rest) && (rest[i] == ' ' || rest[i] == '"') {
+		i += 1
+	}
+
 	end := i
-	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {end += 1}
-	if end == i {return 0, false}
+
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end += 1
+	}
+
+	if end == i {
+		return 0, false
+	}
+
 	return strconv.parse_int(rest[i:end])
 }

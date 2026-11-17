@@ -16,11 +16,11 @@ import "core:time"
 // unchanged on HTTP/1. Response bytes borrow the caller's temporary allocator,
 // bounded to 64 KiB. provider_code stays zero.
 Buffered_HTTP_Result :: struct {
-	status: int,
-	ok: bool,
+	status:       int,
+	ok:           bool,
 	// A complete HTTP response can be non-2xx without a transport failure.
 	transport_ok: bool,
-	error: HTTP_Error,
+	error:        HTTP_Error,
 }
 
 Buffered_HTTP_Reply :: struct {
@@ -92,17 +92,7 @@ buffered_http_execute_managed :: proc(
 	if denied.kind != .None do return nil, {error = denied}
 	defer resources.release(&scratch)
 	reply: Buffered_HTTP_Reply
-	result = buffered_http_perform(
-		method,
-		url,
-		body,
-		headers,
-		ca_file,
-		timeout_ms,
-		upload_file,
-		upload_size,
-		&reply,
-	)
+	result = buffered_http_perform(method, url, body, headers, ca_file, timeout_ms, upload_file, upload_size, &reply)
 	if !result.transport_ok do return
 	copied, ae := make([]byte, reply.used, output)
 	if ae != nil {
@@ -168,17 +158,7 @@ buffered_http_execute_owned :: proc(
 	context.temp_allocator = mem.dynamic_arena_allocator(&arena)
 	defer context.temp_allocator = previous
 	reply: Buffered_HTTP_Reply
-	result = buffered_http_perform(
-		method,
-		url,
-		body,
-		headers,
-		ca_file,
-		timeout_ms,
-		upload_file,
-		upload_size,
-		&reply,
-	)
+	result = buffered_http_perform(method, url, body, headers, ca_file, timeout_ms, upload_file, upload_size, &reply)
 	if !result.transport_ok do return
 	copied, ae := buffered_http_owned_copy(&reply, result.status, output)
 	if ae != nil {
@@ -195,13 +175,11 @@ buffered_http_scratch :: proc(scope: resources.Scope) -> (resources.Lease, HTTP_
 	if scope == (resources.Scope{}) do return {}, {}
 	lease, denied := resources.reserve(scope, {bytes = 64 * 1024})
 	if denied != .None do return {}, budget_error(denied)
+
 	return lease, {}
 }
 @(private)
-buffered_http_copy_error :: proc(
-	previous: Buffered_HTTP_Result,
-	error: mem.Allocator_Error,
-) -> Buffered_HTTP_Result {
+buffered_http_copy_error :: proc(previous: Buffered_HTTP_Result, error: mem.Allocator_Error) -> Buffered_HTTP_Result {
 	result := previous
 	result.ok, result.transport_ok = false, false
 	result.error = {
@@ -211,6 +189,7 @@ buffered_http_copy_error :: proc(
 		status       = result.status,
 		write_effect = .Response_Received,
 	}
+
 	return result
 }
 
@@ -266,11 +245,13 @@ buffered_http_validate :: proc(
 			error.kind = .Invalid_Header
 			return error
 		}
+
 		if managed {
 			if len(header) > http.MAX_HEADER_SIZE - bytes {
 				error.kind = .Header_Oversized
 				return error
 			}
+
 			bytes += len(header)
 		}
 	}
@@ -298,13 +279,23 @@ buffered_http_perform :: proc(
 	}
 	parsed, parse_error := http.url_parse(url)
 	if parse_error.kind != .None {
-		result.error = {kind = parse_error.kind, phase = .Configuration, write_effect = .Not_Sent}
+		result.error = {
+			kind         = parse_error.kind,
+			phase        = .Configuration,
+			write_effect = .Not_Sent,
+		}
+
 		return
 	}
 	timeout := time.Duration(timeout_ms) * time.Millisecond
 	total := time.time_add(time.now(), timeout)
 	if time.diff(time.now(), total) <= 0 {
-		result.error = {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent}
+		result.error = {
+			kind         = .Deadline_Failed,
+			phase        = .Deadline,
+			write_effect = .Not_Sent,
+		}
+
 		return
 	}
 	alpn := [?]string{"http/1.1", "h2"}
@@ -330,34 +321,50 @@ buffered_http_perform :: proc(
 	}
 	if ca_file != "" {
 		allocated, pool_error := new(tls_api.Root_Pool)
+
 		if pool_error != nil || allocated == nil {
 			if pool_error == nil do pool_error = .Out_Of_Memory
 			result.error = buffered_http_allocation_error(pool_error)
 			return
 		}
+
 		pool = allocated
 		loaded := tls_api.root_pool_load_file(pool, ca_file)
+
 		if loaded.kind != .None {
-			result.error = {kind = .TLS_Failed, phase = .TLS, write_effect = .Not_Sent}
+			result.error = {
+				kind         = .TLS_Failed,
+				phase        = .TLS,
+				write_effect = .Not_Sent,
+			}
+
 			return
 		}
+
 		config.tls.root_cas = pool.roots[:pool.count]
 	}
 	if !parsed.secure {
 		socket, setup_error := bounded_socket(parsed, config, connection_setup_deadline(config, total))
+
 		if setup_error.kind != .None {
 			result.error = setup_error
 			return
 		}
+
 		defer net.close(socket)
-		tcp := net.TCP_Connection{socket = socket}
+		tcp := net.TCP_Connection {
+			socket = socket,
+		}
+
 		stream := net.tcp_connection(&tcp)
+
 		if deadline_error := net.set_deadline(stream, total); deadline_error.kind != .None {
-			result.error = buffered_tcp_timeout({
-				kind = .Deadline_Failed, phase = .Deadline, transport = deadline_error, write_effect = .Not_Sent,
-			})
+			result.error = buffered_tcp_timeout(
+				{kind = .Deadline_Failed, phase = .Deadline, transport = deadline_error, write_effect = .Not_Sent},
+			)
 			return
 		}
+
 		result = buffered_http_exchange(stream, method, parsed, body, headers, upload_file, upload_size, total, reply)
 		result.error = buffered_tcp_timeout(result.error)
 		return
@@ -372,25 +379,50 @@ buffered_http_perform :: proc(
 		free(connection, context.allocator)
 	}
 	if deadline_error := tls_api.set_deadline(connection, total); deadline_error.kind != .None {
-		result.error = buffered_tcp_timeout({
-			kind = .Deadline_Failed, phase = .Deadline, transport = deadline_error, write_effect = .Not_Sent,
-		})
+		result.error = buffered_tcp_timeout(
+			{kind = .Deadline_Failed, phase = .Deadline, transport = deadline_error, write_effect = .Not_Sent},
+		)
 		return
 	}
 	selected := tls_api.connection_state(connection).negotiated_protocol
 	if selected == "h2" {
-		result = buffered_http_h2(connection, method, url, body, headers, upload_file, upload_size, config, total, reply)
+		result = buffered_http_h2(
+			connection,
+			method,
+			url,
+			body,
+			headers,
+			upload_file,
+			upload_size,
+			config,
+			total,
+			reply,
+		)
 		result.error = buffered_tcp_timeout(result.error)
 		return
 	}
 	if selected != "" && selected != "http/1.1" {
-		result.error = {kind = .IO_Failed, phase = .Protocol, write_effect = .Not_Sent}
+		result.error = {
+			kind         = .IO_Failed,
+			phase        = .Protocol,
+			write_effect = .Not_Sent,
+		}
+
 		return
 	}
-	adapter := TLS_Adapter{connection = connection}
-	stream := net.Connection{data = &adapter, read = tls_read, write = tls_write, close = tls_close}
+	adapter := TLS_Adapter {
+		connection = connection,
+	}
+	stream := net.Connection {
+		data  = &adapter,
+		read  = tls_read,
+		write = tls_write,
+		close = tls_close,
+	}
 	result = buffered_http_exchange(stream, method, parsed, body, headers, upload_file, upload_size, total, reply)
-	if result.error.kind == .IO_Failed {result.error.tls_io = adapter.last_error}
+	if result.error.kind == .IO_Failed {
+		result.error.tls_io = adapter.last_error
+	}
 	result.error = buffered_tcp_timeout(result.error)
 	return
 }
@@ -401,40 +433,63 @@ buffered_http_perform :: proc(
 @(private)
 buffered_tcp_timeout :: proc(error: HTTP_Error) -> HTTP_Error {
 	result := error
-	if result.kind != .None && result.kind != .Dial_Failed && result.phase == .Deadline && result.write_effect == .Not_Sent {
+	if result.kind != .None &&
+	   result.kind != .Dial_Failed &&
+	   result.phase == .Deadline &&
+	   result.write_effect == .Not_Sent {
 		result.write_effect = .Unknown
 	}
+
 	return result
 }
 
 @(private)
 buffered_http_method :: proc(method: string) -> (http.Method, bool) {
 	switch method {
-	case "GET": return .GET, true
-	case "POST": return .POST, true
-	case "PATCH": return .PATCH, true
-	case "HEAD": return .HEAD, true
-	case "PUT": return .PUT, true
-	case "DELETE": return .DELETE, true
-	case "OPTIONS": return .OPTIONS, true
+	case "GET":
+		return .GET, true
+	case "POST":
+		return .POST, true
+	case "PATCH":
+		return .PATCH, true
+	case "HEAD":
+		return .HEAD, true
+	case "PUT":
+		return .PUT, true
+	case "DELETE":
+		return .DELETE, true
+	case "OPTIONS":
+		return .OPTIONS, true
 	}
+
 	return {}, false
 }
 
 @(private)
 buffered_http_h2 :: proc(
-	connection: ^tls_api.Conn, method, url: string, body: []byte,
+	connection: ^tls_api.Conn,
+	method, url: string,
+	body: []byte,
 	headers: []string,
-	file: ^os.File, upload_size: i64, config: Config, deadline: time.Time, reply: ^Buffered_HTTP_Reply,
+	file: ^os.File,
+	upload_size: i64,
+	config: Config,
+	deadline: time.Time,
+	reply: ^Buffered_HTTP_Reply,
 ) -> Buffered_HTTP_Result {
 	mapped, ok := buffered_http_method(method)
 	if !ok {
 		return {error = {kind = .Invalid_Method, phase = .Protocol, write_effect = .Not_Sent}}
 	}
-	request := http.Request{method = mapped, url = url}
+	request := http.Request {
+		method = mapped,
+		url    = url,
+	}
 	fields: [http.MAX_HEADERS]http.Header
 	parsed_headers, header_error := buffered_http_h2_headers(headers, fields[:])
-	if header_error.kind != .None {return {error = header_error}}
+	if header_error.kind != .None {
+		return {error = header_error}
+	}
 	request.headers = parsed_headers
 	upload: Upload_Source
 	upload_ptr: ^Upload_Source
@@ -442,7 +497,12 @@ buffered_http_h2 :: proc(
 		if !http.request_body_allowed(mapped) {
 			return {error = {kind = .Invalid_Method, phase = .Protocol, write_effect = .Not_Sent}}
 		}
-		upload = {stream = os.to_stream(file), content_length = upload_size}
+
+		upload = {
+			stream         = os.to_stream(file),
+			content_length = upload_size,
+		}
+
 		upload_ptr = &upload
 	} else if method == "PUT" || method == "POST" {
 		request.body = body
@@ -461,8 +521,10 @@ buffered_http_header :: proc(header: string) -> (name, value: string, suppress, 
 		value = strings.trim(header[colon + 1:], " \t")
 		return header[:colon], value, value == "", true
 	}
+
 	semi := strings.index_byte(header, ';')
 	if semi < 0 do return
+
 	return header[:semi], "", false, true
 }
 
@@ -470,62 +532,103 @@ buffered_http_header :: proc(header: string) -> (name, value: string, suppress, 
 @(private)
 buffered_http_h2_headers :: proc(headers: []string, storage: []http.Header) -> ([]http.Header, HTTP_Error) {
 	count := 0
+
 	for header in headers {
 		name, value, suppress, present := buffered_http_header(header)
 		if !present do continue
+
 		if !http.header_name_valid(name) {
 			return nil, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
 		}
+
 		if suppress do continue
+
 		if !http.header_value_valid(value) {
 			return nil, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
 		}
+
 		if count == len(storage) {
 			return nil, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
 		}
-		storage[count] = {name = name, value = value}
+
+		storage[count] = {
+			name  = name,
+			value = value,
+		}
+
 		count += 1
 	}
+
 	return storage[:count], {}
 }
 
 @(private)
-buffered_http_from_response :: proc(response: ^Response, error: HTTP_Error, reply: ^Buffered_HTTP_Reply) -> Buffered_HTTP_Result {
+buffered_http_from_response :: proc(
+	response: ^Response,
+	error: HTTP_Error,
+	reply: ^Buffered_HTTP_Reply,
+) -> Buffered_HTTP_Result {
 	status := response.status
-	if status == 0 {status = error.status}
+	if status == 0 {
+		status = error.status
+	}
 	if error.kind == .None {
 		if len(response.body) > len(reply.data) {
 			return {
 				status = status,
-				error = {kind = .Body_Oversized, phase = .Body_Limit, status = status, write_effect = .Response_Received},
+				error = {
+					kind = .Body_Oversized,
+					phase = .Body_Limit,
+					status = status,
+					write_effect = .Response_Received,
+				},
 			}
 		}
+
 		copy(reply.data[:], response.body)
 		reply.used = len(response.body)
 		return {status = status, ok = status >= 200 && status < 300, transport_ok = true}
 	}
 	call := error
-	if call.status == 0 {call.status = status}
+	if call.status == 0 {
+		call.status = status
+	}
 	if call.phase == .Unknown || call.write_effect == .Not_Sent {
 		effect := HTTP_Write_Effect.Unknown
-		if status != 0 {effect = .Response_Received}
+
+		if status != 0 {
+			effect = .Response_Received
+		}
+
 		call = http_error_classify(call, .Read, effect, status)
 	}
 	if call.kind == .Body_Oversized {
 		call.phase = .Body_Limit
-		if status != 0 {call.write_effect = .Response_Received}
+
+		if status != 0 {
+			call.write_effect = .Response_Received
+		}
 	}
 	return {status = status, error = call}
 }
 
 @(private)
 buffered_http_exchange :: proc(
-	stream: net.Connection, method: string, parsed: http.URL, body: []byte, headers: []string,
-	file: ^os.File, upload_size: i64, deadline: time.Time, reply: ^Buffered_HTTP_Reply,
+	stream: net.Connection,
+	method: string,
+	parsed: http.URL,
+	body: []byte,
+	headers: []string,
+	file: ^os.File,
+	upload_size: i64,
+	deadline: time.Time,
+	reply: ^Buffered_HTTP_Reply,
 ) -> Buffered_HTTP_Result {
 	encoded: [http.MAX_HEADER_SIZE]u8
 	count, encode_error := buffered_http_encode(encoded[:], method, parsed, body, headers, file, upload_size)
-	if encode_error.kind != .None {return {error = encode_error}}
+	if encode_error.kind != .None {
+		return {error = encode_error}
+	}
 	outcome: HTTP_Exchange_Outcome
 	outcome.write_started = true
 	if _, write_error := net.write_all(stream, encoded[:count]); write_error.kind != .None {
@@ -547,38 +650,63 @@ buffered_http_exchange :: proc(
 buffered_http_upload :: proc(stream: net.Connection, file: ^os.File, size: i64, deadline: time.Time) -> HTTP_Error {
 	remaining := size
 	buffer: [UPLOAD_BUFFER_SIZE]u8
+
 	for remaining > 0 {
 		if deadline != {} && time.diff(time.now(), deadline) <= 0 {
 			return {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Unknown}
 		}
+
 		wanted := int(min(remaining, i64(len(buffer))))
 		n, read_error := os.read(file, buffer[:wanted])
+
 		if n < 0 || n > wanted {
-			return {kind = .IO_Failed, phase = .Write, write_effect = .Unknown, source_io = buffered_source_io(read_error)}
+			return {
+				kind = .IO_Failed,
+				phase = .Write,
+				write_effect = .Unknown,
+				source_io = buffered_source_io(read_error),
+			}
 		}
+
 		if read_error != nil && read_error != io.Error.EOF {
-			return {kind = .IO_Failed, phase = .Write, write_effect = .Unknown, source_io = buffered_source_io(read_error)}
+			return {
+				kind = .IO_Failed,
+				phase = .Write,
+				write_effect = .Unknown,
+				source_io = buffered_source_io(read_error),
+			}
 		}
+
 		if n == 0 {
 			return {kind = .Unexpected_EOF, phase = .Write, write_effect = .Unknown, source_io = .EOF}
 		}
+
 		if _, write_error := net.write_all(stream, buffer[:n]); write_error.kind != .None {
 			return buffered_http_io(write_error, true, {write_started = true})
 		}
+
 		remaining -= i64(n)
+
 		if read_error == io.Error.EOF && remaining > 0 {
 			return {kind = .Unexpected_EOF, phase = .Write, write_effect = .Unknown, source_io = .EOF}
 		}
 	}
+
 	return {}
 }
 
 @(private)
-buffered_http_read :: proc(stream: net.Connection, reply: ^Buffered_HTTP_Reply, outcome: ^HTTP_Exchange_Outcome) -> Buffered_HTTP_Result {
+buffered_http_read :: proc(
+	stream: net.Connection,
+	reply: ^Buffered_HTTP_Reply,
+	outcome: ^HTTP_Exchange_Outcome,
+) -> Buffered_HTTP_Result {
 	response: Response
 	response.allocator = context.allocator
 	defer response_destroy(&response)
-	reader := Reader{stream = stream}
+	reader := Reader {
+		stream = stream,
+	}
 	storage: [http.MAX_HEADER_SIZE]u8
 	used, header_error := response_read_header(&reader, storage[:], &outcome.status)
 	if header_error.kind != .None {
@@ -587,7 +715,10 @@ buffered_http_read :: proc(stream: net.Connection, reply: ^Buffered_HTTP_Reply, 
 	limit := len(reply.data)
 	head, init_error := response_initialize(&response, storage[:used], limit, context.allocator)
 	if init_error.kind != .None {
-		if response.status != 0 {outcome.status = response.status}
+		if response.status != 0 {
+			outcome.status = response.status
+		}
+
 		return {status = outcome.status, error = buffered_http_read_error(init_error, outcome^)}
 	}
 	outcome.status = head.status
@@ -600,7 +731,12 @@ buffered_http_read :: proc(stream: net.Connection, reply: ^Buffered_HTTP_Reply, 
 	if len(response.body) > len(reply.data) {
 		return {
 			status = outcome.status,
-			error = {kind = .Body_Oversized, phase = .Body_Limit, status = outcome.status, write_effect = .Response_Received},
+			error = {
+				kind = .Body_Oversized,
+				phase = .Body_Limit,
+				status = outcome.status,
+				write_effect = .Response_Received,
+			},
 		}
 	}
 	copy(reply.data[:], response.body)
@@ -611,25 +747,47 @@ buffered_http_read :: proc(stream: net.Connection, reply: ^Buffered_HTTP_Reply, 
 @(private)
 buffered_http_read_error :: proc(error: HTTP_Error, outcome: HTTP_Exchange_Outcome) -> HTTP_Error {
 	call := error
-	if call.kind == .Body_Oversized {call.phase = .Body_Limit}
+
+	if call.kind == .Body_Oversized {
+		call.phase = .Body_Limit
+	}
+
 	effect := HTTP_Write_Effect.Unknown
-	if outcome.status != 0 {effect = .Response_Received}
+
+	if outcome.status != 0 {
+		effect = .Response_Received
+	}
+
 	fallback := HTTP_Phase.Read
-	if call.phase != .Unknown {fallback = call.phase}
+
+	if call.phase != .Unknown {
+		fallback = call.phase
+	}
+
 	call = http_error_classify(call, fallback, effect, outcome.status)
-	if outcome.status != 0 {call.write_effect = .Response_Received}
+
+	if outcome.status != 0 {
+		call.write_effect = .Response_Received
+	}
+
 	return call
 }
 
 @(private)
-buffered_http_io :: proc(transport: net.Connection_Error, during_write: bool, outcome: HTTP_Exchange_Outcome) -> HTTP_Error {
+buffered_http_io :: proc(
+	transport: net.Connection_Error,
+	during_write: bool,
+	outcome: HTTP_Exchange_Outcome,
+) -> HTTP_Error {
 	error := HTTP_Error {
-		kind = .IO_Failed,
+		kind      = .IO_Failed,
 		transport = transport,
-		phase = .Write if during_write else .Read,
+		phase     = .Write if during_write else .Read,
 	}
 	effect := HTTP_Write_Effect.Unknown
-	if outcome.status != 0 {effect = .Response_Received}
+	if outcome.status != 0 {
+		effect = .Response_Received
+	}
 	return http_error_classify(error, error.phase, effect, outcome.status)
 }
 
@@ -637,6 +795,7 @@ buffered_http_io :: proc(transport: net.Connection_Error, during_write: bool, ou
 buffered_source_io :: proc(error: os.Error) -> io.Error {
 	if value, ok := error.(io.Error); ok do return value
 	if error == nil do return .None
+
 	return .Unknown
 }
 
@@ -654,6 +813,7 @@ buffered_http_put :: proc(w: ^Buffered_HTTP_Writer, parts: ..string) {
 			w.overflow = true
 			return
 		}
+
 		w.used += copy(w.dst[w.used:], part)
 	}
 }
@@ -662,11 +822,29 @@ buffered_http_put :: proc(w: ^Buffered_HTTP_Writer, parts: ..string) {
 // tokens PUT and POST; a file upload sends exactly upload_size bytes for any method.
 @(private)
 buffered_http_encode :: proc(
-	dst: []u8, method: string, parsed: http.URL, body: []byte, headers: []string, file: ^os.File, upload_size: i64,
-) -> (int, HTTP_Error) {
-	Default :: struct {on: bool, value: string}
-	host := Default{on = true, value = parsed.authority}
-	accept := Default{on = true, value = "*/*"}
+	dst: []u8,
+	method: string,
+	parsed: http.URL,
+	body: []byte,
+	headers: []string,
+	file: ^os.File,
+	upload_size: i64,
+) -> (
+	int,
+	HTTP_Error,
+) {
+	Default :: struct {
+		on:    bool,
+		value: string,
+	}
+	host := Default {
+		on    = true,
+		value = parsed.authority,
+	}
+	accept := Default {
+		on    = true,
+		value = "*/*",
+	}
 	length_on := file != nil || method == "PUT" || method == "POST"
 	length_text: string
 	digits: [32]u8
@@ -680,35 +858,60 @@ buffered_http_encode :: proc(
 	for header in headers {
 		name, value, suppress, present := buffered_http_header(header)
 		if !present do continue
+
 		if !http.header_name_valid(name) {
 			return 0, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
 		}
+
 		if strings.equal_fold(name, "Host") {
 			host.on = !suppress
-			if !suppress {host.value = value}
+
+			if !suppress {
+				host.value = value
+			}
+
 			continue
 		}
+
 		if strings.equal_fold(name, "Accept") {
 			accept.on = !suppress
-			if !suppress {accept.value = value}
+
+			if !suppress {
+				accept.value = value
+			}
+
 			continue
 		}
+
 		if strings.equal_fold(name, "Content-Length") {
 			length_on = !suppress
-			if !suppress {length_text = value}
+
+			if !suppress {
+				length_text = value
+			}
+
 			continue
 		}
+
 		if suppress do continue
+
 		if custom_count == len(custom) {
 			return 0, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
 		}
-		custom[custom_count] = {name = name, value = value}
+
+		custom[custom_count] = {
+			name  = name,
+			value = value,
+		}
+
 		custom_count += 1
 	}
 	target := parsed.target
 	prefix := ""
 	if target == "" || target[0] == '?' do prefix = "/"
-	w := Buffered_HTTP_Writer{dst = dst}
+	w := Buffered_HTTP_Writer {
+		dst = dst,
+	}
 	buffered_http_put(&w, method, " ", prefix, target, " HTTP/1.1\r\n")
 	if host.on do buffered_http_put(&w, "Host: ", host.value, "\r\n")
 	if accept.on do buffered_http_put(&w, "Accept: ", accept.value, "\r\n")

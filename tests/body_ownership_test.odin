@@ -12,10 +12,23 @@ response_body_transfer_survives_response_destroy :: proc(t: ^testing.T) {
 	mem.tracking_allocator_init(&tracker, context.allocator)
 	defer mem.tracking_allocator_destroy(&tracker)
 	allocator := mem.tracking_allocator(&tracker)
-	fixture := Fixture{wire="HTTP/1.1 200 OK\r\nContent-Length: 4\r\nX-Fixture: yes\r\n\r\nbody"}
-	stream := net.Connection{data=&fixture, read=read, write=write, close=close}
-	response, request_error := surf.exchange(stream, {method=.GET, url="https://example.com/"}, 64, allocator)
-	if !testing.expect_value(t, request_error.kind, .None) {return}
+	fixture := Fixture {
+		wire = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nX-Fixture: yes\r\n\r\nbody",
+	}
+
+	stream := net.Connection {
+		data  = &fixture,
+		read  = read,
+		write = write,
+		close = close,
+	}
+
+	response, request_error := surf.exchange(stream, {method = .GET, url = "https://example.com/"}, 64, allocator)
+
+	if !testing.expect_value(t, request_error.kind, .None) {
+		return
+	}
+
 	defer surf.response_destroy(&response)
 	original := raw_data(response.body)
 	capacity := cap(response.body_storage)
@@ -41,10 +54,17 @@ response_body_transfer_survives_response_destroy :: proc(t: ^testing.T) {
 @(test)
 response_body_rejection_preserves_original_response :: proc(t: ^testing.T) {
 	borrowed := []u8{'a', 'b'}
-	response := surf.Response{status=200, body=borrowed}
+	response := surf.Response {
+		status = 200,
+		body   = borrowed,
+	}
+
 	_, error := surf.response_take_body(&response)
 	testing.expect_value(t, error.kind, .Invalid_Input)
-	testing.expect(t, response.status == 200 && raw_data(response.body) == raw_data(borrowed) && len(response.body) == 2)
+	testing.expect(
+		t,
+		response.status == 200 && raw_data(response.body) == raw_data(borrowed) && len(response.body) == 2,
+	)
 	_, nil_error := surf.response_take_body(nil)
 	testing.expect_value(t, nil_error.kind, .Invalid_Input)
 	// Mismatched views must not drop the response's actual owning storage.
@@ -58,10 +78,23 @@ response_body_rejection_preserves_original_response :: proc(t: ^testing.T) {
 
 @(test)
 empty_exchange_body_can_transfer_as_an_owned_zero_byte_chunk :: proc(t: ^testing.T) {
-	fixture := Fixture{wire="HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"}
-	stream := net.Connection{data=&fixture, read=read, write=write, close=close}
-	response, request_error := surf.exchange(stream, {method=.GET, url="https://example.com/"}, 64)
-	if !testing.expect_value(t, request_error.kind, .None) {return}
+	fixture := Fixture {
+		wire = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+	}
+
+	stream := net.Connection {
+		data  = &fixture,
+		read  = read,
+		write = write,
+		close = close,
+	}
+
+	response, request_error := surf.exchange(stream, {method = .GET, url = "https://example.com/"}, 64)
+
+	if !testing.expect_value(t, request_error.kind, .None) {
+		return
+	}
+
 	defer surf.response_destroy(&response)
 	capacity := cap(response.body_storage)
 	chunk, error := surf.response_take_body(&response)

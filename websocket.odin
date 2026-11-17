@@ -46,8 +46,7 @@ websocket_client :: proc(
 
 	if !websocket_stream_valid(stream) do return .Invalid_Stream
 
-	if config.max_message_size < 0 ||
-	   config.max_message_size > WebSocket_MAX_MESSAGE_SIZE_LIMIT {
+	if config.max_message_size < 0 || config.max_message_size > WebSocket_MAX_MESSAGE_SIZE_LIMIT {
 		return .Invalid_Message_Limit
 	}
 
@@ -111,49 +110,44 @@ websocket_upgrade :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
 			conn.stream.set_read_deadline(conn.stream.data, {})
 			conn.stream.set_write_deadline(conn.stream.data, {})
 		}
-
 	}
+
 	key: [16]u8
 	crypto.rand_bytes(key[:])
-	if request_error := websocket_upgrade_request_send(conn, key);
-	   request_error.kind != .None do return request_error
-	if response_error := websocket_upgrade_response_receive(conn, key);
-	   response_error.kind != .None do return response_error
+	if request_error := websocket_upgrade_request_send(conn, key); request_error.kind != .None do return request_error
+	if response_error := websocket_upgrade_response_receive(conn, key); response_error.kind != .None do return response_error
+
 	if deadlines_set {
 		if clear_error := websocket_upgrade_deadline_clear(conn); clear_error.kind != .None {
 			return clear_error
 		}
+
 		deadlines_set = false
 	}
+
 	conn.phase = .Open
+
 	return {}
 }
 
 websocket_upgrade_deadline_start :: proc(conn: ^WebSocket_Conn) -> (bool, WebSocket_Error) {
-	has_read_n_write_deadline :=
-		conn.stream.set_read_deadline != nil &&
-		conn.stream.set_write_deadline != nil
+	has_read_n_write_deadline := conn.stream.set_read_deadline != nil && conn.stream.set_write_deadline != nil
 
 	deadlines_set := false
-	if has_read_n_write_deadline {
 
+	if has_read_n_write_deadline {
 		timeout := conn.config.handshake_timeout
 		if timeout == 0 do timeout = 10 * time.Second
 
 		deadline := time.time_add(time.now(), timeout)
+
 		if err := websocket_stream_set_deadlines(conn.stream, deadline); err.kind != .None {
 			return false, websocket_upgrade_fail(conn, {kind = .Deadline_Failed, stream = err})
 		}
 
 		deadlines_set = true
 	} else if conn.config.handshake_timeout > 0 {
-		return false, websocket_upgrade_fail(
-			conn,
-			{
-				kind = .Deadline_Failed,
-				stream = {kind = .Deadline_Unsupported},
-			},
-		)
+		return false, websocket_upgrade_fail(conn, {kind = .Deadline_Failed, stream = {kind = .Deadline_Unsupported}})
 	}
 
 	return deadlines_set, {}
@@ -171,19 +165,15 @@ websocket_upgrade_request_send :: proc(conn: ^WebSocket_Conn, key: [16]u8) -> We
 		},
 		key,
 	)
+
 	if encode_err != .None {
-		return websocket_upgrade_fail(
-			conn,
-			{kind = .Upgrade_Failed, upgrade = encode_err},
-		)
+		return websocket_upgrade_fail(conn, {kind = .Upgrade_Failed, upgrade = encode_err})
 	}
 
 	_, send_err := websocket_stream_write_all(conn.stream, request[:size])
+
 	if send_err.kind != .None {
-		return websocket_upgrade_fail(
-			conn,
-			{kind = .Frame_Write_Failed, stream = send_err},
-		)
+		return websocket_upgrade_fail(conn, {kind = .Frame_Write_Failed, stream = send_err})
 	}
 
 	return {}
@@ -192,6 +182,7 @@ websocket_upgrade_request_send :: proc(conn: ^WebSocket_Conn, key: [16]u8) -> We
 // Sets the read deadline, then the write deadline; stops at the first failure.
 websocket_stream_set_deadlines :: proc(stream: WebSocket_Stream, deadline: time.Time) -> WebSocket_Stream_Error {
 	err := stream.set_read_deadline(stream.data, deadline)
+
 	if err.kind != .None {
 		return err
 	}
@@ -209,65 +200,40 @@ websocket_upgrade_deadline_clear :: proc(conn: ^WebSocket_Conn) -> WebSocket_Err
 
 websocket_upgrade_response_receive :: proc(conn: ^WebSocket_Conn, key: [16]u8) -> WebSocket_Error {
 	used := 0
+
 	for {
-		response, consumed, response_err :=
-			websocket.upgrade_response_validate(
-				conn.prefetched[:used],
-				key,
-				conn.config.subprotocols,
-			)
+		response, consumed, response_err := websocket.upgrade_response_validate(
+			conn.prefetched[:used],
+			key,
+			conn.config.subprotocols,
+		)
+
 		if response_err == .None {
-			copy(
-				conn.selected_protocol[:],
-				transmute([]u8)response.subprotocol,
-			)
+			copy(conn.selected_protocol[:], transmute([]u8)response.subprotocol)
 			conn.selected_protocol_size = len(response.subprotocol)
 			copy(conn.prefetched[:], conn.prefetched[consumed:used])
-			conn.prefetched_at, conn.prefetched_size =
-				0, used - consumed
-
+			conn.prefetched_at, conn.prefetched_size = 0, used - consumed
 
 			return {}
 		}
 
 		if response_err != .Header_Incomplete {
-			return websocket_upgrade_fail(
-				conn,
-				{kind = .Upgrade_Failed, upgrade = response_err},
-			)
+			return websocket_upgrade_fail(conn, {kind = .Upgrade_Failed, upgrade = response_err})
 		}
 
 		if used == len(conn.prefetched) {
-			return websocket_upgrade_fail(
-				conn,
-				{
-					kind = .Upgrade_Failed,
-					upgrade = .Header_Oversized,
-				},
-			)
+			return websocket_upgrade_fail(conn, {kind = .Upgrade_Failed, upgrade = .Header_Oversized})
 		}
 
-		if progress_error := websocket_upgrade_response_progress(conn, key, &used);
-		   progress_error.kind != .None do return progress_error
-
+		if progress_error := websocket_upgrade_response_progress(conn, key, &used); progress_error.kind != .None do return progress_error
 	}
 }
 
-websocket_upgrade_response_progress :: proc(
-	conn: ^WebSocket_Conn, key: [16]u8, used: ^int,
-) -> WebSocket_Error {
-	count, read_err := conn.stream.read(
-		conn.stream.data,
-		conn.prefetched[used^:],
-	)
+websocket_upgrade_response_progress :: proc(conn: ^WebSocket_Conn, key: [16]u8, used: ^int) -> WebSocket_Error {
+	count, read_err := conn.stream.read(conn.stream.data, conn.prefetched[used^:])
+
 	if count < 0 || count > len(conn.prefetched) - used^ {
-		return websocket_upgrade_fail(
-			conn,
-			{
-				kind = .Frame_Read_Failed,
-				stream = {kind = .Invalid_Count},
-			},
-		)
+		return websocket_upgrade_fail(conn, {kind = .Frame_Read_Failed, stream = {kind = .Invalid_Count}})
 	}
 
 	used^ += count
@@ -275,32 +241,16 @@ websocket_upgrade_response_progress :: proc(
 	// Process bytes that accompany EOF before deciding the upgrade failed.
 	if read_err.kind != .None {
 		if read_err.kind != .EOF {
-			return websocket_upgrade_fail(
-				conn,
-				{kind = .Frame_Read_Failed, stream = read_err},
-			)
+			return websocket_upgrade_fail(conn, {kind = .Frame_Read_Failed, stream = read_err})
 		}
 
-		_, _, final_err := websocket.upgrade_response_validate(
-			conn.prefetched[:used^],
-			key,
-			conn.config.subprotocols,
-		)
+		_, _, final_err := websocket.upgrade_response_validate(conn.prefetched[:used^], key, conn.config.subprotocols)
+
 		if final_err != .None {
-			return websocket_upgrade_fail(
-				conn,
-				{kind = .Frame_Read_Failed, stream = read_err},
-			)
+			return websocket_upgrade_fail(conn, {kind = .Frame_Read_Failed, stream = read_err})
 		}
-
 	} else if count == 0 {
-		return websocket_upgrade_fail(
-			conn,
-			{
-				kind = .Frame_Read_Failed,
-				stream = {kind = .No_Progress},
-			},
-		)
+		return websocket_upgrade_fail(conn, {kind = .Frame_Read_Failed, stream = {kind = .No_Progress}})
 	}
 
 	return {}
@@ -309,14 +259,15 @@ websocket_upgrade_response_progress :: proc(
 websocket_upgrade_fail :: proc(conn: ^WebSocket_Conn, err: WebSocket_Error) -> WebSocket_Error {
 	conn.phase = .Failed
 	conn.last_error = err
+
 	if !conn.transport_closed {
 		conn.transport_closed = true
+
 		if conn.stream.abort != nil {
 			conn.stream.abort(conn.stream.data)
 		} else {
 			conn.stream.close(conn.stream.data)
 		}
-
 	}
 
 	return err
@@ -358,10 +309,7 @@ websocket_dial :: proc(
 	}
 
 	if len(settings.host) > len(conn.dial_host) {
-		return {
-			kind = .Invalid_Config,
-			client = .Invalid_Upgrade_Options,
-		}
+		return {kind = .Invalid_Config, client = .Invalid_Upgrade_Options}
 	}
 
 	// client only validates the callback shape, so using the stable embedded
@@ -372,9 +320,7 @@ websocket_dial :: proc(
 	}
 
 	copy(conn.dial_host[:], transmute([]u8)settings.host)
-	conn.config.host = cast(string)conn.dial_host[:len(
-		settings.host,
-	)]
+	conn.config.host = cast(string)conn.dial_host[:len(settings.host)]
 
 	err := tls_api.dial(&conn.tls_client, host, port, tls_config)
 	if err.kind != .None {
@@ -384,6 +330,7 @@ websocket_dial :: proc(
 			kind = .Upgrade_Failed,
 			stream = {kind = .TLS_Failed, tls_dial = err},
 		}
+
 		return {kind = .TLS_Failed, tls = err}
 	}
 
@@ -396,25 +343,15 @@ websocket_dial :: proc(
 
 websocket_dial_host :: proc(host_storage: []u8, host: string, port: int) -> string {
 	hostname := host
+
 	if strings.contains(host, ":") {
 		if port == 443 {
 			hostname = fmt.bprintf(host_storage, "[%s]", host)
 		} else {
-			hostname = fmt.bprintf(
-				host_storage,
-				"[%s]:%d",
-				host,
-				port,
-			)
+			hostname = fmt.bprintf(host_storage, "[%s]:%d", host, port)
 		}
-
 	} else if port != 443 {
-		hostname = fmt.bprintf(
-			host_storage,
-			"%s:%d",
-			host,
-			port,
-		)
+		hostname = fmt.bprintf(host_storage, "%s:%d", host, port)
 	}
 
 	return hostname
@@ -424,15 +361,10 @@ websocket_dial_host :: proc(host_storage: []u8, host: string, port: int) -> stri
 websocket_subprotocol :: proc(conn: ^WebSocket_Conn) -> string {
 	if conn == nil do return ""
 
-	return(
-		cast(string)conn.selected_protocol[:conn.selected_protocol_size] \
-	)
+	return cast(string)conn.selected_protocol[:conn.selected_protocol_size]
 }
 
-websocket_set_write_deadline :: proc(
-	conn: ^WebSocket_Conn,
-	deadline: time.Time,
-) -> WebSocket_Stream_Error {
+websocket_set_write_deadline :: proc(conn: ^WebSocket_Conn, deadline: time.Time) -> WebSocket_Stream_Error {
 	if conn == nil || conn.phase != .Open {
 		return {kind = .Invalid_Stream}
 	}
@@ -444,16 +376,12 @@ websocket_set_write_deadline :: proc(
 	return conn.stream.set_write_deadline(conn.stream.data, deadline)
 }
 
-websocket_set_deadline :: proc(
-	conn: ^WebSocket_Conn,
-	deadline: time.Time,
-) -> WebSocket_Stream_Error {
+websocket_set_deadline :: proc(conn: ^WebSocket_Conn, deadline: time.Time) -> WebSocket_Stream_Error {
 	if conn == nil || conn.phase != .Open {
 		return {kind = .Invalid_Stream}
 	}
 
-	if conn.stream.set_read_deadline == nil ||
-	   conn.stream.set_write_deadline == nil {
+	if conn.stream.set_read_deadline == nil || conn.stream.set_write_deadline == nil {
 		return {kind = .Deadline_Unsupported}
 	}
 
@@ -522,7 +450,7 @@ WebSocket_Conn :: struct {
 	selected_protocol_size:         int,
 	tls_client:                     tls_api.Conn,
 	dial_host:                      [512]u8,
-	using message_state: websocket.Message_State,
+	using message_state:            websocket.Message_State,
 	last_error:                     WebSocket_Error,
 	transport_closed:               bool,
 }
@@ -550,6 +478,7 @@ websocket_read_message :: proc(
 	controls := 0
 	for {
 		header, header_err := websocket_frame_header_read(conn)
+
 		if header_err.kind != .None {
 			return {}, 0, header_err
 		}
@@ -579,11 +508,7 @@ websocket_read_message :: proc(
 			}
 
 		case:
-			return {}, 0, websocket_fail(
-				conn,
-				{kind = .Invalid_Frame},
-				1002,
-			)
+			return {}, 0, websocket_fail(conn, {kind = .Invalid_Frame}, 1002)
 		}
 	}
 }
@@ -592,6 +517,7 @@ websocket_read_message :: proc(
 // frames is failed with 1008 instead of stalling the read forever.
 websocket_idle_frame :: proc(conn: ^WebSocket_Conn, idle: ^int) -> WebSocket_Error {
 	idle^ += 1
+
 	if idle^ > WebSocket_MAX_CONTROL_FRAMES_WITHOUT_MESSAGE {
 		return websocket_fail(conn, {kind = .No_Progress}, 1008)
 	}
@@ -599,27 +525,18 @@ websocket_idle_frame :: proc(conn: ^WebSocket_Conn, idle: ^int) -> WebSocket_Err
 	return {}
 }
 
-websocket_control_read :: proc(
-	conn: ^WebSocket_Conn, header: websocket.Frame_Header,
-) -> WebSocket_Error {
+websocket_control_read :: proc(conn: ^WebSocket_Conn, header: websocket.Frame_Header) -> WebSocket_Error {
 	payload: [125]u8
 	body := payload[:cast(int)header.payload_length]
 	count, read_err := websocket_read_exact(conn, body)
+
 	if read_err.kind != .None {
-		return websocket_fail(
-			conn,
-			{
-				kind = .Frame_Read_Failed,
-				stream = read_err,
-				transferred = count,
-			},
-		)
+		return websocket_fail(conn, {kind = .Frame_Read_Failed, stream = read_err, transferred = count})
 	}
 
 	#partial switch header.opcode {
 	case .Ping:
-		if err := websocket_frame_write(conn, .Pong, body);
-		   err.kind != .None {
+		if err := websocket_frame_write(conn, .Pong, body); err.kind != .None {
 			return websocket_fail(conn, err)
 		}
 
@@ -628,12 +545,12 @@ websocket_control_read :: proc(
 		return websocket_peer_close(conn, body)
 	case:
 	}
+
 	return {}
 }
 
 websocket_peer_close :: proc(conn: ^WebSocket_Conn, body: []u8) -> WebSocket_Error {
-	if frame_err := websocket.close_payload_validate(body);
-	   frame_err != .None {
+	if frame_err := websocket.close_payload_validate(body); frame_err != .None {
 		return websocket_fail(
 			conn,
 			{kind = .Invalid_Close, frame = frame_err},
@@ -645,17 +562,15 @@ websocket_peer_close :: proc(conn: ^WebSocket_Conn, body: []u8) -> WebSocket_Err
 	deadline_err := websocket_close_deadline(conn)
 	// Echo a valid peer close once, with a fresh client mask.
 	write_err := deadline_err
+
 	if deadline_err.kind == .None {
-		write_err = websocket_frame_write(
-			conn,
-			.Close,
-			body,
-		)
+		write_err = websocket_frame_write(conn, .Close, body)
 	}
 
 	conn.phase = .Closed
 	websocket_release_message(conn)
 	websocket_stream_close(conn, write_err.kind != .None)
+
 	if write_err.kind != .None {
 		write_err.close_code = code
 		conn.last_error = write_err
@@ -666,76 +581,97 @@ websocket_peer_close :: proc(conn: ^WebSocket_Conn, body: []u8) -> WebSocket_Err
 		kind       = .EOF,
 		close_code = code,
 	}
+
 	if !websocket_close_code_normal(code) {
 		err.kind = .Peer_Close_Error
 	}
 
 	conn.last_error = err
+
 	return err
 }
 
 // Protocol errors become connection failures here; the protocol owns no stream.
 websocket_message_error :: proc(error: websocket.Message_Error) -> WebSocket_Error {
 	kind: WebSocket_Error_Kind
+
 	switch error.kind {
-	case .None: kind = .None
-	case .Unexpected_Continuation: kind = .Unexpected_Continuation
-	case .Interrupted_Message: kind = .Interrupted_Message
-	case .Invalid_Message_Type: kind = .Invalid_Message_Type
-	case .Message_Oversized: kind = .Message_Oversized
-	case .Invalid_UTF8: kind = .Invalid_UTF8
-	case .Allocation_Failed: kind = .Allocation_Failed
-	case .Destination_Undersized: kind = .Destination_Undersized
+	case .None:
+		kind = .None
+	case .Unexpected_Continuation:
+		kind = .Unexpected_Continuation
+	case .Interrupted_Message:
+		kind = .Interrupted_Message
+	case .Invalid_Message_Type:
+		kind = .Invalid_Message_Type
+	case .Message_Oversized:
+		kind = .Message_Oversized
+	case .Invalid_UTF8:
+		kind = .Invalid_UTF8
+	case .Allocation_Failed:
+		kind = .Allocation_Failed
+	case .Destination_Undersized:
+		kind = .Destination_Undersized
 	}
+
 	return {kind = kind, allocation = error.allocation}
 }
 
-websocket_message_fail :: proc(
-	conn: ^WebSocket_Conn, error: websocket.Message_Error,
-) -> WebSocket_Error {
+websocket_message_fail :: proc(conn: ^WebSocket_Conn, error: websocket.Message_Error) -> WebSocket_Error {
 	code: u16 = 1002
 	#partial switch error.kind {
-	case .Message_Oversized: code = 1009
-	case .Invalid_UTF8: code = 1007
-	case .Allocation_Failed: code = 1011
+	case .Message_Oversized:
+		code = 1009
+	case .Invalid_UTF8:
+		code = 1007
+	case .Allocation_Failed:
+		code = 1011
 	}
+
 	return websocket_fail(conn, websocket_message_error(error), code)
 }
 
-websocket_data_read :: proc(
-	conn: ^WebSocket_Conn, header: websocket.Frame_Header,
-) -> WebSocket_Error {
+websocket_data_read :: proc(conn: ^WebSocket_Conn, header: websocket.Frame_Header) -> WebSocket_Error {
 	allocator := conn.allocator
-	if allocator.procedure == nil {allocator = context.allocator}
-	body, prepare_error := websocket.message_prepare(
-		&conn.message_state, header, conn.config.max_message_size, allocator,
-	)
-	if prepare_error.kind != .None {return websocket_message_fail(conn, prepare_error)}
-	count, read_error := websocket_read_exact(conn, body)
-	if read_error.kind != .None {
-		return websocket_fail(conn, {
-			kind = .Frame_Read_Failed, stream = read_error, transferred = count,
-		})
+
+	if allocator.procedure == nil {
+		allocator = context.allocator
 	}
-	if finish_error := websocket.message_finish(&conn.message_state, header.fin);
-	   finish_error.kind != .None {return websocket_message_fail(conn, finish_error)}
+
+	body, prepare_error := websocket.message_prepare(
+		&conn.message_state,
+		header,
+		conn.config.max_message_size,
+		allocator,
+	)
+
+	if prepare_error.kind != .None {
+		return websocket_message_fail(conn, prepare_error)
+	}
+
+	count, read_error := websocket_read_exact(conn, body)
+
+	if read_error.kind != .None {
+		return websocket_fail(conn, {kind = .Frame_Read_Failed, stream = read_error, transferred = count})
+	}
+
+	if finish_error := websocket.message_finish(&conn.message_state, header.fin); finish_error.kind != .None {
+		return websocket_message_fail(conn, finish_error)
+	}
+
 	return {}
 }
 
-websocket_write_message :: proc(
-	conn: ^WebSocket_Conn,
-	opcode: websocket.Opcode,
-	payload: []u8,
-) -> WebSocket_Error {
+websocket_write_message :: proc(conn: ^WebSocket_Conn, opcode: websocket.Opcode, payload: []u8) -> WebSocket_Error {
 	if err := websocket_ensure_open(conn); err.kind != .None {
 		return err
 	}
 
-	if error := websocket.message_validate(opcode, payload, conn.config.max_message_size);
-	   error.kind != .None {return websocket_message_error(error)}
+	if error := websocket.message_validate(opcode, payload, conn.config.max_message_size); error.kind != .None {
+		return websocket_message_error(error)
+	}
 
-	if err := websocket_frame_write(conn, opcode, payload);
-	   err.kind != .None {
+	if err := websocket_frame_write(conn, opcode, payload); err.kind != .None {
 		return websocket_fail(conn, err)
 	}
 
@@ -748,14 +684,10 @@ websocket_ping :: proc(conn: ^WebSocket_Conn, payload: []u8) -> WebSocket_Error 
 	}
 
 	if len(payload) > 125 {
-		return {
-			kind = .Invalid_Frame,
-			frame = .Control_Payload_Oversized,
-		}
+		return {kind = .Invalid_Frame, frame = .Control_Payload_Oversized}
 	}
 
-	if err := websocket_frame_write(conn, .Ping, payload);
-	   err.kind != .None {
+	if err := websocket_frame_write(conn, .Ping, payload); err.kind != .None {
 		return websocket_fail(conn, err)
 	}
 
@@ -764,11 +696,7 @@ websocket_ping :: proc(conn: ^WebSocket_Conn, payload: []u8) -> WebSocket_Error 
 
 // Sends close and then closes the underlying stream without an endless wait
 // for a peer response. Close also releases any retained oversized-dst message.
-websocket_close :: proc(
-	conn: ^WebSocket_Conn,
-	code: u16 = 1000,
-	reason: string = "",
-) -> WebSocket_Error {
+websocket_close :: proc(conn: ^WebSocket_Conn, code: u16 = 1000, reason: string = "") -> WebSocket_Error {
 	if conn == nil do return {kind = .Invalid_State}
 
 	if conn.phase == .Uninitialized {
@@ -783,28 +711,29 @@ websocket_close :: proc(
 
 	payload: [125]u8
 	size, frame_err := websocket_close_payload(&payload, code, reason)
+
 	if frame_err != .None {
 		return {kind = .Invalid_Close, frame = frame_err}
 	}
+
 	body := payload[:size]
 
 	err: WebSocket_Error
 	abort_stream := conn.phase != .Open
+
 	if conn.phase == .Open {
 		conn.phase = .Closing
 		err = websocket_close_deadline(conn)
+
 		if err.kind == .None {
 			err = websocket_frame_write(conn, .Close, body)
 		}
-
 	}
 
 	conn.phase = .Closed
 	websocket_release_message(conn)
-	stream_err := websocket_stream_close(
-		conn,
-		abort_stream || err.kind != .None,
-	)
+	stream_err := websocket_stream_close(conn, abort_stream || err.kind != .None)
+
 	if err.kind == .None && stream_err.kind != .None {
 		err = {
 			kind   = .Stream_Close_Failed,
@@ -817,31 +746,21 @@ websocket_close :: proc(
 
 // Shared failure path for upgrade and framed I/O. close_code=0 suppresses a
 // best-effort protocol close (e.g. transport failure before frames are usable).
-websocket_fail :: proc(
-	conn: ^WebSocket_Conn,
-	err: WebSocket_Error,
-	close_code: u16 = 0,
-) -> WebSocket_Error {
+websocket_fail :: proc(conn: ^WebSocket_Conn, err: WebSocket_Error, close_code: u16 = 0) -> WebSocket_Error {
 	if conn == nil do return err
 
-	if close_code != 0 &&
-	   conn.phase == .Open &&
-	   !conn.transport_closed {
-		if deadline_err := websocket_close_deadline(conn);
-		   deadline_err.kind == .None {
-			payload := [?]u8 {
-				cast(u8)(close_code >> 8),
-				cast(u8)close_code,
-			}
+	if close_code != 0 && conn.phase == .Open && !conn.transport_closed {
+		if deadline_err := websocket_close_deadline(conn); deadline_err.kind == .None {
+			payload := [?]u8{cast(u8)(close_code >> 8), cast(u8)close_code}
 			websocket_frame_write(conn, .Close, payload[:])
 		}
-
 	}
 
 	conn.phase = .Failed
 	conn.last_error = err
 	websocket_release_message(conn)
 	websocket_stream_close(conn, true)
+
 	return err
 }
 
@@ -862,7 +781,6 @@ websocket_ensure_open :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
 		if err := websocket_upgrade(conn); err.kind != .None {
 			return err
 		}
-
 	}
 
 	if conn.phase != .Open || conn.config.max_message_size <= 0 {
@@ -872,27 +790,16 @@ websocket_ensure_open :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
 	return {}
 }
 
-websocket_read_exact :: proc(
-	conn: ^WebSocket_Conn,
-	dst: []u8,
-) -> (
-	received: int,
-	error: WebSocket_Stream_Error,
-) {
+websocket_read_exact :: proc(conn: ^WebSocket_Conn, dst: []u8) -> (received: int, error: WebSocket_Stream_Error) {
 	if conn.prefetched_at < conn.prefetched_size {
-		received = copy(
-			dst,
-			conn.prefetched[conn.prefetched_at:conn.prefetched_size],
-		)
+		received = copy(dst, conn.prefetched[conn.prefetched_at:conn.prefetched_size])
 		conn.prefetched_at += received
 	}
 
 	if received == len(dst) do return received, {}
 
-	count, stream_err := websocket_stream_read_exact(
-		conn.stream,
-		dst[received:],
-	)
+	count, stream_err := websocket_stream_read_exact(conn.stream, dst[received:])
+
 	return received + count, stream_err
 }
 
@@ -905,53 +812,29 @@ websocket_frame_header_read :: proc(
 	wire: [websocket.MAX_FRAME_HEADER_SIZE]u8
 	count, read_err := websocket_read_exact(conn, wire[:2])
 	if read_err.kind != .None {
-		return {}, websocket_fail(
-			conn,
-			{
-				kind = .Frame_Read_Failed,
-				stream = read_err,
-				transferred = count,
-			},
-		)
+		return {}, websocket_fail(conn, {kind = .Frame_Read_Failed, stream = read_err, transferred = count})
 	}
 
 	decoded, _, frame_err := websocket.frame_header_decode(wire[:2], false)
 	if frame_err == .Header_Incomplete {
 		size := websocket_frame_header_size(wire[1])
 		count, read_err = websocket_read_exact(conn, wire[2:size])
+
 		if read_err.kind != .None {
-			return {}, websocket_fail(
-				conn,
-				{
-					kind = .Frame_Read_Failed,
-					stream = read_err,
-					transferred = count + 2,
-				},
-			)
+			return {}, websocket_fail(conn, {kind = .Frame_Read_Failed, stream = read_err, transferred = count + 2})
 		}
 
-		decoded, _, frame_err = websocket.frame_header_decode(
-			wire[:size],
-			false,
-		)
+		decoded, _, frame_err = websocket.frame_header_decode(wire[:size], false)
 	}
 
 	if frame_err != .None {
-		return {}, websocket_fail(
-			conn,
-			{kind = .Invalid_Frame, frame = frame_err},
-			1002,
-		)
+		return {}, websocket_fail(conn, {kind = .Invalid_Frame, frame = frame_err}, 1002)
 	}
 
 	return decoded, {}
 }
 
-websocket_frame_write :: proc(
-	conn: ^WebSocket_Conn,
-	opcode: websocket.Opcode,
-	payload: []u8,
-) -> WebSocket_Error {
+websocket_frame_write :: proc(conn: ^WebSocket_Conn, opcode: websocket.Opcode, payload: []u8) -> WebSocket_Error {
 	when !crypto.HAS_RAND_BYTES do return {kind = .Entropy_Unavailable}
 	mask: [4]u8
 	crypto.rand_bytes(mask[:])
@@ -960,48 +843,43 @@ websocket_frame_write :: proc(
 	small: [websocket.MAX_FRAME_HEADER_SIZE + WebSocket_STACK_FRAME_PAYLOAD]u8
 	wire := small[:]
 	allocator := conn.allocator
+
 	if allocator.procedure == nil {
 		allocator = context.allocator
 	}
 
 	heap: []u8
 	defer delete(heap, allocator)
+
 	if len(payload) > WebSocket_STACK_FRAME_PAYLOAD {
 		allocation_err: mem.Allocator_Error
 		heap, allocation_err = make([]u8, websocket.MAX_FRAME_HEADER_SIZE + len(payload), allocator)
+
 		if allocation_err != nil {
 			return {kind = .Allocation_Failed, allocation = allocation_err}
 		}
+
 		wire = heap
 	}
 
-	size, frame_err := websocket.frame_encode(
-		wire,
-		true,
-		opcode,
-		payload,
-		mask,
-	)
+	size, frame_err := websocket.frame_encode(wire, true, opcode, payload, mask)
+
 	if frame_err != .None {
 		return {kind = .Invalid_Frame, frame = frame_err}
 	}
 
 	count, stream_err := websocket_stream_write_all(conn.stream, wire[:size])
+
 	if stream_err.kind != .None {
-		return {
-			kind = .Frame_Write_Failed,
-			stream = stream_err,
-			transferred = count,
-		}
+		return {kind = .Frame_Write_Failed, stream = stream_err, transferred = count}
 	}
 
 	return {}
 }
 
-websocket_deliver_message :: proc(
-	conn: ^WebSocket_Conn, dst: []u8,
-) -> (websocket.Opcode, int, WebSocket_Error) {
+websocket_deliver_message :: proc(conn: ^WebSocket_Conn, dst: []u8) -> (websocket.Opcode, int, WebSocket_Error) {
 	opcode, count, error := websocket.message_deliver(&conn.message_state, dst)
+
 	return opcode, count, websocket_message_error(error)
 }
 
@@ -1013,13 +891,16 @@ websocket_release_message :: proc(conn: ^WebSocket_Conn) {
 @(private)
 websocket_frame_header_size :: proc(second: u8) -> int {
 	size := 2
+
 	switch second & 0x7f {
 	case 126:
 		size += 2
 	case 127:
 		size += 8
 	}
+
 	if second & 0x80 != 0 do size += 4
+
 	return size
 }
 
@@ -1030,6 +911,7 @@ websocket_close_payload :: proc(dst: ^[125]u8, code: u16, reason: string) -> (in
 	dst[0], dst[1] = u8(code >> 8), u8(code)
 	copy(dst[2:], reason)
 	size := 2 + len(reason)
+
 	return size, websocket.close_payload_validate(dst[:size])
 }
 
@@ -1047,6 +929,7 @@ websocket_close_validation_code :: proc(frame_err: websocket.Frame_Error) -> u16
 @(private)
 websocket_close_code :: proc(body: []u8) -> u16 {
 	if len(body) < 2 do return 1005
+
 	return u16(body[0]) << 8 | u16(body[1])
 }
 
@@ -1057,16 +940,15 @@ websocket_close_code_normal :: proc(code: u16) -> bool {
 	case 1000, 1001, 1005:
 		return true
 	}
+
 	return false
 }
 
-websocket_stream_close :: proc(
-	conn: ^WebSocket_Conn,
-	abort_stream: bool = false,
-) -> WebSocket_Stream_Error {
+websocket_stream_close :: proc(conn: ^WebSocket_Conn, abort_stream: bool = false) -> WebSocket_Stream_Error {
 	if conn.transport_closed do return {}
 
 	conn.transport_closed = true
+
 	if abort_stream && conn.stream.abort != nil {
 		return conn.stream.abort(conn.stream.data)
 	}
@@ -1082,16 +964,11 @@ websocket_stream_close :: proc(
 
 websocket_close_deadline :: proc(conn: ^WebSocket_Conn) -> WebSocket_Error {
 	if conn.stream.set_write_deadline == nil {
-		return {
-			kind = .Deadline_Failed,
-			stream = {kind = .Deadline_Unsupported},
-		}
+		return {kind = .Deadline_Failed, stream = {kind = .Deadline_Unsupported}}
 	}
 
-	if err := conn.stream.set_write_deadline(
-		conn.stream.data,
-		time.time_add(time.now(), time.Second),
-	); err.kind != .None {
+	if err := conn.stream.set_write_deadline(conn.stream.data, time.time_add(time.now(), time.Second));
+	   err.kind != .None {
 		return {kind = .Deadline_Failed, stream = err}
 	}
 
@@ -1120,40 +997,18 @@ WebSocket_Stream_Error :: struct {
 // The underlying TLS/TCP connection must remain at a stable address.
 WebSocket_Stream :: struct {
 	data:               rawptr,
-	read:               proc(
-		data: rawptr,
-		dst: []u8,
-	) -> (
-		int,
-		WebSocket_Stream_Error,
-	),
-	write:              proc(
-		data: rawptr,
-		src: []u8,
-	) -> (
-		int,
-		WebSocket_Stream_Error,
-	),
+	read:               proc(data: rawptr, dst: []u8) -> (int, WebSocket_Stream_Error),
+	write:              proc(data: rawptr, src: []u8) -> (int, WebSocket_Stream_Error),
 	close:              proc(data: rawptr) -> WebSocket_Stream_Error,
 	// Optional non-writing cleanup. When absent, close must release resources
 	// without blocking on peer traffic, including on failure paths.
 	abort:              proc(data: rawptr) -> WebSocket_Stream_Error,
-	set_read_deadline:  proc(
-		data: rawptr,
-		deadline: time.Time,
-	) -> WebSocket_Stream_Error,
-	set_write_deadline: proc(
-		data: rawptr,
-		deadline: time.Time,
-	) -> WebSocket_Stream_Error,
+	set_read_deadline:  proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error,
+	set_write_deadline: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error,
 }
 
 websocket_stream_valid :: proc(stream: WebSocket_Stream) -> bool {
-	return(
-		stream.read != nil &&
-		stream.write != nil &&
-		stream.close != nil \
-	)
+	return stream.read != nil && stream.write != nil && stream.close != nil
 }
 
 websocket_stream_read_exact :: proc(
@@ -1167,9 +1022,7 @@ websocket_stream_read_exact :: proc(
 		return 0, {kind = .Invalid_Stream}
 	}
 
-	return tcp_api.read_exact_callback(
-		WebSocket_Stream_Error, stream.data, dst, stream.read,
-	)
+	return tcp_api.read_exact_callback(WebSocket_Stream_Error, stream.data, dst, stream.read)
 }
 
 websocket_stream_write_all :: proc(
@@ -1183,9 +1036,7 @@ websocket_stream_write_all :: proc(
 		return 0, {kind = .Invalid_Stream}
 	}
 
-	return tcp_api.write_all_callback(
-		WebSocket_Stream_Error, stream.data, src, stream.write,
-	)
+	return tcp_api.write_all_callback(WebSocket_Stream_Error, stream.data, src, stream.write)
 }
 
 websocket_stream_from_tls_address :: proc(conn: ^tls_api.Conn) -> WebSocket_Stream {
@@ -1214,14 +1065,9 @@ websocket_tcp_stream :: proc(conn: ^tcp_api.TCP_Connection) -> WebSocket_Stream 
 	}
 }
 
-websocket_stream_tls_read :: proc(
-	data: rawptr,
-	dst: []u8,
-) -> (
-	int,
-	WebSocket_Stream_Error,
-) {
+websocket_stream_tls_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_Stream_Error) {
 	count, err := tls_api.read(cast(^tls_api.Conn)data, dst)
+
 	if err.kind == .EOF {
 		return count, {kind = .EOF, tls = err}
 	}
@@ -1233,14 +1079,9 @@ websocket_stream_tls_read :: proc(
 	return count, {}
 }
 
-websocket_stream_tls_write :: proc(
-	data: rawptr,
-	src: []u8,
-) -> (
-	int,
-	WebSocket_Stream_Error,
-) {
+websocket_stream_tls_write :: proc(data: rawptr, src: []u8) -> (int, WebSocket_Stream_Error) {
 	count, err := tls_api.write(cast(^tls_api.Conn)data, src)
+
 	if err.kind != .None {
 		return count, {kind = .TLS_Failed, tls = err}
 	}
@@ -1249,8 +1090,7 @@ websocket_stream_tls_write :: proc(
 }
 
 websocket_stream_tls_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
-	if err := tls_api.close(cast(^tls_api.Conn)data);
-	   err.kind != .None {
+	if err := tls_api.close(cast(^tls_api.Conn)data); err.kind != .None {
 		return {kind = .TLS_Failed, tls = err}
 	}
 
@@ -1258,51 +1098,33 @@ websocket_stream_tls_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 }
 
 websocket_stream_tls_abort :: proc(data: rawptr) -> WebSocket_Stream_Error {
-	if err := tls_api.abort(cast(^tls_api.Conn)data);
-	   err.kind != .None {
+	if err := tls_api.abort(cast(^tls_api.Conn)data); err.kind != .None {
 		return {kind = .TLS_Failed, tls = err}
 	}
 
 	return {}
 }
 
-websocket_stream_tls_read_deadline :: proc(
-	data: rawptr,
-	deadline: time.Time,
-) -> WebSocket_Stream_Error {
-	if err := tls_api.set_read_deadline(
-		cast(^tls_api.Conn)data,
-		deadline,
-	); err.kind != .None {
+websocket_stream_tls_read_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
+	if err := tls_api.set_read_deadline(cast(^tls_api.Conn)data, deadline); err.kind != .None {
 		return {kind = .TCP_Failed, transport = err}
 	}
 
 	return {}
 }
 
-websocket_stream_tls_write_deadline :: proc(
-	data: rawptr,
-	deadline: time.Time,
-) -> WebSocket_Stream_Error {
-	if err := tls_api.set_write_deadline(
-		cast(^tls_api.Conn)data,
-		deadline,
-	); err.kind != .None {
+websocket_stream_tls_write_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
+	if err := tls_api.set_write_deadline(cast(^tls_api.Conn)data, deadline); err.kind != .None {
 		return {kind = .TCP_Failed, transport = err}
 	}
 
 	return {}
 }
 
-websocket_stream_tcp_read :: proc(
-	data: rawptr,
-	dst: []u8,
-) -> (
-	int,
-	WebSocket_Stream_Error,
-) {
+websocket_stream_tcp_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_Stream_Error) {
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
 	count, err := conn.read(conn.data, dst)
+
 	if err.kind == .Peer_Closed {
 		return count, {kind = .EOF, transport = err}
 	}
@@ -1314,15 +1136,10 @@ websocket_stream_tcp_read :: proc(
 	return count, {}
 }
 
-websocket_stream_tcp_write :: proc(
-	data: rawptr,
-	src: []u8,
-) -> (
-	int,
-	WebSocket_Stream_Error,
-) {
+websocket_stream_tcp_write :: proc(data: rawptr, src: []u8) -> (int, WebSocket_Stream_Error) {
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
 	count, err := conn.write(conn.data, src)
+
 	if err.kind != .None {
 		return count, {kind = .TCP_Failed, transport = err}
 	}
@@ -1332,6 +1149,7 @@ websocket_stream_tcp_write :: proc(
 
 websocket_stream_tcp_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
+
 	if err := conn.close(conn.data); err.kind != .None {
 		return {kind = .TCP_Failed, transport = err}
 	}
@@ -1339,26 +1157,20 @@ websocket_stream_tcp_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 	return {}
 }
 
-websocket_stream_tcp_read_deadline :: proc(
-	data: rawptr,
-	deadline: time.Time,
-) -> WebSocket_Stream_Error {
+websocket_stream_tcp_read_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
-	if err := tcp_api.set_read_deadline(conn, deadline);
-	   err.kind != .None {
+
+	if err := tcp_api.set_read_deadline(conn, deadline); err.kind != .None {
 		return {kind = .TCP_Failed, transport = err}
 	}
 
 	return {}
 }
 
-websocket_stream_tcp_write_deadline :: proc(
-	data: rawptr,
-	deadline: time.Time,
-) -> WebSocket_Stream_Error {
+websocket_stream_tcp_write_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
-	if err := tcp_api.set_write_deadline(conn, deadline);
-	   err.kind != .None {
+
+	if err := tcp_api.set_write_deadline(conn, deadline); err.kind != .None {
 		return {kind = .TCP_Failed, transport = err}
 	}
 
