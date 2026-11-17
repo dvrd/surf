@@ -70,7 +70,7 @@ main :: proc() {
  assert(async.unregister(&s.runtime,&s.task).kind==.Not_Registered)
  assert(async.destroy(&s.runtime).kind==.None)
  wire:[512]u8
- n,error:=h1.request_encode_profile(wire[:],{method=.GET,url="http://example.test/"},.Keep_Alive)
+ n,error:=h1.request_encode_content(wire[:],{method=.GET,url="http://example.test/"},.Keep_Alive,.Identity)
  assert(error.kind==.None)
  assert(string(wire[:n])=="GET / HTTP/1.1\r\nHost: example.test\r\nConnection: keep-alive\r\nAccept-Encoding: identity\r\n\r\n")
  literal:="HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"

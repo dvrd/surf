@@ -147,7 +147,7 @@ exchange_begin :: proc(
 	}
 	// All rejection paths preserve the complete Exchange and caller inputs.
 	header: [HEAD_BUFFER_SIZE]u8
-	count, error := h1.request_encode_profile(header[:], request, .Keep_Alive)
+	count, error := h1.request_encode_content(header[:], request, .Keep_Alive, .Identity)
 	if error.kind != .None {
 		return surf.http_protocol_error(error)
 	}

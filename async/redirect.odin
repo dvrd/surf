@@ -996,7 +996,7 @@ redirect_prepare :: proc(
 		return {kind = .Invalid_Config, http = {kind = .Overlapping_Buffers}}
 	}
 	header: [http.MAX_HEADER_SIZE]u8
-	if _, error := h1.request_encode_profile(header[:], current, .Keep_Alive); error.kind != .None {
+	if _, error := h1.request_encode_content(header[:], current, .Keep_Alive, .Identity); error.kind != .None {
 		return {kind = .Request_Error, http = {kind = error.kind}}
 	}
 	base, parse_error := http.url_parse(current.url)

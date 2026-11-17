@@ -561,7 +561,7 @@ admission_input :: proc(k: ^Kernel, input: ^Request_Owner) -> (http.URL, Client_
 	}
 
 	wire: [http.MAX_HEADER_SIZE]u8
-	_, validation := h1.request_encode_profile(wire[:], r, .Keep_Alive)
+	_, validation := h1.request_encode_content(wire[:], r, .Keep_Alive, .Identity)
 
 	if validation.kind != .None {
 		return {}, {kind = .Request_Error, http = {kind = validation.kind}}
@@ -2070,7 +2070,7 @@ client_submit_state :: proc(
 	}
 	// Pure descriptor/wire validation precedes any source traversal or allocation.
 	header: [http.MAX_HEADER_SIZE]u8
-	if _, validation := h1.request_encode_profile(header[:], request, .Keep_Alive); validation.kind != .None {
+	if _, validation := h1.request_encode_content(header[:], request, .Keep_Alive, .Identity); validation.kind != .None {
 		return {}, {kind = .Request_Error, http = {kind = validation.kind}}
 	}
 	lease, admission := resources_request_lease(&s.resources)

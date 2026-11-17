@@ -1384,7 +1384,7 @@ kernel_identity_serial: u64
 
 request_clone :: proc(request: http.Request, allocator: mem.Allocator) -> (Request_Owner, Client_Error) {
 	header: [http.MAX_HEADER_SIZE]u8
-	_, error := h1.request_encode_profile(header[:], request, .Keep_Alive)
+	_, error := h1.request_encode_content(header[:], request, .Keep_Alive, .Identity)
 
 	if error.kind != .None {
 		return {}, {kind = .Request_Error, http = {kind = error.kind}}

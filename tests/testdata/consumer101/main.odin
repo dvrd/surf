@@ -48,7 +48,7 @@ main :: proc() {
 	assert(error.kind == .None && response.status == 200 && string(response.body) == "ok" && fixture.written > 0)
 	surf.response_destroy(&response)
 	buffer: [256]u8
-	n, encoded := h1.request_encode_profile(buffer[:], {method = .GET, url = "http://example.test/"}, .Keep_Alive)
+	n, encoded := h1.request_encode_content(buffer[:], {method = .GET, url = "http://example.test/"}, .Keep_Alive, .Identity)
 	assert(
 		encoded.kind == .None &&
 		string(buffer[:n]) ==
