@@ -396,14 +396,7 @@ kernel_grant :: proc(size,alignment:int,allocator:mem.Allocator)->([]u8,Client_E
   if cause.kind!=.None {return nil,resource_allocation_failure(cause)}
   return storage,{}
  }
- storage,cause:=allocator.procedure(allocator.data,.Alloc,size,alignment,nil,0)
- if cause!=nil || len(storage)!=size || raw_data(storage)==nil || uintptr(raw_data(storage))%uintptr(alignment)!=0 {
-  if raw_data(storage)!=nil {_,_=allocator.procedure(allocator.data,.Free,0,alignment,raw_data(storage),len(storage))}
-  if cause==nil do cause=.Out_Of_Memory
-  return nil,{kind=.Allocation_Failed,http={kind=.Allocation_Failed,allocation=cause}}
- }
- for &byte in storage do byte=0
- return storage,{}
+ return profile_allocate(size,alignment,allocator)
 }
 @(private)
 kernel_free :: proc(storage:[]u8,alignment:int,allocator:mem.Allocator) {
@@ -461,10 +454,6 @@ profile_allocate :: proc(size,alignment:int,allocator:mem.Allocator)->([]u8,Clie
  return storage,{}
 }
 @(private)
-profile_free :: proc(storage:[]u8,alignment:int,allocator:mem.Allocator) {
- if raw_data(storage)!=nil {_,_=allocator.procedure(allocator.data,.Free,0,alignment,raw_data(storage),len(storage))}
-}
-@(private)
 profile_valid :: proc(p:^Profile)->bool {return p!=nil && p.self==p && p.owner_id!=0}
 
 profile_init :: proc(p:^Profile,config:Normalized_Config,allocator:mem.Allocator)->Client_Error {
@@ -511,7 +500,7 @@ profile_init :: proc(p:^Profile,config:Normalized_Config,allocator:mem.Allocator
  } else {snapshot.http.tls.alpn_protocols=nil}
  identity,available:=profile_identity_next(&profile_identity_serial,&profile_identity_mu)
  if !available {
-  profile_free(storage,alignment,allocator)
+  kernel_free(storage,alignment,allocator)
   return {kind=.Capacity}
  }
  p^={self=p,owner_id=identity,config=snapshot,storage=storage,allocator=allocator}
@@ -523,24 +512,24 @@ profile_destroy :: proc(p:^Profile) {
  storage,allocator:=p.storage,p.allocator
  p^={}
  alignment:=max(align_of(^x509.Certificate),align_of(string),align_of(net.Endpoint))
- profile_free(storage,alignment,allocator)
+ kernel_free(storage,alignment,allocator)
 }
 
 @(private)
-client_ranges_overlap :: proc(a:rawptr,an:int,b:rawptr,bn:int)->bool {
+ranges_overlap :: proc(a:rawptr,an:int,b:rawptr,bn:int)->bool {
  if an<=0 || bn<=0 {return false}
  av,bv:=uintptr(a),uintptr(b)
  return av<=bv && bv-av<uintptr(an) || bv<av && av-bv<uintptr(bn)
 }
 @(private)
 client_destination_alias :: proc(s:^Client_State,c:^Client,destination:^surf.Response)->bool {
- return client_ranges_overlap(destination,size_of(surf.Response),c,size_of(Client)) ||
-  client_ranges_overlap(destination,size_of(surf.Response),s,size_of(Client_State)) ||
-  client_ranges_overlap(destination,size_of(surf.Response),raw_data(s.actors),len(s.actors)*size_of(Session_Actor)) ||
-  client_ranges_overlap(destination,size_of(surf.Response),raw_data(s.requests),len(s.requests)*size_of(Request_Network)) ||
-  client_ranges_overlap(destination,size_of(surf.Response),raw_data(s.task_index),len(s.task_index)*size_of(^runtime_async.Task)) ||
-  client_ranges_overlap(destination,size_of(surf.Response),raw_data(s.dns_ids),len(s.dns_ids)*size_of(u16)) ||
-  client_ranges_overlap(destination,size_of(surf.Response),raw_data(s.profile.storage),len(s.profile.storage))
+ return ranges_overlap(destination,size_of(surf.Response),c,size_of(Client)) ||
+  ranges_overlap(destination,size_of(surf.Response),s,size_of(Client_State)) ||
+  ranges_overlap(destination,size_of(surf.Response),raw_data(s.actors),len(s.actors)*size_of(Session_Actor)) ||
+  ranges_overlap(destination,size_of(surf.Response),raw_data(s.requests),len(s.requests)*size_of(Request_Network)) ||
+  ranges_overlap(destination,size_of(surf.Response),raw_data(s.task_index),len(s.task_index)*size_of(^runtime_async.Task)) ||
+  ranges_overlap(destination,size_of(surf.Response),raw_data(s.dns_ids),len(s.dns_ids)*size_of(u16)) ||
+  ranges_overlap(destination,size_of(surf.Response),raw_data(s.profile.storage),len(s.profile.storage))
 }
 
 client_request_stage :: proc(c:^Client,handle:Request_Handle)->(Request_Stage,Client_Error) {

@@ -218,22 +218,16 @@ origin_destroy :: proc(owner:^Prepared_Origin) {
  if owner==nil {return}
  storage,allocator:=owner.storage,owner.allocator
  owner^={}
- profile_free(storage,1,allocator)
+ kernel_free(storage,1,allocator)
 }
 
 @(private)
-network_overlap :: proc(a:rawptr,an:int,b:rawptr,bn:int)->bool {
- if an<=0 || bn<=0 {return false}
- av,bv:=uintptr(a),uintptr(b)
- return (av<=bv && bv-av<uintptr(an)) || (bv<av && av-bv<uintptr(bn))
-}
-@(private)
 network_alias :: proc(s:^Client_State,p:rawptr,n:int)->bool {
- return network_overlap(p,n,s,size_of(Client_State)) ||
-        network_overlap(p,n,raw_data(s.actors),len(s.actors)*size_of(Session_Actor)) ||
-        network_overlap(p,n,raw_data(s.requests),len(s.requests)*size_of(Request_Network)) ||
-        network_overlap(p,n,raw_data(s.task_index),len(s.task_index)*size_of(rawptr)) ||
-        network_overlap(p,n,raw_data(s.dns_ids),len(s.dns_ids)*size_of(u16))
+ return ranges_overlap(p,n,s,size_of(Client_State)) ||
+        ranges_overlap(p,n,raw_data(s.actors),len(s.actors)*size_of(Session_Actor)) ||
+        ranges_overlap(p,n,raw_data(s.requests),len(s.requests)*size_of(Request_Network)) ||
+        ranges_overlap(p,n,raw_data(s.task_index),len(s.task_index)*size_of(rawptr)) ||
+        ranges_overlap(p,n,raw_data(s.dns_ids),len(s.dns_ids)*size_of(u16))
 }
 @(private)
 network_saturate :: proc(counter:^u64,amount:u64) {counter^+=min(amount,max(u64)-counter^)}

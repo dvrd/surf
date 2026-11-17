@@ -198,17 +198,17 @@ client_upload_finish :: proc(c:^Client,handle:Request_Handle,source_error:io.Err
 
 @(private)
 client_stream_destination_alias :: proc(s:^Client_State,c:^Client,destination:rawptr,size:int)->bool {
- if client_ranges_overlap(destination,size,c,size_of(Client)) ||
-  client_ranges_overlap(destination,size,s,size_of(Client_State)) ||
-  client_ranges_overlap(destination,size,raw_data(s.actors),len(s.actors)*size_of(Session_Actor)) ||
-  client_ranges_overlap(destination,size,raw_data(s.requests),len(s.requests)*size_of(Request_Network)) ||
-  client_ranges_overlap(destination,size,raw_data(s.task_index),len(s.task_index)*size_of(^runtime_async.Task)) ||
-  client_ranges_overlap(destination,size,raw_data(s.dns_ids),len(s.dns_ids)*size_of(u16)) ||
-  client_ranges_overlap(destination,size,raw_data(s.profile.storage),len(s.profile.storage)) {return true}
+ if ranges_overlap(destination,size,c,size_of(Client)) ||
+  ranges_overlap(destination,size,s,size_of(Client_State)) ||
+  ranges_overlap(destination,size,raw_data(s.actors),len(s.actors)*size_of(Session_Actor)) ||
+  ranges_overlap(destination,size,raw_data(s.requests),len(s.requests)*size_of(Request_Network)) ||
+  ranges_overlap(destination,size,raw_data(s.task_index),len(s.task_index)*size_of(^runtime_async.Task)) ||
+  ranges_overlap(destination,size,raw_data(s.dns_ids),len(s.dns_ids)*size_of(u16)) ||
+  ranges_overlap(destination,size,raw_data(s.profile.storage),len(s.profile.storage)) {return true}
  k:=&s.kernel
- return client_ranges_overlap(destination,size,raw_data(k.requests),len(k.requests)*size_of(Request_Slot)) ||
-  client_ranges_overlap(destination,size,raw_data(k.sessions),len(k.sessions)*size_of(Session_Model)) ||
-  client_ranges_overlap(destination,size,raw_data(k.origins),len(k.origins)*size_of(Origin_Slot))
+ return ranges_overlap(destination,size,raw_data(k.requests),len(k.requests)*size_of(Request_Slot)) ||
+  ranges_overlap(destination,size,raw_data(k.sessions),len(k.sessions)*size_of(Session_Model)) ||
+  ranges_overlap(destination,size,raw_data(k.origins),len(k.origins)*size_of(Origin_Slot))
 }
 
 // Sample through the registered-task witness before producer ownership moves.

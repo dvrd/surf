@@ -417,12 +417,6 @@ redirect_requeue :: proc(a:^Session_Actor) {
 }
 
 @(private)
-redirect_overlap :: proc(a:rawptr,an:int,b:rawptr,bn:int)->bool {
- if an<=0 || bn<=0 {return false}
- av,bv:=uintptr(a),uintptr(b)
- return (av<=bv && bv-av<uintptr(an)) || (bv<av && av-bv<uintptr(bn))
-}
-@(private)
 redirect_empty :: proc(h:^Redirect_Handoff)->bool {
  return h.phase==.Empty && h.request==(Request_Handle{}) && raw_data(h.input.storage)==nil && h.input.allocator.procedure==nil &&
   raw_data(h.input.request.url)==nil && raw_data(h.input.request.headers)==nil && raw_data(h.input.request.body)==nil &&
@@ -443,10 +437,10 @@ redirect_request_shape :: proc(request:http.Request)->bool {
 }
 @(private)
 redirect_request_overlaps :: proc(request:http.Request,p:rawptr,n:int)->bool {
- if redirect_overlap(raw_data(request.url),len(request.url),p,n) || redirect_overlap(raw_data(request.body),len(request.body),p,n) ||
-  redirect_overlap(raw_data(request.headers),len(request.headers)*size_of(http.Header),p,n) {return true}
+ if ranges_overlap(raw_data(request.url),len(request.url),p,n) || ranges_overlap(raw_data(request.body),len(request.body),p,n) ||
+  ranges_overlap(raw_data(request.headers),len(request.headers)*size_of(http.Header),p,n) {return true}
  for field in request.headers {
-  if redirect_overlap(raw_data(field.name),len(field.name),p,n) || redirect_overlap(raw_data(field.value),len(field.value),p,n) {return true}
+  if ranges_overlap(raw_data(field.name),len(field.name),p,n) || ranges_overlap(raw_data(field.value),len(field.value),p,n) {return true}
  }
  return false
 }
@@ -476,14 +470,14 @@ redirect_prepare :: proc(target:^Redirect_Handoff,profile:^Profile,handle:Reques
  for field in response.headers {
   if len(field.name)<0 || len(field.value)<0 || len(field.name)>0 && raw_data(field.name)==nil || len(field.value)>0 && raw_data(field.value)==nil {return {kind=.Invalid_Config}}
  }
- if redirect_overlap(target,size_of(Redirect_Handoff),response,size_of(surf.Response)) ||
-  redirect_overlap(target,size_of(Redirect_Handoff),profile,size_of(Profile)) ||
-  redirect_overlap(target,size_of(Redirect_Handoff),raw_data(profile.storage),len(profile.storage)) ||
+ if ranges_overlap(target,size_of(Redirect_Handoff),response,size_of(surf.Response)) ||
+  ranges_overlap(target,size_of(Redirect_Handoff),profile,size_of(Profile)) ||
+  ranges_overlap(target,size_of(Redirect_Handoff),raw_data(profile.storage),len(profile.storage)) ||
   redirect_request_overlaps(current,target,size_of(Redirect_Handoff)) ||
   redirect_request_overlaps({headers=response.headers},target,size_of(Redirect_Handoff)) ||
-  redirect_overlap(target,size_of(Redirect_Handoff),raw_data(response.body),len(response.body)) ||
-  redirect_overlap(target,size_of(Redirect_Handoff),raw_data(response.header_storage),len(response.header_storage)) ||
-  redirect_overlap(target,size_of(Redirect_Handoff),raw_data(response.body_storage),cap(response.body_storage)) {
+  ranges_overlap(target,size_of(Redirect_Handoff),raw_data(response.body),len(response.body)) ||
+  ranges_overlap(target,size_of(Redirect_Handoff),raw_data(response.header_storage),len(response.header_storage)) ||
+  ranges_overlap(target,size_of(Redirect_Handoff),raw_data(response.body_storage),cap(response.body_storage)) {
   return {kind=.Invalid_Config,http={kind=.Overlapping_Buffers}}
  }
  // Root execute_redirect consumes response storage before target cloning, so
