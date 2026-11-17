@@ -693,7 +693,7 @@ h2_engine_close :: proc(lane: ^HTTP_Lane) {
 			break
 		}
 
-		_ = h2.connection_output_release(&lane.engine, view.token)
+		_ = h2.connection_output_advance(&lane.engine, view.token, 0)
 	}
 
 	_ = h2.connection_destroy(&lane.engine)
@@ -1615,7 +1615,7 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 		}
 
 		if len(view.bytes) == 0 {
-			_ = h2.connection_output_release(&lane.engine, view.token)
+			_ = h2.connection_output_advance(&lane.engine, view.token, 0)
 			continue
 		}
 
@@ -1647,7 +1647,7 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 
 		if write_error.kind != .None {
 			if n == 0 {
-				_ = h2.connection_output_release(&lane.engine, view.token)
+				_ = h2.connection_output_advance(&lane.engine, view.token, 0)
 			}
 
 			lane.dead = true
@@ -1656,7 +1656,7 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 		}
 
 		if n == 0 {
-			_ = h2.connection_output_release(&lane.engine, view.token)
+			_ = h2.connection_output_advance(&lane.engine, view.token, 0)
 			lane.dead = true
 			return wrote, {kind = .IO_Failed, phase = .Write, write_effect = .Not_Sent}
 		}
