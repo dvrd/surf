@@ -558,11 +558,13 @@ ws_queue_probe :: proc(h: ^Ws_Test) {
 	extra: WebSocket_Async_Op
 	extra.callback = ws_on_write
 	extra.user_data = h
-	h.reject_count = websocket_async_write(&h.session, &extra, .Text, h.payload1[:]).kind
+	// Every write below is rejected, and a rejected operation is never queued: the stack operation ends here.
+	rejected := (^WebSocket_Async_Op)(rawptr(&extra))
+	h.reject_count = websocket_async_write(&h.session, rejected, .Text, h.payload1[:]).kind
 	bad := [1]u8{0xff}
-	h.reject_utf8 = websocket_async_write(&h.session, &extra, .Text, bad[:]).kind
+	h.reject_utf8 = websocket_async_write(&h.session, rejected, .Text, bad[:]).kind
 	big: [20]u8
-	h.reject_size = websocket_async_write(&h.session, &extra, .Text, big[:]).kind
+	h.reject_size = websocket_async_write(&h.session, rejected, .Text, big[:]).kind
 
 	if first.kind != .None || second.kind != .None {
 		h.reject_bytes = first.kind if first.kind != .None else second.kind
