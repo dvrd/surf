@@ -2,7 +2,7 @@ package surf_exchange
 
 import channel "../stream"
 import h1 "../../../http/v1"
-import "core:compress/gzip"
+import "core:compress/deflate"
 import "core:mem/owned"
 import "core:testing"
 
@@ -44,9 +44,9 @@ stream_gzip_footer_finishes_while_last_chunk_held :: proc(t: ^testing.T) {
 	// Independent Python gzip encoding of the single byte "x". The raw payload
 	// is already delivered; only checksum/ISIZE validation remains at this seam.
 	wire := [21]u8{31, 139, 8, 0, 0, 0, 0, 0, 0, 255, 171, 0, 0, 131, 22, 220, 140, 1, 0, 0, 0}
-	testing.expect_value(t, gzip.decoder_init(&x.decoder), .None)
+	testing.expect_value(t, deflate.inflate_gzip_decoder_init(&x.decoder), .None)
 	slot, output := channel.reserve_output(cell)
-	decoded := gzip.decoder_step(&x.decoder, wire[:13], output, false)
+	decoded := deflate.inflate_gzip_decoder_step(&x.decoder, wire[:13], output, false)
 	testing.expect(t, decoded.err == .None && decoded.consumed == 13 && decoded.produced == 1)
 	testing.expect(t, channel.publish_output(slot, decoded.produced))
 	held: owned.Chunk

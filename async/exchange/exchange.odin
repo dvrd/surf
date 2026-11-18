@@ -7,7 +7,7 @@ import h1 "../../../http/v1"
 import "core:mem"
 import "core:net"
 import channel "../stream"
-import "core:compress/gzip"
+import "core:compress/deflate"
 import "core:strings"
 import "core:mem/owned"
 
@@ -959,7 +959,7 @@ stream_encoding :: proc(x: ^Stream_Exchange) -> surf.HTTP_Error {
 	}
 
 	options := x.channel.options
-	error := gzip.decoder_init(
+	error := deflate.inflate_gzip_decoder_init(
 		&x.decoder,
 		{
 			max_encoded_bytes = options.max_encoded_bytes,
@@ -1305,7 +1305,7 @@ stream_body_step :: proc(x: ^Stream_Exchange, work: ^int) -> Exchange_Step {
 	produced := 0
 
 	if x.decoded {
-		decoded := gzip.decoder_step(&x.decoder, source, destination, x.entity_done, max(1, work^))
+		decoded := deflate.inflate_gzip_decoder_step(&x.decoder, source, destination, x.entity_done, max(1, work^))
 		work^ = max(0, work^ - decoded.work)
 
 		if decoded.err != .None {
@@ -1375,7 +1375,7 @@ Stream_Exchange :: struct {
 	base:                                                        Exchange,
 	channel:                                                     ^channel.Channel,
 	tx:                                                          Stream_TX,
-	decoder:                                                     gzip.Decoder,
+	decoder:                                                     deflate.Gzip_Decoder,
 	upload:                                                      owned.Chunk,
 	upload_at, write_requested:                                  int,
 	encoded:                                                     [READ_BUFFER_SIZE]u8,
