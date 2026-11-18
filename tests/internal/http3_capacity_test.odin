@@ -36,7 +36,7 @@ surf_http3_aggregates_more_than_inline_capacity_and_recovers_limit :: proc(t: ^t
 	testing.set_fail_timeout(t, 15 * time.Second)
 	credential, ce := credentials.create(
 		#load("tests/http3/localhost.pem"),
-		#load("../http/v3/testdata/rsa2048.pem"),
+		#load("tests/http3/rsa2048.pem"),
 		{},
 		context.allocator,
 	)

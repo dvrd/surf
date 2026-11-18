@@ -207,7 +207,7 @@ websocket_async_tls_loopback_echo_and_hostname_mismatch :: proc(t: ^testing.T) {
 	pool := new(tls.Root_Pool)
 	defer free(pool)
 	defer tls.root_pool_destroy(pool)
-	load_error := tls.root_pool_load_file(pool, "async/tests/connection/testdata/peer/credentials/root.pem")
+	load_error := tls.root_pool_load_file(pool, "surf/tests/testdata/credentials/root.pem")
 	testing.expect(t, load_error.kind == .None)
 	if load_error.kind != .None {
 		return

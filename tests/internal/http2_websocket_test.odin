@@ -14,7 +14,7 @@ http2_websocket_requires_negotiated_permission_without_sending_or_poisoning_pool
 	}
 
 	defer free(peer); defer http102_stop(peer)
-	roots := http102_roots(t, "async/tests/connection/testdata/peer/credentials/root.pem")
+	roots := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
 
 	if roots == nil {
 		return

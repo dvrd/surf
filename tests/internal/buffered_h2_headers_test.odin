@@ -68,7 +68,7 @@ buffered_h2_public_wire_preserves_authentication_headers :: proc(t: ^testing.T) 
 			"X-Review: first",
 			"X-Review: second",
 		},
-		"async/tests/connection/testdata/peer/credentials/root.pem",
+		"surf/tests/testdata/credentials/root.pem",
 		timeout_ms = 5000,
 	)
 	testing.expect_value(t, result.error.kind, .None)

@@ -69,7 +69,7 @@ surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t: ^test
 	testing.set_fail_timeout(t, 40 * time.Second)
 	credential, ce := credentials.create(
 		#load("tests/http3/localhost.pem"),
-		#load("../http/v3/testdata/rsa2048.pem"),
+		#load("tests/http3/rsa2048.pem"),
 		{},
 		context.allocator,
 	)

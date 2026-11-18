@@ -44,7 +44,7 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 
 	defer free(peer)
 	defer http102_stop(peer)
-	pool := http102_roots(t, "async/tests/connection/testdata/peer/credentials/root.pem")
+	pool := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
 
 	if pool == nil {
 		return
@@ -276,7 +276,7 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	testing.expect_value(t, http102_count(&peer.log, "\"event\":\"request\""), requests_before)
 	testing.expect_value(t, http102_count(&peer.log, "\"event\":\"conn\""), conns_before)
 
-	wrong := http102_roots(t, "async/tests/connection/testdata/client/wrong-root.pem")
+	wrong := http102_roots(t, "surf/tests/testdata/credentials/wrong-root.pem")
 
 	if wrong == nil {
 		return
@@ -311,7 +311,7 @@ http2_peer_http1_selection_uses_http1_client :: proc(t: ^testing.T) {
 
 	defer free(peer)
 	defer http102_stop(peer)
-	pool := http102_roots(t, "async/tests/connection/testdata/peer/credentials/root.pem")
+	pool := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
 
 	if pool == nil {
 		return
@@ -354,7 +354,7 @@ http2_missing_alpn_stays_on_http1 :: proc(t: ^testing.T) {
 
 	defer free(peer)
 	defer http102_stop(peer)
-	pool := http102_roots(t, "async/tests/connection/testdata/peer/credentials/root.pem")
+	pool := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
 
 	if pool == nil {
 		return
@@ -383,7 +383,7 @@ http2_goaway_does_not_send_the_request :: proc(t: ^testing.T) {
 
 	defer free(peer)
 	defer http102_stop(peer)
-	pool := http102_roots(t, "async/tests/connection/testdata/peer/credentials/root.pem")
+	pool := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
 
 	if pool == nil {
 		return

@@ -19,8 +19,8 @@ func main() {
 	mode := flag.String("mode", "h2", "h2, http1, http1-noalpn, goaway")
 	flag.Parse()
 	cert, err := tls.LoadX509KeyPair(
-		"../../../async/tests/connection/testdata/peer/credentials/leaf.pem",
-		"../../../async/tests/connection/testdata/peer/credentials/key.pem",
+		"../testdata/credentials/leaf.pem",
+		"../testdata/credentials/key.pem",
 	)
 	if err != nil {
 		fail(err)
