@@ -1,7 +1,7 @@
 package tests
 
 import surf ".."
-import http "../../http"
+import http "shared:http"
 import "core:net"
 import "core:mem"
 import "base:runtime"

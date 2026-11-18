@@ -1,7 +1,7 @@
 package surf
 
-import http "../http"
-import http3 "../http/v3"
+import http "shared:http"
+import http3 "shared:http/v3"
 import "core:mem"
 import "core:io"
 import "core:net"

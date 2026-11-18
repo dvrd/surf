@@ -120,7 +120,7 @@ def main():
                         'subjectAltName=DNS:localhost,IP:127.0.0.1'], check=True, capture_output=True)
         body_file = temp/'body'; body_file.write_bytes(b'file-extra')
         collection = temp/'shared'
-        for name in ['surf', 'http', 'ascii', 'websocket', 'async']:
+        for name in ['surf', 'http', 'websocket', 'async']:
             source = root.parent if name == 'surf' else args.shared/name
             shutil.copytree(source, collection/name,
                             ignore=shutil.ignore_patterns('.git', '__pycache__'))

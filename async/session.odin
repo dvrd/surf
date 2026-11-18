@@ -1,10 +1,10 @@
 package surf_async
 
 import surf ".."
-import http "../../http"
-import runtime_async "../../async"
-import adapter "../../async/connection"
-import signal "../../async/signal"
+import http "shared:http"
+import runtime_async "shared:async"
+import adapter "shared:async/connection"
+import signal "shared:async/signal"
 import exchange_api "exchange"
 import tls_api "core:crypto/tls"
 import "core:net"
@@ -12,7 +12,7 @@ import "core:sync"
 import "core:time"
 import "core:strings"
 import stream_api "stream"
-import h1 "../../http/v1"
+import h1 "shared:http/v1"
 import "core:mem"
 import scopes "core:sync/budget"
 

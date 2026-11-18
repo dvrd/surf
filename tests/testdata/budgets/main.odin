@@ -1,7 +1,7 @@
 package main
 
 import surf "../../.."
-import http "../../../../http"
+import http "shared:http"
 import rt "base:runtime"
 import tls "core:crypto/tls"
 import "core:fmt"

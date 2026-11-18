@@ -1,11 +1,11 @@
 package surf_async
 
 import surf ".."
-import runtime_async "../../async"
-import signal "../../async/signal"
+import runtime_async "shared:async"
+import signal "shared:async/signal"
 import "core:sync"
-import http "../../http"
-import h1 "../../http/v1"
+import http "shared:http"
+import h1 "shared:http/v1"
 import "core:bytes"
 import "core:mem"
 import charged "core:mem/budget"

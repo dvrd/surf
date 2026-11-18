@@ -1,9 +1,9 @@
 package surf_exchange
 
 import surf "../.."
-import http "../../../http"
+import http "shared:http"
 import "core:time"
-import h1 "../../../http/v1"
+import h1 "shared:http/v1"
 import "core:mem"
 import "core:net"
 import channel "../stream"

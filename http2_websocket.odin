@@ -1,8 +1,8 @@
 package surf
 
-import http "../http"
-import h2 "../http/v2"
-import hpack "../http/v2/hpack"
+import http "shared:http"
+import h2 "shared:http/v2"
+import hpack "shared:http/v2/hpack"
 import tls "core:crypto/tls"
 import "base:intrinsics"
 import owned "core:mem/owned"

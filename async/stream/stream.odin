@@ -1,10 +1,10 @@
 package surf_stream
 
-import http "../../../http"
+import http "shared:http"
 import "core:mem/owned"
 import "core:sync"
 import surf "../.."
-import signal "../../../async/signal"
+import signal "shared:async/signal"
 import "core:mem"
 import charged "core:mem/budget"
 import scopes "core:sync/budget"

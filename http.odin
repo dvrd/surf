@@ -1,9 +1,9 @@
 package surf
 
-import http "../http"
-import h3 "../http/v3"
+import http "shared:http"
+import h3 "shared:http/v3"
 import "core:compress"
-import http1 "../http/v1"
+import http1 "shared:http/v1"
 import tls_api "core:crypto/tls"
 import trans "core:net"
 import "core:mem"

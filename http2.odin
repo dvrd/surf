@@ -1,9 +1,9 @@
 package surf
 
-import http "../http"
-import h2 "../http/v2"
-import hpack "../http/v2/hpack"
-import http1 "../http/v1"
+import http "shared:http"
+import h2 "shared:http/v2"
+import hpack "shared:http/v2/hpack"
+import http1 "shared:http/v1"
 import "base:intrinsics"
 import tls_api "core:crypto/tls"
 import "core:io"

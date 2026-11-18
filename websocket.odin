@@ -1,6 +1,6 @@
 package surf
 
-import websocket "../websocket"
+import websocket "shared:websocket"
 import tls_api "core:crypto/tls"
 import "core:crypto"
 import "core:fmt"

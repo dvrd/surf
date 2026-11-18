@@ -1,8 +1,8 @@
 package surf
 
-import websocket "../websocket"
-import runtime_async "../async"
-import adapter "../async/connection"
+import websocket "shared:websocket"
+import runtime_async "shared:async"
+import adapter "shared:async/connection"
 import "base:intrinsics"
 import rt "base:runtime"
 import "core:crypto/tls"

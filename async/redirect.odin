@@ -1,13 +1,13 @@
 package surf_async
 
 import surf ".."
-import runtime_async "../../async"
+import runtime_async "shared:async"
 import "core:sync"
-import http "../../http"
+import http "shared:http"
 import "core:mem"
 import charged "core:mem/budget"
 import stream_api "stream"
-import h1 "../../http/v1"
+import h1 "shared:http/v1"
 
 redirect_status_error :: proc(error: surf.HTTP_Error, status: int) -> surf.HTTP_Error {
 	result := error
