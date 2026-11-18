@@ -1128,7 +1128,7 @@ websocket_stream_tls_write :: proc(data: rawptr, src: []u8) -> (int, WebSocket_S
 }
 
 websocket_stream_tls_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
-	if err := tls_api.close(cast(^tls_api.Conn)data); err.kind != .None {
+	if err := tls_api.conn_close(cast(^tls_api.Conn)data); err.kind != .None {
 		return {kind = .TLS_Failed, tls = err}
 	}
 
