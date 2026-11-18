@@ -1,6 +1,6 @@
 package surf
 
-import http "../http"
+import http "shared:http"
 import "core:crypto/tls"
 import x509 "core:crypto/x509"
 import "core:os"
@@ -44,7 +44,7 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 
 	defer free(peer)
 	defer http102_stop(peer)
-	pool := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
+	pool := http102_roots(t, "tests/testdata/credentials/root.pem")
 
 	if pool == nil {
 		return
@@ -276,7 +276,7 @@ http2_alpn_maps_requests_onto_bounded_streams :: proc(t: ^testing.T) {
 	testing.expect_value(t, http102_count(&peer.log, "\"event\":\"request\""), requests_before)
 	testing.expect_value(t, http102_count(&peer.log, "\"event\":\"conn\""), conns_before)
 
-	wrong := http102_roots(t, "surf/tests/testdata/credentials/wrong-root.pem")
+	wrong := http102_roots(t, "tests/testdata/credentials/wrong-root.pem")
 
 	if wrong == nil {
 		return
@@ -311,7 +311,7 @@ http2_peer_http1_selection_uses_http1_client :: proc(t: ^testing.T) {
 
 	defer free(peer)
 	defer http102_stop(peer)
-	pool := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
+	pool := http102_roots(t, "tests/testdata/credentials/root.pem")
 
 	if pool == nil {
 		return
@@ -354,7 +354,7 @@ http2_missing_alpn_stays_on_http1 :: proc(t: ^testing.T) {
 
 	defer free(peer)
 	defer http102_stop(peer)
-	pool := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
+	pool := http102_roots(t, "tests/testdata/credentials/root.pem")
 
 	if pool == nil {
 		return
@@ -383,7 +383,7 @@ http2_goaway_does_not_send_the_request :: proc(t: ^testing.T) {
 
 	defer free(peer)
 	defer http102_stop(peer)
-	pool := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
+	pool := http102_roots(t, "tests/testdata/credentials/root.pem")
 
 	if pool == nil {
 		return
@@ -475,7 +475,7 @@ http102_build :: proc(t: ^testing.T) -> bool {
 	process, start_error := os.process_start(
 		{
 			command = {http102_go(), "build", "-o", "/tmp/okami-102-peer", "."},
-			working_dir = "surf/tests/http102",
+			working_dir = "tests/http102",
 			stderr = os.stderr,
 		},
 	)
@@ -519,7 +519,7 @@ http102_start :: proc(t: ^testing.T, mode: string) -> ^Http102_Peer {
 	process, start_error := os.process_start(
 		{
 			command = {"/tmp/okami-102-peer", "-mode", mode},
-			working_dir = "surf/tests/http102",
+			working_dir = "tests/http102",
 			stdout = write_end,
 			stderr = os.stderr,
 		},

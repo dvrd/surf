@@ -3,7 +3,7 @@ import "core:bytes"
 import "core:fmt"
 import "core:mem"
 import "core:net"
-import runtime_async "../../async"
+import runtime_async "shared:async"
 import "core:testing"
 bank_refill :: proc(s: ^Client_State, ids: []u16) -> Client_Error {
 	previous := context

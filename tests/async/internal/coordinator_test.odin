@@ -1,13 +1,13 @@
 package surf_async
 
 import surf ".."
-import signal "../../async/signal"
+import signal "shared:async/signal"
 import "base:intrinsics"
 import scopes "core:sync/budget"
 import "core:time"
 import "core:thread"
 
-import runtime_async "../../async"
+import runtime_async "shared:async"
 import rt "base:runtime"
 import "core:fmt"
 import "core:mem"

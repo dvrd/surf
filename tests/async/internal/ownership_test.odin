@@ -1,7 +1,7 @@
 package surf_async
 
 import surf ".."
-import http "../../http"
+import http "shared:http"
 import rt "base:runtime"
 import "core:bytes"
 import "core:fmt"

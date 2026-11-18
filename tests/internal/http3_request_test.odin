@@ -1,7 +1,7 @@
 package surf
 
-import http "../http"
-import http3 "../http/v3"
+import http "shared:http"
+import http3 "shared:http/v3"
 import "core:bytes"
 import credentials "core:crypto/tls/credentials"
 import store "core:crypto/tls/credentials/store"
@@ -68,8 +68,8 @@ surf_h3_request_handler :: proc(
 surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 40 * time.Second)
 	credential, ce := credentials.create(
-		#load("tests/http3/localhost.pem"),
-		#load("tests/http3/rsa2048.pem"),
+		#load("../tests/http3/localhost.pem"),
+		#load("../tests/http3/rsa2048.pem"),
 		{},
 		context.allocator,
 	)
@@ -120,7 +120,7 @@ surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t: ^test
 	}
 
 	roots: tls.Root_Pool
-	assert(tls.root_pool_parse(&roots, #load("tests/http3/localhost.pem")).kind == .None)
+	assert(tls.root_pool_parse(&roots, #load("../tests/http3/localhost.pem")).kind == .None)
 	defer tls.root_pool_destroy(&roots)
 	cache: Alt_Svc_Cache
 	alt_buf: [80]u8

@@ -1,7 +1,7 @@
 package surf
 
-import websocket "../websocket"
-import runtime_async "../async"
+import websocket "shared:websocket"
+import runtime_async "shared:async"
 
 import "base:intrinsics"
 import rt "base:runtime"
@@ -180,7 +180,7 @@ websocket_async_tls_loopback_echo_and_hostname_mismatch :: proc(t: ^testing.T) {
 	process, start_error := os.process_start(
 		{
 			command = {go_bin, "run", "."},
-			working_dir = "surf/tests/websocket105",
+			working_dir = "tests/websocket105",
 			stdout = write_end,
 			stderr = os.stderr,
 		},
@@ -207,7 +207,7 @@ websocket_async_tls_loopback_echo_and_hostname_mismatch :: proc(t: ^testing.T) {
 	pool := new(tls.Root_Pool)
 	defer free(pool)
 	defer tls.root_pool_destroy(pool)
-	load_error := tls.root_pool_load_file(pool, "surf/tests/testdata/credentials/root.pem")
+	load_error := tls.root_pool_load_file(pool, "tests/testdata/credentials/root.pem")
 	testing.expect(t, load_error.kind == .None)
 	if load_error.kind != .None {
 		return

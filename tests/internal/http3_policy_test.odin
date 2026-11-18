@@ -1,6 +1,6 @@
 package surf
 
-import http "../http"
+import http "shared:http"
 import "core:crypto/tls"
 import "core:fmt"
 import "core:net"

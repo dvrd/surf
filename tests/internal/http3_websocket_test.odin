@@ -1,6 +1,6 @@
 package surf
-import http "../http"
-import h3 "../http/v3"
+import http "shared:http"
+import h3 "shared:http/v3"
 import "core:testing"
 
 @(test)

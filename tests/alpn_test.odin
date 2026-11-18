@@ -1,6 +1,6 @@
 package tests
 
-import surf ".."
+import surf "shared:surf"
 import "core:testing"
 
 @(test)

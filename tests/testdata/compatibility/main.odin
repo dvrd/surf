@@ -1,6 +1,6 @@
 package main
 
-import surf "../../.."
+import surf "shared:surf"
 import rt "base:runtime"
 import "core:fmt"
 import "core:mem"

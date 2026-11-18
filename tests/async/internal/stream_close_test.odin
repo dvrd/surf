@@ -1,7 +1,7 @@
 package surf_async
 
-import runtime_async "../../async"
-import adapter "../../async/connection"
+import runtime_async "shared:async"
+import adapter "shared:async/connection"
 import exchange_api "exchange"
 import channel "stream"
 import rt "base:runtime"

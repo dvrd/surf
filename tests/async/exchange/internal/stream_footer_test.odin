@@ -1,7 +1,7 @@
 package surf_exchange
 
 import channel "../stream"
-import h1 "../../../http/v1"
+import h1 "shared:http/v1"
 import "core:compress/deflate"
 import "core:mem/owned"
 import "core:testing"

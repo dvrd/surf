@@ -1,6 +1,6 @@
 package surf_async
 
-import runtime_async "../../async"
+import runtime_async "shared:async"
 import "core:crypto/x509"
 import "core:fmt"
 import "core:mem"

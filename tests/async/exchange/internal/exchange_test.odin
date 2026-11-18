@@ -1,7 +1,7 @@
 package surf_exchange
 
 import surf "../.."
-import http "../../../http"
+import http "shared:http"
 import "core:mem"
 import charged "core:mem/budget"
 import scopes "core:sync/budget"

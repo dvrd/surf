@@ -1,6 +1,6 @@
 package tests
 
-import surf ".."
+import surf "shared:surf"
 import owned "core:mem/owned"
 import "core:mem"
 import "core:net"

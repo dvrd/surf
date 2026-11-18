@@ -1,6 +1,6 @@
 package main
 
-import surf "../../.."
+import surf "shared:surf"
 import http "shared:http"
 import "core:crypto/tls"
 import "core:fmt"

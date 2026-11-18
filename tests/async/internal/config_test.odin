@@ -1,8 +1,8 @@
 package surf_async
 
 import surf ".."
-import http "../../http"
-import runtime_async "../../async"
+import http "shared:http"
+import runtime_async "shared:async"
 import "core:mem"
 import "core:net"
 import resources "core:sync/budget"

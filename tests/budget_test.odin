@@ -1,6 +1,6 @@
 package tests
 
-import surf ".."
+import surf "shared:surf"
 import exchange "shared:http/exchange"
 import rt "base:runtime"
 import "core:mem"

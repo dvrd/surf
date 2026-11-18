@@ -1,6 +1,6 @@
 package tests
 
-import surf ".."
+import surf "shared:surf"
 import "core:net"
 import "core:strings"
 import "core:testing"

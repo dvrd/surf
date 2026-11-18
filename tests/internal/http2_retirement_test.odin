@@ -1,6 +1,6 @@
 package surf
 
-import http "../http"
+import http "shared:http"
 import "core:testing"
 import "core:crypto/tls"
 import "core:time"
@@ -29,7 +29,7 @@ http_retirement_sequence :: proc(t: ^testing.T, streams: int) {
 	}
 
 	defer free(peer); defer http102_stop(peer)
-	roots := http102_roots(t, "surf/tests/testdata/credentials/root.pem")
+	roots := http102_roots(t, "tests/testdata/credentials/root.pem")
 
 	if roots == nil {
 		return

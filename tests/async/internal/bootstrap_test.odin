@@ -1,8 +1,8 @@
 package surf_async
 
 import surf ".."
-import runtime_async "../../async"
-import signal "../../async/signal"
+import runtime_async "shared:async"
+import signal "shared:async/signal"
 import rt "base:runtime"
 import "base:intrinsics"
 import "core:fmt"

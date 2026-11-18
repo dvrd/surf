@@ -1,7 +1,7 @@
 package surf_async
 
 import surf ".."
-import runtime_async "../../async"
+import runtime_async "shared:async"
 import rt "base:runtime"
 import "core:mem"
 import "core:bytes"
