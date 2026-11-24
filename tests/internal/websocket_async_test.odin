@@ -11,6 +11,7 @@ import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
@@ -170,7 +171,9 @@ websocket_async_cancel_while_upgrade_read_is_armed :: proc(t: ^testing.T) {
 @(test)
 websocket_async_tls_loopback_echo_and_hostname_mismatch :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 90 * time.Second)
-	go_bin := ws_go_bin()
+	if !ws_build(t) {
+		return
+	}
 	read_end, write_end, pipe_error := os.pipe()
 	testing.expect(t, pipe_error == nil)
 	if pipe_error != nil {
@@ -179,7 +182,7 @@ websocket_async_tls_loopback_echo_and_hostname_mismatch :: proc(t: ^testing.T) {
 	defer os.close(read_end)
 	process, start_error := os.process_start(
 		{
-			command = {go_bin, "run", "."},
+			command = {"/tmp/okami-105-peer"},
 			working_dir = "tests/websocket105",
 			stdout = write_end,
 			stderr = os.stderr,
@@ -987,12 +990,39 @@ ws_peer_take :: proc(sock: net.TCP_Socket, peer: ^Ws_Peer, header: websocket.Fra
 	return true
 }
 
-ws_go_bin :: proc() -> string {
-	if os.exists("/opt/homebrew/bin/go") {
-		return "/opt/homebrew/bin/go"
+ws_build_mu: sync.Mutex
+ws_built: bool
+
+ws_compiler :: proc() -> string {
+	value, found := os.lookup_env("ODIN", context.temp_allocator)
+	if !found || value == "" {
+		return "odin"
+	}
+	return value
+}
+
+ws_build :: proc(t: ^testing.T) -> bool {
+	sync.lock(&ws_build_mu)
+	defer sync.unlock(&ws_build_mu)
+	if ws_built && os.exists("/tmp/okami-105-peer") {
+		return true
 	}
 
-	return "/opt/homebrew/Cellar/go/1.26.2/bin/go"
+	process, start_error := os.process_start(
+		{
+			command = {ws_compiler(), "build", ".", "-out:/tmp/okami-105-peer"},
+			working_dir = "tests/websocket105",
+			stderr = os.stderr,
+		},
+	)
+	testing.expect(t, start_error == nil)
+	if start_error != nil {
+		return false
+	}
+	state, wait_error := os.process_wait(process)
+	testing.expect(t, wait_error == nil && state.exit_code == 0)
+	ws_built = wait_error == nil && state.exit_code == 0
+	return ws_built
 }
 
 ws_read_port :: proc(file: ^os.File) -> (int, bool) {

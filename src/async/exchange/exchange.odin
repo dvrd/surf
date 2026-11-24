@@ -7,7 +7,7 @@ import h1 "shared:http/v1"
 import "core:mem"
 import "core:net"
 import channel "../stream"
-import "core:compress/deflate"
+import deflate "core:compress/step"
 import "core:strings"
 import "core:mem/owned"
 
