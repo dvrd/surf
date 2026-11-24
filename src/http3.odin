@@ -105,6 +105,9 @@ execute_http3 :: proc(
 	if resolve_error.kind != .None {
 		return {}, resolve_error
 	}
+	if rejected := address_policy_check(config, url.host, []net.Endpoint{endpoint}); rejected.kind != .None {
+		return {}, rejected
+	}
 	path := url.target
 	if len(path) == 0 {
 		path = "/"
@@ -176,6 +179,8 @@ execute_http3 :: proc(
 	wire.body_sink = &sink
 	wire.max_response_bytes = aggregate.limit
 	result: http3.Client_Result
+	// endpoint is the address just checked. A new QUIC client dials it. A pooled
+	// lane already open for this origin is reused and is not checked again.
 	if config.http3_pool != nil {
 		result = http3.pool_exchange_request(
 			config.http3_pool,
@@ -766,6 +771,9 @@ websocket_http3_open :: proc(
 	if re.kind != .None {
 		return re
 	}
+	if rejected := address_policy_check(client.config, parsed.host, []net.Endpoint{endpoint}); rejected.kind != .None {
+		return rejected
+	}
 
 	tunnel.client = client
 	intrinsics.atomic_store(&client.cancel, 0)
@@ -780,6 +788,7 @@ websocket_http3_open :: proc(
 		client_credentials      = client.config.tls.client_credentials,
 		client_credential_lease = client.config.tls.client_credential_lease,
 	}
+	// endpoint is the address just checked. A new lane dials it; an open lane is reused.
 	e := http3.pool_connect_open(
 		client.config.http3_pool,
 		endpoint,

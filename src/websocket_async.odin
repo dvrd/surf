@@ -56,6 +56,7 @@ WebSocket_Async_Error_Kind :: enum {
 	Allocation_Failed,
 	Destination_Undersized,
 	Entropy_Unavailable,
+	Address_Rejected,
 }
 
 WebSocket_Async_Error :: struct {
@@ -105,6 +106,9 @@ WebSocket_Async_Config :: struct {
 	handshake_timeout:   time.Duration,
 	io_timeout:          time.Duration,
 	close_timeout:       time.Duration,
+	// Nil allows endpoint. Checked with host before connect. host is not resolved.
+	address_policy:      Address_Policy,
+	address_policy_data: rawptr,
 }
 
 // Caller-owned, stable address, not copied. user is untouched by bind and is
@@ -576,6 +580,19 @@ websocket_async_connect :: proc(session: ^WebSocket_Async) -> runtime_async.Resu
 	}
 
 	if !session.connect_started {
+		if session.config.address_policy != nil {
+			endpoint := session.config.endpoint
+
+			if !session.config.address_policy(
+				session.config.host,
+				[]net.Endpoint{endpoint},
+				session.config.address_policy_data,
+			) {
+				websocket_async_finish_early(session, {kind = .Address_Rejected})
+				return .Done
+			}
+		}
+
 		session.connect_deadline = runtime_async.deadline_after(session.runtime, session.config.handshake_timeout)
 		pending, error := runtime_async.begin_connect(
 			session.runtime,

@@ -2,7 +2,7 @@ package surf
 
 import http "shared:http"
 import h3 "shared:http/v3"
-import "core:compress"
+import step "core:compress/step"
 import http1 "shared:http/v1"
 import tls_api "core:crypto/tls"
 import trans "core:net"
@@ -32,8 +32,11 @@ HTTP_Error :: struct {
 	// Exact scope admission cause; allocator-enforced byte failures retain the
 	// standard Allocation_Failed kind without guessing a concurrent cause.
 	budget:        resources.Error,
-	decoding:      compress.Decode_Error,
+	decoding:      step.Decode_Error,
 }
+
+// Return false to refuse every address. user is Config.address_policy_data.
+Address_Policy :: proc(host: string, addresses: []trans.Endpoint, user: rawptr) -> bool
 
 Config :: struct {
 	_http3_cancel:      proc(_: rawptr) -> bool,
@@ -50,6 +53,16 @@ Config :: struct {
 	// together for each new connection, always capped by the total deadline.
 	setup_timeout:      time.Duration,
 	resolver:           trans.Resolver_Options,
+	// Nil allows every resolved address. Called with the URL host, the exact
+	// endpoints about to be dialed, and address_policy_data, after DNS or an IP
+	// literal is known and before any socket is opened. Each redirect hop is
+	// checked the same way. A redirect to an IP literal is refused before that
+	// hop is followed. Return false to refuse the whole set. Host and addresses
+	// are valid only for the call. address_policy_data is borrowed for every
+	// check this config performs. A pooled connection that is reused is not
+	// resolved or passed through this policy again.
+	address_policy:     Address_Policy,
+	address_policy_data: rawptr,
 	// Zero preserves unmanaged compatibility. Host supplies an operation Scope
 	// below its connection/global hierarchy.
 	scope:              resources.Scope,
@@ -214,6 +227,8 @@ execute_internal :: proc(
 		if validation.kind != .None {
 			error := http_protocol_error(validation)
 			error.phase = .Configuration
+			// Encode runs before any socket, so a reserved header never leaves the client.
+			error.write_effect = .Not_Sent
 
 			if validation.kind == .Body_Oversized {
 				error.phase = .Body_Limit
@@ -478,6 +493,22 @@ execute_redirect :: proc(
 	if !redirect_origin_safe(current, u, new_parsed) {
 		delete(new_url, allocator)
 		return "", {kind = .Unsafe_Redirect}
+	}
+
+	// A name is checked after the next hop resolves. An IP literal is already
+	// the address that would be dialed, so refuse it before following the hop.
+	if config.address_policy != nil {
+		if literal := trans.parse_address(new_parsed.host); literal != nil {
+			endpoint := trans.Endpoint {
+				address = literal,
+				port    = new_parsed.port,
+			}
+			if rejected := address_policy_check(config, new_parsed.host, []trans.Endpoint{endpoint});
+			   rejected.kind != .None {
+				delete(new_url, allocator)
+				return "", rejected
+			}
+		}
 	}
 	return new_url, {}
 }
@@ -1273,6 +1304,110 @@ response_take_body :: proc(response: ^Response) -> (chunk: owned.Chunk, error: o
 	return
 }
 
+// Nil policy allows the dial. An empty set or a false result refuses every
+// address before connect. The slice is the exact set the dial will walk.
+address_policy_check :: proc(config: Config, host: string, addresses: []trans.Endpoint) -> HTTP_Error {
+	if config.address_policy == nil {
+		return {}
+	}
+	if len(addresses) == 0 || !config.address_policy(host, addresses, config.address_policy_data) {
+		return {kind = .Address_Rejected, phase = .Connect, write_effect = .Not_Sent}
+	}
+	return {}
+}
+
+// Refuses an empty set and any address that is not global unicast. IPv4:
+// loopback, RFC 1918, link-local 169.254.0.0/16 (including 169.254.169.254),
+// 0.0.0.0, and 224.0.0.0/4. IPv6: ::1, fe80::/10, fc00::/7, ::, and ff00::/8.
+// An IPv4-mapped address is refused when its IPv4 form is. One refused
+// address refuses the whole set.
+address_policy_public_only :: proc(_: string, addresses: []trans.Endpoint, _: rawptr) -> bool {
+	ip4_refused :: proc(ip: trans.IP4_Address) -> bool {
+		if ip == {} {
+			return true
+		}
+
+		if ip[0] == 10 || ip[0] == 127 {
+			return true
+		}
+
+		if ip[0] == 169 && ip[1] == 254 {
+			return true
+		}
+
+		if ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31 {
+			return true
+		}
+
+		if ip[0] == 192 && ip[1] == 168 {
+			return true
+		}
+
+		if ip[0] >= 224 && ip[0] <= 239 {
+			return true
+		}
+
+		return false
+	}
+
+	ip6_refused :: proc(ip: trans.IP6_Address) -> bool {
+		if ip == {} || ip == trans.IP6_Loopback {
+			return true
+		}
+
+		first := u16(ip[0])
+
+		if first & 0xffc0 == 0xfe80 || first & 0xfe00 == 0xfc00 || first & 0xff00 == 0xff00 {
+			return true
+		}
+
+		mapped :=
+			u16(ip[0]) == 0 &&
+			u16(ip[1]) == 0 &&
+			u16(ip[2]) == 0 &&
+			u16(ip[3]) == 0 &&
+			u16(ip[4]) == 0 &&
+			u16(ip[5]) == 0xffff
+
+		if mapped {
+			hi := u16(ip[6])
+			lo := u16(ip[7])
+
+			return ip4_refused({u8(hi >> 8), u8(hi), u8(lo >> 8), u8(lo)})
+		}
+
+		return false
+	}
+
+	if len(addresses) == 0 {
+		return false
+	}
+
+	for address in addresses {
+		refused := false
+
+		switch ip in address.address {
+		case trans.IP4_Address:
+			refused = ip4_refused(ip)
+		case trans.IP6_Address:
+			refused = ip6_refused(ip)
+		}
+
+		if refused {
+			return false
+		}
+	}
+
+	return true
+}
+
+// Host, Connection, Content-Length, Transfer-Encoding, Accept-Encoding,
+// Expect, Upgrade, Trailer, and TE. A request that carries one is rejected
+// with .Reserved_Header before a socket is opened.
+header_reserved :: proc(name: string) -> bool {
+	return http1.reserved_header(name)
+}
+
 connection_setup_deadline :: proc(config: Config, total: time.Time) -> time.Time {
 	if config.setup_timeout <= 0 {
 		return total
@@ -1289,6 +1424,11 @@ bounded_socket :: proc(url: http.URL, config: Config, deadline: time.Time) -> (t
 
 	if resolve_error != nil {
 		return 0, http_error_classify({kind = .Dial_Failed, network = resolve_error}, .DNS, .Not_Sent)
+	}
+
+	// Dial this set only. A later lookup would reopen the DNS-rebinding window.
+	if rejected := address_policy_check(config, url.host, endpoints.items[:endpoints.count]); rejected.kind != .None {
+		return 0, rejected
 	}
 
 	socket, connect_error := trans.dial_tcp_candidates_until(endpoints, deadline)
@@ -1491,6 +1631,8 @@ http_error_classify :: proc(
 			case .TCP_Dial_Failed:
 				result.phase = http_network_phase(result.tls_dial.network)
 			}
+		case .Address_Rejected:
+			result.phase = .Connect
 		case .Invalid_Status,
 		     .Conflicting_Framing,
 		     .Unsupported_Transfer_Encoding,

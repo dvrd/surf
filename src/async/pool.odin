@@ -1030,6 +1030,8 @@ network_queue_claim_budget :: proc(
 	}
 	// A concurrent producer may have made Idle reusable while draws were being
 	// reserved. Keep the draw block only if a new dial/waiter can actually use it.
+	// An Idle pooled connection is not resolved or passed through the address
+	// policy again.
 	sync.lock(&s.kernel.mu)
 	reused :=
 		reservation.session.slot != 0 && s.kernel.sessions[int(reservation.session.slot) - 1].reserved_from == .Idle

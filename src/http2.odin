@@ -459,6 +459,8 @@ http_lane_prepare :: proc(
 		   candidate.booted &&
 		   !candidate.dead &&
 		   !candidate.goaway {
+			// A live lane is not resolved again, so the address policy is not
+			// applied to a connection that is already open.
 			http_arm_socket(c, candidate.tls.tcp.socket)
 			return &candidate, true, {}
 		}

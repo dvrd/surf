@@ -1161,6 +1161,7 @@ session_query_begin :: proc(
 	host: string,
 	port: int,
 	family: runtime_async.DNS_Family,
+	connect: bool,
 ) -> runtime_async.DNS_Error {
 	s := a.owner
 	config := runtime_async.DNS_Config {
@@ -1191,6 +1192,11 @@ session_query_begin :: proc(
 	if error.status != .Success {
 		return error
 	}
+	// An address policy must see the resolved set before TCP. The dial step
+	// starts connect after that check. Numeric callers already checked.
+	if !connect {
+		return {}
+	}
 	return runtime_async.begin_dns_connect(&a.dial, &a.query)
 }
 session_numeric_begin :: proc(a: ^Session_Actor) -> runtime_async.DNS_Error {
@@ -1205,7 +1211,7 @@ session_numeric_begin :: proc(a: ^Session_Actor) -> runtime_async.DNS_Error {
 
 	// begin_dns copies the numeric address into exclusive actor workspace before
 	// this stack string dies. DNS_Connect then performs actual nonblocking TCP.
-	return session_query_begin(a, text, endpoint.port, .Both_A_First)
+	return session_query_begin(a, text, endpoint.port, .Both_A_First, true)
 }
 
 session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
@@ -1217,6 +1223,17 @@ session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	}
 
 	if a.prepared_address_count > 0 {
+		// These endpoints are the ones numeric connect will dial, including an
+		// IP literal and a resolver-snapshot hit. Check them before any socket.
+		if rejected := surf.address_policy_check(
+			a.owner.profile.config.http,
+			origin.host,
+			a.prepared_addresses[:a.prepared_address_count],
+		); rejected.kind != .None {
+			session_error(a, rejected)
+			return .Yield
+		}
+
 		error := session_numeric_begin(a)
 
 		if error.status != .Success {
@@ -1244,7 +1261,13 @@ session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	}
 
 	a.dns_server_count = copy(a.dns_servers[:], servers)
-	error := session_query_begin(a, origin.host, int(origin.port), .A_Only)
+	error := session_query_begin(
+		a,
+		origin.host,
+		int(origin.port),
+		.A_Only,
+		a.owner.profile.config.http.address_policy == nil,
+	)
 
 	if error.status != .Success {
 		session_error(a, session_dns_error(error))
@@ -1253,6 +1276,78 @@ session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 
 	a.phase = .Resolving_A
 
+	return .Yield
+}
+
+// Hostname lookups with an address policy stay unconnected until the resolved
+// set is accepted. begin_dns_connect then dials that same query. Numeric dials
+// are checked in session_dial_begin. A nil policy, or a dial already started,
+// continues straight into connect.
+session_policy_gate :: proc(a: ^Session_Actor) -> (ready: bool, result: runtime_async.Resume_Result) {
+	if a.owner.profile.config.http.address_policy == nil || a.dial._self == &a.dial {
+		return true, {}
+	}
+
+	state, error := runtime_async.finish_dns(&a.query)
+	if state != .Done {
+		return false, state
+	}
+	if error.status != .Success {
+		return false, session_dial_unresolved(a, error)
+	}
+
+	results := runtime_async.dns_results(&a.query)
+	_, origin, borrow := session_borrow(a)
+	if borrow.kind != .None {
+		_ = runtime_async.close_dns(&a.query)
+		network_dns_burn(a.owner, &a.ids)
+		session_error(a, {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent})
+		return false, .Yield
+	}
+	if rejected := surf.address_policy_check(a.owner.profile.config.http, origin.host, results);
+	   rejected.kind != .None {
+		_ = runtime_async.close_dns(&a.query)
+		network_dns_burn(a.owner, &a.ids)
+		session_error(a, rejected)
+		return false, .Yield
+	}
+	if begin := runtime_async.begin_dns_connect(&a.dial, &a.query); begin.status != .Success {
+		_ = runtime_async.close_dns(&a.query)
+		network_dns_burn(a.owner, &a.ids)
+		session_error(a, session_dns_error(begin))
+		return false, .Yield
+	}
+	return true, {}
+}
+
+session_dial_unresolved :: proc(a: ^Session_Actor, error: runtime_async.DNS_Error) -> runtime_async.Resume_Result {
+	cause := error
+	_ = runtime_async.close_dns(&a.query)
+	network_dns_burn(a.owner, &a.ids)
+	if a.phase == .Resolving_A &&
+	   cause.status != .Timeout &&
+	   cause.status != .Cancelled &&
+	   cause.status != .Limit &&
+	   session_dns_block(a) {
+		_, origin, borrow := session_borrow(a)
+		if borrow.kind == .None {
+			a.query = {}
+			a.dial = {}
+			next := session_query_begin(
+				a,
+				origin.host,
+				int(origin.port),
+				.AAAA_Only,
+				a.owner.profile.config.http.address_policy == nil,
+			)
+			if next.status == .Success {
+				a.phase = .Resolving_AAAA
+				return .Yield
+			}
+			cause = next
+		}
+	}
+	session_error(a, session_dns_error(cause))
 	return .Yield
 }
 
@@ -1267,6 +1362,11 @@ session_dial_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> run
 			{kind = .Deadline_Failed, transport = {kind = .Timeout}, phase = .Deadline, write_effect = .Not_Sent},
 		)
 		return .Yield
+	}
+
+	ready, gated := session_policy_gate(a)
+	if !ready {
+		return gated
 	}
 
 	socket, status, error := runtime_async.finish_dns_connect(&a.dial)
@@ -1301,7 +1401,13 @@ session_dial_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> run
 			if borrow.kind == .None {
 				a.query = {}
 				a.dial = {}
-				next := session_query_begin(a, origin.host, int(origin.port), .AAAA_Only)
+				next := session_query_begin(
+					a,
+					origin.host,
+					int(origin.port),
+					.AAAA_Only,
+					a.owner.profile.config.http.address_policy == nil,
+				)
 
 				if next.status == .Success {
 					a.phase = .Resolving_AAAA

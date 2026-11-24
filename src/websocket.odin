@@ -303,6 +303,7 @@ WebSocket_Dial_Error_Kind :: enum {
 	Invalid_Config,
 	TLS_Failed,
 	Upgrade_Failed,
+	Address_Rejected,
 }
 
 WebSocket_Dial_Error :: struct {
@@ -312,15 +313,25 @@ WebSocket_Dial_Error :: struct {
 	websocket: WebSocket_Error,
 }
 
+// Borrowed for the dial call. A nil address_policy allows every resolved address.
+WebSocket_Dial_Options :: struct {
+	address_policy:      Address_Policy,
+	address_policy_data: rawptr,
+	resolver:            tcp_api.Resolver_Options,
+}
+
 // Opens a secure WebSocket (wss). config.host defaults to host[:port] and
 // config.target to '/'. conn and all borrowed settings must remain alive and
 // unchanged until close. No redirects, proxying, or extensions are negotiated.
+// The policy sees host and the resolved endpoints. A refusal leaves conn
+// uninitialized and opens no socket. The dial uses that same resolved set.
 websocket_dial :: proc(
 	conn: ^WebSocket_Conn,
 	host: string,
 	port: int,
 	config: WebSocket_Config,
 	tls_config: tls_api.Config,
+	options: WebSocket_Dial_Options = {},
 ) -> WebSocket_Dial_Error {
 	if conn == nil || conn.phase != .Uninitialized {
 		return {kind = .Invalid_State}
@@ -336,6 +347,17 @@ websocket_dial :: proc(
 		return {kind = .Invalid_Config, client = .Invalid_Upgrade_Options}
 	}
 
+	// Resolve before the connection is initialized so a refusal performs no I/O
+	// and leaves the phase Uninitialized. Dial this set only.
+	endpoints, resolve_error := tcp_api.resolve_endpoints_until(host, port, {}, options.resolver)
+
+	if resolve_error == nil && options.address_policy != nil {
+		if endpoints.count == 0 ||
+		   !options.address_policy(host, endpoints.items[:endpoints.count], options.address_policy_data) {
+			return {kind = .Address_Rejected}
+		}
+	}
+
 	// client only validates the callback shape, so using the stable embedded
 	// TLS address before dialing performs no network I/O. Install it below.
 	stream := websocket_stream_from_tls_address(&conn.tls_client)
@@ -346,16 +368,52 @@ websocket_dial :: proc(
 	copy(conn.dial_host[:], transmute([]u8)settings.host)
 	conn.config.host = cast(string)conn.dial_host[:len(settings.host)]
 
-	err := tls_api.dial(&conn.tls_client, host, port, tls_config)
-	if err.kind != .None {
+	if resolve_error != nil {
+		return websocket_dial_fail(conn, {kind = .TCP_Dial_Failed, network = resolve_error})
+	}
+
+	tls_settings := tls_config
+	if tls_settings.server_name == "" {
+		tls_settings.server_name = host
+	}
+
+	if err := tls_api.config_validate(tls_settings); err != .None {
+		return websocket_dial_fail(conn, {kind = .Invalid_Config, config = err})
+	}
+
+	// h3 is not a TCP record offer. Reject it before any socket, as tls.dial does.
+	for protocol in tls_settings.alpn_protocols {
+		if protocol == "h3" {
+			return websocket_dial_fail(conn, {kind = .Invalid_Config, config = .Invalid_ALPN})
+		}
+	}
+
+	socket, connect_error := tcp_api.dial_tcp_candidates_until(endpoints, {})
+
+	if connect_error != nil {
+		return websocket_dial_fail(conn, {kind = .TCP_Dial_Failed, network = connect_error})
+	}
+
+	underlying := tcp_api.tcp_connection(&conn.tls_client.tcp)
+	if err := tls_api.client(&conn.tls_client, underlying, tls_settings); err != .None {
+		tcp_api.close(socket)
+		return websocket_dial_fail(conn, {kind = .Invalid_Config, config = err})
+	}
+
+	conn.tls_client.tcp = {
+		socket = socket,
+	}
+
+	if err := tls_api.handshake(&conn.tls_client); err.kind != .None {
+		_ = tls_api.conn_close(&conn.tls_client)
 		conn.phase = .Failed
-		conn.transport_closed = true // tls.dial closes sockets on handshake failure.
+		conn.transport_closed = true
 		conn.last_error = {
 			kind = .Upgrade_Failed,
-			stream = {kind = .TLS_Failed, tls_dial = err},
+			stream = {kind = .TLS_Failed, tls_dial = {kind = .Handshake_Failed, handshake = err}},
 		}
 
-		return {kind = .TLS_Failed, tls = err}
+		return {kind = .TLS_Failed, tls = {kind = .Handshake_Failed, handshake = err}}
 	}
 
 	if err := websocket_upgrade(conn); err.kind != .None {
@@ -363,6 +421,17 @@ websocket_dial :: proc(
 	}
 
 	return {}
+}
+
+websocket_dial_fail :: proc(conn: ^WebSocket_Conn, err: tls_api.Dial_Error) -> WebSocket_Dial_Error {
+	conn.phase = .Failed
+	conn.transport_closed = true
+	conn.last_error = {
+		kind = .Upgrade_Failed,
+		stream = {kind = .TLS_Failed, tls_dial = err},
+	}
+
+	return {kind = .TLS_Failed, tls = err}
 }
 
 websocket_dial_host :: proc(host_storage: []u8, host: string, port: int) -> string {
