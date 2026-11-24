@@ -471,10 +471,27 @@ http102_body_is :: proc(body: []u8, n: int, value: u8) -> bool {
 	return true
 }
 
+http102_build_mu: sync.Mutex
+http102_built: bool
+
+http102_compiler :: proc() -> string {
+	value, found := os.lookup_env("ODIN", context.temp_allocator)
+	if !found || value == "" {
+		return "odin"
+	}
+	return value
+}
+
 http102_build :: proc(t: ^testing.T) -> bool {
+	sync.lock(&http102_build_mu)
+	defer sync.unlock(&http102_build_mu)
+	if http102_built && os.exists("/tmp/okami-102-peer") {
+		return true
+	}
+
 	process, start_error := os.process_start(
 		{
-			command = {http102_go(), "build", "-o", "/tmp/okami-102-peer", "."},
+			command = {http102_compiler(), "build", ".", "-out:/tmp/okami-102-peer"},
 			working_dir = "tests/http102",
 			stderr = os.stderr,
 		},
@@ -487,16 +504,9 @@ http102_build :: proc(t: ^testing.T) -> bool {
 
 	state, wait_error := os.process_wait(process)
 	testing.expect(t, wait_error == nil && state.exit_code == 0)
+	http102_built = wait_error == nil && state.exit_code == 0
 
-	return wait_error == nil && state.exit_code == 0
-}
-
-http102_go :: proc() -> string {
-	if os.exists("/opt/homebrew/bin/go") {
-		return "/opt/homebrew/bin/go"
-	}
-
-	return "/opt/homebrew/Cellar/go/1.26.2/bin/go"
+	return http102_built
 }
 
 http102_start :: proc(t: ^testing.T, mode: string) -> ^Http102_Peer {
