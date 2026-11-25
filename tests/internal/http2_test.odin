@@ -3,6 +3,7 @@ package surf
 import http "shared:async/http"
 import "shared:async/tls"
 import x509 "core:crypto/x509"
+import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -680,4 +681,38 @@ http102_find_int :: proc(log: ^Http102_Log, key: string) -> (int, bool) {
 	}
 
 	return strconv.parse_int(rest[i:end])
+}
+
+@(test)
+h2_tls_and_tunnel_deadlines_follow_the_shared_phase_rules :: proc(t: ^testing.T) {
+	alert_error := tls.Error(tls.Protocol_Error.Bad_Record_Mac)
+	alert := h2_tls_error(alert_error, .Unknown, 0)
+	classified := http_error_classify(
+		{
+			kind         = .IO_Failed,
+			phase        = .Read,
+			write_effect = .Unknown,
+			tls_error    = alert_error,
+			transport    = tls_network(alert_error),
+		},
+		.Read,
+		.Unknown,
+		0,
+	)
+	testing.expect_value(t, alert.kind, classified.kind)
+	testing.expect_value(t, alert.phase, classified.phase)
+	testing.expect_value(t, alert.tls_error, classified.tls_error)
+	testing.expect_value(t, alert.phase, .TLS)
+	closed := h2_tls_error(net.TCP_Send_Error.Connection_Closed, .Unknown, 0)
+	testing.expect_value(t, closed.phase, .Write)
+	deadline := h2_tunnel_stream_error(
+		{
+			kind      = .Deadline_Failed,
+			phase     = .Write,
+			tls_error = tls.Protocol_Error.Bad_Record_Mac,
+		},
+	)
+	testing.expect_value(t, deadline.kind, .TCP_Failed)
+	sent, ok := deadline.transport.(net.TCP_Send_Error)
+	testing.expect(t, ok && sent == .Timeout)
 }

@@ -607,15 +607,27 @@ h2_tunnel_reap :: proc(lane: ^HTTP_Lane) {
 }
 
 h2_tunnel_stream_error :: proc(error: HTTP_Error) -> WebSocket_Stream_Error {
+	if error.kind == .Deadline_Failed {
+		transport: net.Network_Error = net.TCP_Recv_Error.Timeout
+
+		if error.phase == .Write {
+			transport = net.TCP_Send_Error.Timeout
+		} else if error.phase == .Connect {
+			transport = net.Dial_Error.Timeout
+		}
+
+		return {kind = .TCP_Failed, transport = transport}
+	}
+
 	if error.tls_error != nil {
-		return {kind = .TLS_Failed, tls = error.tls_error}
+		classified := http_error_classify(error, error.phase, error.write_effect, error.status)
+
+		if classified.phase == .TLS {
+			return {kind = .TLS_Failed, tls = error.tls_error}
+		}
 	}
 
 	transport := error.transport
-
-	if error.kind == .Deadline_Failed {
-		transport = net.TCP_Recv_Error.Timeout
-	}
 
 	if error.phase == .Cancellation {
 		transport = net.Connection_Error.Cancelled

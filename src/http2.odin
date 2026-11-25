@@ -795,14 +795,19 @@ h2_tls_error :: proc(io_error: tls.Error, effect: HTTP_Write_Effect, status: int
 		phase = .Deadline
 	}
 
-	return {
-		kind = kind,
-		phase = phase,
-		write_effect = effect,
-		status = status,
-		tls_error = io_error,
-		transport = transport,
-	}
+	return http_error_classify(
+		{
+			kind         = kind,
+			phase        = phase,
+			write_effect = effect,
+			status       = status,
+			tls_error    = io_error,
+			transport    = transport,
+		},
+		phase,
+		effect,
+		status,
+	)
 }
 
 h2_boot :: proc(lane: ^HTTP_Lane, deadline: time.Time, cancel: ^int) -> HTTP_Error {

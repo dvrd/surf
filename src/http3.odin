@@ -1024,7 +1024,7 @@ h3_tunnel_progress :: proc(t: ^HTTP3_Tunnel, write: bool) -> WebSocket_Stream_Er
 
 	transport: net.Network_Error = net.Connection_Error.Protocol_Failed
 	if e == .Deadline {
-		transport = net.TCP_Recv_Error.Timeout
+		transport = net.TCP_Send_Error.Timeout if write else net.TCP_Recv_Error.Timeout
 	} else if e == .Cancelled {
 		transport = net.Connection_Error.Cancelled
 	}

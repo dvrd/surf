@@ -623,7 +623,7 @@ websocket_async_connect :: proc(session: ^WebSocket_Async) -> async.Resume_Resul
 		)
 
 		if error.kind != .None {
-			websocket_async_finish_early(session, websocket_async_runtime_error(error))
+			websocket_async_finish_early(session, websocket_async_runtime_error(error, .Connect))
 			return .Done
 		}
 
@@ -638,7 +638,7 @@ websocket_async_connect :: proc(session: ^WebSocket_Async) -> async.Resume_Resul
 	}
 
 	if error.kind != .None {
-		websocket_async_finish_early(session, websocket_async_runtime_error(error))
+		websocket_async_finish_early(session, websocket_async_runtime_error(error, .Connect))
 		return .Done
 	}
 
@@ -660,14 +660,14 @@ websocket_async_wrap :: proc(
 ) -> WebSocket_Async_Error {
 	if error := adapter.init_executor(&session.loop, session.runtime, &session.task, {});
 	   error.kind != .None {
-		return websocket_async_runtime_error(error)
+		return websocket_async_runtime_error(error, .Unknown)
 	}
 
 	session.executor_ready = true
 
 	if error := adapter.init_transport(&session.transport, &session.loop, socket);
 	   error.kind != .None {
-		return websocket_async_runtime_error(error)
+		return websocket_async_runtime_error(error, .Unknown)
 	}
 
 	session.net_read = {
@@ -712,7 +712,7 @@ websocket_async_wrap :: proc(
 	deadline := async.deadline_after(session.runtime, session.config.handshake_timeout)
 
 	if error := adapter.set_request_budget(&session.loop, deadline); error.kind != .None {
-		return websocket_async_runtime_error(error)
+		return websocket_async_runtime_error(error, .Unknown)
 	}
 
 	session.hs = {
@@ -888,7 +888,7 @@ websocket_async_secure_step :: proc(session: ^WebSocket_Async) -> bool {
 	}
 
 	if cleared.kind != .None {
-		websocket_async_fail(session, websocket_async_runtime_error(cleared))
+		websocket_async_fail(session, websocket_async_runtime_error(cleared, .Unknown))
 		return true
 	}
 
@@ -1689,21 +1689,36 @@ websocket_async_release :: proc(session: ^WebSocket_Async) {
 	websocket.message_release(&session.message)
 }
 
-websocket_async_runtime_error :: proc(error: async.Error) -> WebSocket_Async_Error {
+websocket_async_runtime_error :: proc(
+	error: async.Error,
+	phase: HTTP_Phase,
+) -> WebSocket_Async_Error {
 	kind := WebSocket_Async_Error_Kind.IO_Failed
+
 	if error.kind == .Timeout {
 		kind = .Timeout
 	}
+
 	if error.kind == .Cancelled || error.kind == .Stopping {
 		kind = .Cancelled
 	}
+
 	if error.kind == .Invalid_Config || error.kind == .Wrong_Task {
 		kind = .Invalid_Config
 	}
+
 	transport: net.Network_Error
+
 	if kind == .Timeout {
-		transport = net.TCP_Recv_Error.Timeout
+		if phase == .Connect {
+			transport = net.Dial_Error.Timeout
+		} else if phase == .Write {
+			transport = net.TCP_Send_Error.Timeout
+		} else {
+			transport = net.TCP_Recv_Error.Timeout
+		}
 	}
+
 	if kind == .Cancelled {
 		transport = net.Connection_Error.Cancelled
 	}
