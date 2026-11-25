@@ -1,7 +1,7 @@
 package surf
 
-import http "shared:http"
-import http1 "shared:http/v1"
+import http "shared:async/http"
+import http1 "shared:async/http/v1"
 import "core:io"
 import "core:mem"
 import "core:net"
@@ -104,7 +104,7 @@ exchange_upload_internal :: proc(
 		return {}, {kind = .Deadline_Failed, phase = .Deadline}
 	}
 	outcome.write_started = true
-	if _, error := net.write_all(stream, header[:size]); error.kind != .None {
+	if _, error := net.write_all(stream, header[:size]); error != nil {
 		return {}, {kind = .IO_Failed, phase = .Write, transport = error}
 	}
 	buffer: [UPLOAD_BUFFER_SIZE]u8
@@ -118,7 +118,7 @@ exchange_upload_internal :: proc(
 		count, read_error := source.stream.procedure(source.stream.data, .Read, buffer[:wanted], 0, nil)
 
 		if count < 0 || count > i64(wanted) {
-			return {}, {kind = .IO_Failed, phase = .Write, transport = {kind = .Invalid_Count}, source_io = read_error}
+			return {}, {kind = .IO_Failed, phase = .Write, transport = net.Connection_Error.Invalid_Count, source_io = read_error}
 		}
 
 		if upload_deadline_expired(deadline) {
@@ -137,7 +137,7 @@ exchange_upload_internal :: proc(
 			return {}, {kind = .No_Progress, phase = .Write, source_io = .No_Progress}
 		}
 
-		if _, error := net.write_all(stream, buffer[:int(count)]); error.kind != .None {
+		if _, error := net.write_all(stream, buffer[:int(count)]); error != nil {
 			return {}, {kind = .IO_Failed, phase = .Write, transport = error}
 		}
 

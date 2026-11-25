@@ -2,7 +2,7 @@ package surf_async
 
 import surf ".."
 import runtime_async "shared:async"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:net"
 import "core:os"
 import "core:strings"
@@ -337,7 +337,7 @@ redirect_queue_empty_bank_parks_but_zero_numeric_and_prepared_hosts_proceed :: p
 			_ = os.remove(hp)
 			delete(rp)
 			delete(hp)
-			assert(prepared.kind == .None)
+			assert(prepared == nil)
 		}
 
 		q := rq_reserve(&f)

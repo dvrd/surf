@@ -4,12 +4,12 @@ import surf ".."
 import runtime_async "shared:async"
 import signal "shared:async/signal"
 import "core:sync"
-import http "shared:http"
-import h1 "shared:http/v1"
+import http "shared:async/http"
+import h1 "shared:async/http/v1"
 import "core:bytes"
 import "core:mem"
-import charged "core:mem/budget"
-import scopes "core:sync/budget"
+import charged "shared:async/mem/budget"
+import scopes "shared:async/sync/budget"
 import "core:strings"
 import stream_api "stream"
 import exchange_api "exchange"
@@ -182,7 +182,7 @@ network_coordinator_request_step :: proc(s: ^Client_State, now: runtime_async.De
 		if cancellation {
 			error = {
 				kind = .IO_Failed,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 				phase = .Cancellation,
 				write_effect = .Not_Sent,
 			}
@@ -700,7 +700,7 @@ kernel_commit :: proc(
 			kind = .Request_Error,
 			http = {
 				kind = .IO_Failed,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 				phase = .Cancellation,
 				write_effect = .Not_Sent,
 			},
@@ -1055,11 +1055,11 @@ network_valid :: proc(s: ^Client_State) -> bool {
 	return s != nil && s.self == s
 }
 network_snapshot_error :: proc(error: net.Resolver_Snapshot_Error) -> Client_Error {
-	if error.kind == .Allocation_Failed {
-		return {kind = .Allocation_Failed, http = {kind = .Allocation_Failed, allocation = error.allocation}}
+	if allocation, ok := error.(mem.Allocator_Error); ok {
+		return {kind = .Allocation_Failed, http = {kind = .Allocation_Failed, allocation = allocation}}
 	}
 
-	if error.kind == .Unsupported {
+	if general, ok := error.(net.Resolver_Snapshot_General_Error); ok && general == .Unsupported {
 		return {
 			kind = .Runtime_Error,
 			runtime = {kind = .Unsupported},
@@ -1067,8 +1067,8 @@ network_snapshot_error :: proc(error: net.Resolver_Snapshot_Error) -> Client_Err
 		}
 	}
 
-	if error.kind == .Read_Failed {
-		code, _ := os.is_platform_error(error.io)
+	if os_error, ok := error.(os.Error); ok {
+		code, _ := os.is_platform_error(os_error)
 		return {
 			kind = .Runtime_Error,
 			runtime = {kind = .System_Error, system_code = code},
@@ -1258,7 +1258,7 @@ network_prepare :: proc(
 			s.resources.allocator,
 		)
 
-		if prepared.kind != .None {
+		if prepared != nil {
 			return nil, network_snapshot_error(prepared)
 		}
 
@@ -1529,7 +1529,7 @@ completion_late_failure :: proc(k: ^Kernel, r: ^Request_Slot, now: runtime_async
 	if r.cancel_requested || k.closed {
 		return {
 			kind = .IO_Failed,
-			transport = {kind = .Cancelled},
+			transport = net.Connection_Error.Cancelled,
 			phase = .Cancellation,
 			status = r.response.status,
 			write_effect = effect,

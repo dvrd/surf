@@ -3,7 +3,8 @@ package surf_async
 import surf ".."
 import runtime_async "shared:async"
 import "core:mem"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
+import "core:net"
 import "core:testing"
 
 // Independent metadata/owner tests. Actual factories and claims create every
@@ -251,7 +252,7 @@ redirect_ledger_ready_rechecks_fresh_clock_cancel_close_then_fails_once :: proc(
 		if mode == 3 {
 			primary = {
 				kind = .IO_Failed,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 				phase = .Cancellation,
 			}
 		}
@@ -323,7 +324,7 @@ redirect_ledger_accepted_failure_cleans_returning_unclaimed_reserved_waiter_and_
 		if mode == 2 {
 			primary = {
 				kind = .IO_Failed,
-				transport = {kind = .Write_Failed},
+				transport = net.TCP_Send_Error.Connection_Closed,
 				phase = .Write,
 				status = 503,
 				write_effect = .Unknown,
@@ -450,7 +451,7 @@ redirect_ledger_physical_old_input_free_can_cancel_or_close_outside_mutex :: pro
 		testing.expect_value(t, rejected.kind, .Request_Error if action == 0 else .Closed)
 		primary := surf.HTTP_Error {
 			kind = .IO_Failed,
-			transport = {kind = .Cancelled},
+			transport = net.Connection_Error.Cancelled,
 			phase = .Cancellation,
 		}
 

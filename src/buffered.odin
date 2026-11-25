@@ -3,10 +3,10 @@ package surf
 import "core:mem"
 import "core:os"
 import "core:strings"
-import resources "core:sync/budget"
-import http "shared:http"
+import resources "shared:async/sync/budget"
+import http "shared:async/http"
 import x509 "core:crypto/x509"
-import tls_api "core:crypto/tls"
+import tls_api "shared:async/tls"
 import "core:io"
 import "core:net"
 import "core:strconv"
@@ -351,7 +351,7 @@ buffered_http_perform :: proc(
 		pool = allocated
 		loaded := tls_api.root_pool_load_file(pool, ca_file)
 
-		if loaded.kind != .None {
+		if loaded != nil {
 			result.error = {
 				kind         = .TLS_Failed,
 				phase        = .TLS,
@@ -378,7 +378,7 @@ buffered_http_perform :: proc(
 
 		stream := net.tcp_connection(&tcp)
 
-		if deadline_error := net.set_deadline(stream, total); deadline_error.kind != .None {
+		if deadline_error := net.set_deadline(stream, total); deadline_error != nil {
 			result.error = buffered_tcp_timeout(
 				{kind = .Deadline_Failed, phase = .Deadline, transport = deadline_error, write_effect = .Not_Sent},
 			)
@@ -398,9 +398,9 @@ buffered_http_perform :: proc(
 		tls_api.abort(connection)
 		free(connection, context.allocator)
 	}
-	if deadline_error := tls_api.set_deadline(connection, total); deadline_error.kind != .None {
+	if deadline_error := tls_api.set_deadline(connection, total); deadline_error != nil {
 		result.error = buffered_tcp_timeout(
-			{kind = .Deadline_Failed, phase = .Deadline, transport = deadline_error, write_effect = .Not_Sent},
+			{kind = .Deadline_Failed, phase = .Deadline, tls_error = deadline_error, transport = tls_network(deadline_error), write_effect = .Not_Sent},
 		)
 		return
 	}
@@ -441,7 +441,7 @@ buffered_http_perform :: proc(
 	}
 	result = buffered_http_exchange(stream, method, parsed, body, headers, upload_file, upload_size, total, reply)
 	if result.error.kind == .IO_Failed {
-		result.error.tls_io = adapter.last_error
+		result.error.tls_error = adapter.last_error
 	}
 	result.error = buffered_tcp_timeout(result.error)
 	return
@@ -650,7 +650,7 @@ buffered_http_exchange :: proc(
 	}
 	outcome: HTTP_Exchange_Outcome
 	outcome.write_started = true
-	if _, write_error := net.write_all(stream, encoded[:count]); write_error.kind != .None {
+	if _, write_error := net.write_all(stream, encoded[:count]); write_error != nil {
 		return {error = buffered_http_io(write_error, true, outcome)}
 	}
 	if file != nil {
@@ -658,7 +658,7 @@ buffered_http_exchange :: proc(
 			return {error = read_error}
 		}
 	} else if method == "PUT" || method == "POST" {
-		if _, write_error := net.write_all(stream, body); write_error.kind != .None {
+		if _, write_error := net.write_all(stream, body); write_error != nil {
 			return {error = buffered_http_io(write_error, true, outcome)}
 		}
 	}
@@ -699,7 +699,7 @@ buffered_http_upload :: proc(stream: net.Connection, file: ^os.File, size: i64, 
 			return {kind = .Unexpected_EOF, phase = .Write, write_effect = .Unknown, source_io = .EOF}
 		}
 
-		if _, write_error := net.write_all(stream, buffer[:n]); write_error.kind != .None {
+		if _, write_error := net.write_all(stream, buffer[:n]); write_error != nil {
 			return buffered_http_io(write_error, true, {write_started = true})
 		}
 
@@ -790,7 +790,7 @@ buffered_http_read_error :: proc(error: HTTP_Error, outcome: HTTP_Exchange_Outco
 }
 
 buffered_http_io :: proc(
-	transport: net.Connection_Error,
+	transport: net.Network_Error,
 	during_write: bool,
 	outcome: HTTP_Exchange_Outcome,
 ) -> HTTP_Error {

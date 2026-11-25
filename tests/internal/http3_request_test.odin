@@ -1,11 +1,11 @@
 package surf
 
-import http "shared:http"
-import http3 "shared:http/v3"
+import http "shared:async/http"
+import http3 "shared:async/http/v3"
 import "core:bytes"
-import credentials "core:crypto/tls/credentials"
-import store "core:crypto/tls/credentials/store"
-import "core:crypto/tls"
+import credentials "shared:async/tls/credentials"
+import store "shared:async/tls/credentials/store"
+import "shared:async/tls"
 import "core:fmt"
 import "core:io"
 import "core:net"
@@ -120,7 +120,7 @@ surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t: ^test
 	}
 
 	roots: tls.Root_Pool
-	assert(tls.root_pool_parse(&roots, #load("../tests/http3/localhost.pem")).kind == .None)
+	assert(tls.root_pool_parse(&roots, #load("../tests/http3/localhost.pem")) == nil)
 	defer tls.root_pool_destroy(&roots)
 	cache: Alt_Svc_Cache
 	alt_buf: [80]u8

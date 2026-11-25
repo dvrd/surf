@@ -1,7 +1,7 @@
 package surf
 
-import http "shared:http"
-import "core:crypto/tls"
+import http "shared:async/http"
+import "shared:async/tls"
 import "core:fmt"
 import "core:net"
 import "core:os"
@@ -217,8 +217,8 @@ surf_peer_setup :: proc(
 	}
 	roots = new(tls.Root_Pool)
 	load_error := tls.root_pool_load_file(roots, cert)
-	testing.expect_value(t, load_error.kind, .None)
-	if load_error.kind != .None {
+	testing.expect_value(t, load_error, nil)
+	if load_error != nil {
 		free(roots)
 		roots = nil
 		return

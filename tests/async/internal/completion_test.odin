@@ -2,7 +2,8 @@ package surf_async
 
 import surf ".."
 import "core:mem"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
+import "core:net"
 import "core:testing"
 import "core:thread"
 
@@ -84,7 +85,7 @@ completion_two_phase_cleanup_checks_fresh_cutoff_cancel_and_epoch :: proc(t: ^te
 			primary = {
 				kind = .IO_Failed,
 				phase = .Deadline,
-				transport = {kind = .Timeout},
+				transport = net.TCP_Recv_Error.Timeout,
 				write_effect = .Not_Sent,
 			}
 		}
@@ -162,7 +163,7 @@ completion_two_phase_cleanup_checks_fresh_cutoff_cancel_and_epoch :: proc(t: ^te
 
 		if mode == 1 {
 			testing.expect_value(t, completion.error.kind, .IO_Failed)
-			testing.expect_value(t, completion.error.transport.kind, .Cancelled)
+			testing.expect_value(t, completion.error.transport, net.Connection_Error.Cancelled)
 			testing.expect_value(t, completion.error.phase, .Cancellation)
 		}
 

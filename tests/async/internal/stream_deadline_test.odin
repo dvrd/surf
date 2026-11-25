@@ -1,7 +1,7 @@
 package surf_async
 
 import runtime_async "shared:async"
-import "core:mem/owned"
+import "shared:async/mem/owned"
 import "core:testing"
 import "core:time"
 

@@ -12,28 +12,28 @@ Fixture :: struct {
 	written:             [32768]u8,
 	written_count:       int,
 }
-read :: proc(data: rawptr, dst: []u8) -> (int, net.Connection_Error) {
+read :: proc(data: rawptr, dst: []u8) -> (int, net.Network_Error) {
 	fixture := cast(^Fixture)data
 
 	if fixture.at == len(fixture.wire) {
 		fixture.reads_after_headers += 1
-		return 0, {kind = .Peer_Closed}
+		return 0, net.Connection_Error.Peer_Closed
 	}
 
 	n := copy(dst, fixture.wire[fixture.at:])
 	fixture.at += n
 
-	return n, {}
+	return n, nil
 }
-write :: proc(data: rawptr, src: []u8) -> (int, net.Connection_Error) {
+write :: proc(data: rawptr, src: []u8) -> (int, net.Network_Error) {
 	fixture := cast(^Fixture)data
 	n := copy(fixture.written[fixture.written_count:], src)
 	fixture.written_count += n
 
-	return n, {}
+	return n, nil
 }
-close :: proc(data: rawptr) -> net.Connection_Error {
-	return {}
+close :: proc(data: rawptr) -> net.Network_Error {
+	return nil
 }
 
 @(test)

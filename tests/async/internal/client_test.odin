@@ -2,9 +2,10 @@ package surf_async
 
 import runtime_async "shared:async"
 import surf ".."
-import http "shared:http"
+import http "shared:async/http"
 import rt "base:runtime"
 import "core:mem"
+import "core:net"
 import "core:testing"
 import "core:time"
 
@@ -84,7 +85,7 @@ client20_prestart_close_keeps_terminal_results_until_release :: proc(t: ^testing
 		}
 
 		count += 1
-		testing.expect_value(t, completion.error.transport.kind, .Cancelled)
+		testing.expect_value(t, completion.error.transport, net.Connection_Error.Cancelled)
 
 		if completion.request == first {
 			testing.expect(t, !seen_first)
@@ -125,7 +126,7 @@ client20_results_survive_runtime_destroy_before_start_and_physical_header_free :
 	testing.expect_value(t, stats.tasks, 0)
 	completion, available := client_poll(&c)
 	testing.expect(t, available && completion.request == handle)
-	testing.expect_value(t, completion.error.transport.kind, .Cancelled)
+	testing.expect_value(t, completion.error.transport, net.Connection_Error.Cancelled)
 	destination: surf.Response
 	testing.expect(t, client_take(&c, handle, &destination).kind != .None)
 	testing.expect_value(t, destination.status, 0)

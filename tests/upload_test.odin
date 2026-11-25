@@ -67,28 +67,28 @@ Upload_Wire :: struct {
 	bytes:                                    [3 * surf.UPLOAD_BUFFER_SIZE]u8,
 	used, response_at, writes, reads, closes: int,
 	write_step:                               int,
-	write_error:                              net.Connection_Error,
+	write_error:                              net.Network_Error,
 	max_prefetch:                             int,
 }
-upload_wire_read :: proc(data: rawptr, dst: []u8) -> (int, net.Connection_Error) {
+upload_wire_read :: proc(data: rawptr, dst: []u8) -> (int, net.Network_Error) {
 	wire := cast(^Upload_Wire)data
 	wire.reads += 1
 	reply := "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
 
 	if wire.response_at == len(reply) {
-		return 0, {kind = .Peer_Closed}
+		return 0, net.Connection_Error.Peer_Closed
 	}
 
 	count := copy(dst, reply[wire.response_at:])
 	wire.response_at += count
 
-	return count, {}
+	return count, nil
 }
-upload_wire_write :: proc(data: rawptr, src: []u8) -> (int, net.Connection_Error) {
+upload_wire_write :: proc(data: rawptr, src: []u8) -> (int, net.Network_Error) {
 	wire := cast(^Upload_Wire)data
 	wire.writes += 1
 
-	if wire.write_error.kind != .None {
+	if wire.write_error != nil {
 		return 0, wire.write_error
 	}
 
@@ -113,13 +113,13 @@ upload_wire_write :: proc(data: rawptr, src: []u8) -> (int, net.Connection_Error
 		wire.max_prefetch = max(wire.max_prefetch, wire.producer.at - body_count)
 	}
 
-	return count, {}
+	return count, nil
 }
-upload_wire_close :: proc(data: rawptr) -> net.Connection_Error {
+upload_wire_close :: proc(data: rawptr) -> net.Network_Error {
 	wire := cast(^Upload_Wire)data
 	wire.closes += 1
 
-	return {}
+	return nil
 }
 connection_for_upload :: proc(wire: ^Upload_Wire) -> net.Connection {
 	return {data = wire, read = upload_wire_read, write = upload_wire_write, close = upload_wire_close}
@@ -248,7 +248,7 @@ upload_short_invalid_and_failed_sources_keep_unknown_write_effect :: proc(t: ^te
 			testing.expect_value(t, error.kind, .IO_Failed)
 			testing.expect_value(t, error.source_io, .Permission_Denied)
 		case "count":
-			testing.expect_value(t, error.transport.kind, .Invalid_Count)
+			testing.expect_value(t, error.transport, net.Connection_Error.Invalid_Count)
 		case "progress":
 			testing.expect_value(t, error.kind, .No_Progress)
 		}
@@ -302,14 +302,20 @@ upload_validation_and_redirect_rejection_happen_before_io :: proc(t: ^testing.T)
 
 @(test)
 upload_deadlines_cancellation_and_source_cooperation_are_explicit :: proc(t: ^testing.T) {
-	for cause in ([]net.Connection_Error_Kind{.Timeout, .Cancelled}) {
+	for sample in ([]struct {
+			cause:    net.Network_Error,
+			phase:    surf.HTTP_Phase,
+		} {
+			{net.TCP_Send_Error.Timeout, .Deadline},
+			{net.Connection_Error.Cancelled, .Cancellation},
+		}) {
 		producer := Upload_Producer {
 			bytes = []u8{'a'},
 		}
 
 		wire := Upload_Wire {
 			producer = &producer,
-			write_error = {kind = cause},
+			write_error = sample.cause,
 		}
 
 		_, error := surf.exchange_upload(
@@ -317,7 +323,7 @@ upload_deadlines_cancellation_and_source_cooperation_are_explicit :: proc(t: ^te
 			{method = .POST, url = "https://fixture.test/"},
 			source_for(&producer, 1),
 		)
-		testing.expect_value(t, error.phase, cause == .Timeout ? .Deadline : .Cancellation)
+		testing.expect_value(t, error.phase, sample.phase)
 		testing.expect_value(t, error.write_effect, .Unknown)
 		testing.expect_value(t, producer.reads, 0)
 	}

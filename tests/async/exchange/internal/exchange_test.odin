@@ -1,10 +1,10 @@
 package surf_exchange
 
 import surf "../.."
-import http "shared:http"
+import http "shared:async/http"
 import "core:mem"
-import charged "core:mem/budget"
-import scopes "core:sync/budget"
+import charged "shared:async/mem/budget"
+import scopes "shared:async/sync/budget"
 import "core:net"
 import "core:testing"
 import "core:time"
@@ -16,7 +16,7 @@ Exchange_Test_Stream :: struct {
 	at, fragment, wakes, submits, cancels, closes: int,
 	pending:                                       ^net.Async_Operation,
 	buffer:                                        []u8,
-	deadline:                                      time.Time,
+	deadline:                                      time.Tick,
 	written:                                       [65536]u8,
 	written_at:                                    int,
 	reject:                                        bool,
@@ -32,16 +32,16 @@ exchange_test_submit :: proc(
 	op: ^net.Async_Operation,
 	kind: net.Async_Operation_Kind,
 	buffer: []u8,
-	deadline: time.Time,
-) -> net.Connection_Error {
+	deadline: time.Tick,
+) -> net.Network_Error {
 	f := cast(^Exchange_Test_Stream)data
 	f.submits += 1
 	if kind == .Close {
 		f.closes += 1
-		return {kind = .Close_Failed}
+		return net.Connection_Error.Close_Failed
 	}
 	if f.reject {
-		return {kind = .Read_Failed}
+		return net.TCP_Recv_Error.Connection_Closed
 	}
 	assert(f.pending == nil)
 	f.pending = op
@@ -51,7 +51,7 @@ exchange_test_submit :: proc(
 	op.pending = true
 	return {}
 }
-exchange_test_cancel :: proc(data: rawptr, op: ^net.Async_Operation) -> net.Connection_Error {
+exchange_test_cancel :: proc(data: rawptr, op: ^net.Async_Operation) -> net.Network_Error {
 	f := cast(^Exchange_Test_Stream)data
 	assert(op == f.pending)
 	f.cancels += 1
@@ -65,7 +65,7 @@ exchange_test_complete :: proc(f: ^Exchange_Test_Stream, success_after_cancel :=
 	result: net.Async_Result
 
 	if f.cancelled && !success_after_cancel {
-		result.err.kind = .Cancelled
+		result.err = net.Connection_Error.Cancelled
 	} else if op.kind == .Write {
 		n := len(f.buffer)
 
@@ -79,7 +79,7 @@ exchange_test_complete :: proc(f: ^Exchange_Test_Stream, success_after_cancel :=
 		result.count = n
 	} else {
 		if f.at == len(f.wire) {
-			result.err.kind = .Peer_Closed
+			result.err = net.Connection_Error.Peer_Closed
 		} else {
 			n := min(len(f.buffer), len(f.wire) - f.at)
 
@@ -266,7 +266,7 @@ exchange_cancel_deadline_and_late_callback_ownership :: proc(t: ^testing.T) {
 		)
 		first := exchange_drive(&x, 1, false, 1)
 		testing.expect(t, first.status != .Done && f.pending != nil)
-		testing.expect_value(t, f.deadline, budget.wall)
+		testing.expect(t, f.deadline != {} && time.tick_since(f.deadline) > 0)
 		testing.expect(t, exchange_destroy(&x).kind != .None)
 		testing.expect(t, exchange_reset(&x).kind != .None)
 		next := exchange_drive(&x, 5 if expired else 2, !expired, 1)
@@ -481,7 +481,7 @@ exchange_submission_rejection_invalid_counts_and_begin_atomicity :: proc(t: ^tes
 		testing.expect_value(t, done.error.kind, .IO_Failed)
 
 		if short {
-			testing.expect_value(t, done.error.transport.kind, .Invalid_Count)
+			testing.expect_value(t, done.error.transport, net.Connection_Error.Invalid_Count)
 		}
 
 		testing.expect_value(t, f.wakes, 1 if short else 0)

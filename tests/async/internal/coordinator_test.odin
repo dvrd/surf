@@ -3,7 +3,7 @@ package surf_async
 import surf ".."
 import signal "shared:async/signal"
 import "base:intrinsics"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:time"
 import "core:thread"
 
@@ -69,7 +69,7 @@ coordinator_unstarted_close_burns_queued_reserved_dns_metadata :: proc(t: ^testi
 	testing.expect_value(t, state.dns_draws_reserved, u64(6))
 	testing.expect_value(t, state.dns_draws_burned, u64(6))
 	completion, available := kernel_poll(&state.kernel)
-	testing.expect(t, available && completion.request == handle && completion.error.transport.kind == .Cancelled)
+	testing.expect(t, available && completion.request == handle && completion.error.transport == net.Connection_Error.Cancelled)
 	assert(kernel_release(&state.kernel, handle).kind == .None)
 	fmt.printf("COORD17 unstarted_reserved_dns_burn=%d no_protocol_io=true\n", state.dns_draws_burned)
 	sync.lock(&state.mu)
@@ -204,7 +204,7 @@ coordinator_test_actor_resume :: proc(data: rawptr) -> runtime_async.Resume_Resu
 		if closing || cancel {
 			error = {
 				kind = .IO_Failed,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 				phase = .Cancellation,
 				write_effect = .Not_Sent,
 			}
@@ -452,7 +452,7 @@ coordinator_cancellation_of_parked_waiter_preserves_terminal_once :: proc(t: ^te
 	testing.expect(
 		t,
 		completed.request == request &&
-		completed.error.transport.kind == .Cancelled &&
+		completed.error.transport == net.Connection_Error.Cancelled &&
 		completed.error.phase == .Cancellation,
 	)
 	_, again := kernel_poll(&c.state.kernel)
@@ -546,7 +546,7 @@ coordinator_numeric_progress_bypasses_bankempty_named_queue :: proc(t: ^testing.
 	sync.unlock(&c.state.mu)
 	_ = signal.wake(c.state.coordinator.wake)
 	cancelled := coordinator_test_wait(&c)
-	testing.expect(t, cancelled.request == blocked && cancelled.error.transport.kind == .Cancelled)
+	testing.expect(t, cancelled.request == blocked && cancelled.error.transport == net.Connection_Error.Cancelled)
 	assert(kernel_release(&c.state.kernel, ready).kind == .None)
 	assert(kernel_release(&c.state.kernel, blocked).kind == .None)
 	coordinator_test_destroy(&c)
@@ -686,7 +686,7 @@ coordinator_commit_dns_stage_is_atomic_and_rejection_keeps_input :: proc(t: ^tes
 	sync.unlock(&s.mu)
 	_ = signal.wake(s.coordinator.wake)
 	completed := coordinator_test_wait(&c)
-	testing.expect(t, completed.request == preparing.request && completed.error.transport.kind == .Cancelled)
+	testing.expect(t, completed.request == preparing.request && completed.error.transport == net.Connection_Error.Cancelled)
 	assert(kernel_release(&s.kernel, preparing.request).kind == .None)
 	coordinator_test_destroy(&c)
 }

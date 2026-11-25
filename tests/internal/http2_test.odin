@@ -1,7 +1,7 @@
 package surf
 
-import http "shared:http"
-import "core:crypto/tls"
+import http "shared:async/http"
+import "shared:async/tls"
 import x509 "core:crypto/x509"
 import "core:os"
 import "core:strconv"
@@ -438,9 +438,9 @@ http102_client :: proc(t: ^testing.T, config: Config, limits: HTTP_Origin_Limits
 http102_roots :: proc(t: ^testing.T, path: string) -> ^tls.Root_Pool {
 	pool := new(tls.Root_Pool)
 	load_error := tls.root_pool_load_file(pool, path)
-	testing.expect_value(t, load_error.kind, .None)
+	testing.expect_value(t, load_error, nil)
 
-	if load_error.kind != .None {
+	if load_error != nil {
 		free(pool)
 		return nil
 	}

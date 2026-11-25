@@ -2,7 +2,7 @@ package main
 import client "shared:surf/async"
 import surf "shared:surf"
 import async "shared:async"
-import h1 "shared:http/v1"
+import h1 "shared:async/http/v1"
 import rt "base:runtime"
 import "core:fmt"
 import "core:mem"

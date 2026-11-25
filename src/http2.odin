@@ -1,20 +1,20 @@
 package surf
 
-import http "shared:http"
-import h2 "shared:http/v2"
-import hpack "shared:http/v2/hpack"
-import http1 "shared:http/v1"
+import http "shared:async/http"
+import h2 "shared:async/http/v2"
+import hpack "shared:async/http/v2/hpack"
+import http1 "shared:async/http/v1"
 import "base:intrinsics"
-import tls_api "core:crypto/tls"
+import tls_api "shared:async/tls"
 import "core:io"
 import "core:mem"
-import owned "core:mem/owned"
+import owned "shared:async/mem/owned"
 import "core:net"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
-import credential_store "core:crypto/tls/credentials/store"
+import credential_store "shared:async/tls/credentials/store"
 
 // An origin identity uses one live connection. Identity/trust rotation may keep
 // older WebSocket connections alive while new requests use a fresh bounded lane.
@@ -252,13 +252,14 @@ http_client_multiplex :: proc(
 
 		return lane_error
 	}
-	if deadline_error := tls_api.set_deadline(lane.tls, deadline); deadline_error.kind != .None {
+	if deadline_error := tls_api.set_deadline(lane.tls, deadline); deadline_error != nil {
 		http_lane_close(c, lane)
 		error := HTTP_Error {
 			kind         = .Deadline_Failed,
 			phase        = .Deadline,
 			write_effect = .Not_Sent,
-			transport    = deadline_error,
+			tls_error    = deadline_error,
+			transport    = tls_network(deadline_error),
 		}
 
 		for &result in results {
@@ -377,10 +378,10 @@ http_tls_connect :: proc(
 	}
 	settings := config.tls
 	settings.server_name = url.host
-	if validation := tls_api.config_validate(settings); validation != .None {
+	if validation := tls_api.config_validate(settings); validation != nil {
 		free(connection, allocator)
 		return nil, http_error_classify(
-			{kind = .TLS_Failed, tls_dial = {kind = .Invalid_Config, config = validation}},
+			{kind = .TLS_Failed, tls_error = validation},
 			.Configuration,
 			.Not_Sent,
 		)
@@ -400,11 +401,11 @@ http_tls_connect :: proc(
 		return nil, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent}
 	}
 	underlying := net.tcp_connection(&connection.tcp)
-	if client_error := tls_api.client(connection, underlying, settings); client_error != .None {
+	if client_error := tls_api.client(connection, underlying, settings); client_error != nil {
 		net.close(socket)
 		free(connection, allocator)
 		return nil, http_error_classify(
-			{kind = .TLS_Failed, tls_dial = {kind = .Invalid_Config, config = client_error}},
+			{kind = .TLS_Failed, tls_error = client_error},
 			.Configuration,
 			.Not_Sent,
 		)
@@ -412,11 +413,11 @@ http_tls_connect :: proc(
 	connection.tcp = {
 		socket = socket,
 	}
-	if handshake_error := tls_api.handshake_until(connection, setup_deadline); handshake_error.kind != .None {
+	if handshake_error := tls_api.handshake_until(connection, setup_deadline); handshake_error != nil {
 		tls_api.abort(connection)
 		free(connection, allocator)
 		return nil, http_error_classify(
-			{kind = .TLS_Failed, tls_dial = {kind = .Handshake_Failed, handshake = handshake_error}},
+			{kind = .TLS_Failed, tls_error = handshake_error},
 			.TLS,
 			.Not_Sent,
 		)
@@ -573,9 +574,9 @@ http_lane_http1 :: proc(
 	Response,
 	HTTP_Error,
 ) {
-	if deadline_error := tls_api.set_deadline(lane.tls, deadline); deadline_error.kind != .None {
+	if deadline_error := tls_api.set_deadline(lane.tls, deadline); deadline_error != nil {
 		http_lane_close(c, lane)
-		return {}, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent, transport = deadline_error}
+		return {}, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent, tls_error = deadline_error, transport = tls_network(deadline_error)}
 	}
 	response, err := exchange_tls(lane.tls, request, upload, c.config.max_body_size, allocator, deadline)
 	http_lane_close(c, lane)
@@ -746,15 +747,18 @@ h2_map_error :: proc(error: h2.Error, effect: HTTP_Write_Effect, status: int) ->
 	return {kind = kind, phase = phase, write_effect = effect, status = status, allocation = error.allocation}
 }
 
-h2_tls_error :: proc(io_error: tls_api.IO_Error, effect: HTTP_Write_Effect, status: int) -> HTTP_Error {
+h2_tls_error :: proc(io_error: tls_api.Error, effect: HTTP_Write_Effect, status: int) -> HTTP_Error {
 	kind := http.Error_Kind.IO_Failed
 	phase := HTTP_Phase.Read
+	transport := tls_network(io_error)
 
-	if io_error.transport.kind == .Timeout {
+	if _, write := io_error.(net.TCP_Send_Error); write {
+		phase = .Write
+	}
+
+	if http_network_phase(transport) == .Deadline {
 		kind = .Deadline_Failed
 		phase = .Deadline
-	} else if io_error.kind == .Transport_Write_Failed {
-		phase = .Write
 	}
 
 	return {
@@ -762,8 +766,8 @@ h2_tls_error :: proc(io_error: tls_api.IO_Error, effect: HTTP_Write_Effect, stat
 		phase = phase,
 		write_effect = effect,
 		status = status,
-		tls_io = io_error,
-		transport = io_error.transport,
+		tls_error = io_error,
+		transport = transport,
 	}
 }
 
@@ -776,7 +780,7 @@ h2_boot :: proc(lane: ^HTTP_Lane, deadline: time.Time, cancel: ^int) -> HTTP_Err
 				kind = .IO_Failed,
 				phase = .Cancellation,
 				write_effect = .Not_Sent,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 			}
 		}
 
@@ -849,7 +853,7 @@ h2_drive :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, deadline: time.Time, cancel: 
 			error := HTTP_Error {
 				kind = .IO_Failed,
 				phase = .Cancellation,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 			}
 
 			h2_fail_open(jobs, error)
@@ -909,7 +913,7 @@ h2_drive :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, deadline: time.Time, cancel: 
 				read_error = {
 					kind = .IO_Failed,
 					phase = .Cancellation,
-					transport = {kind = .Cancelled},
+					transport = net.Connection_Error.Cancelled,
 				}
 			}
 
@@ -1610,7 +1614,7 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 			}
 		}
 
-		if write_error.kind != .None {
+		if write_error != nil {
 			if n == 0 {
 				_ = h2.connection_output_advance(&lane.engine, view.token, 0)
 			}
@@ -1633,7 +1637,7 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 h2_read :: proc(lane: ^HTTP_Lane) -> (int, HTTP_Error) {
 	n, read_error := tls_api.read(lane.tls, lane.read_buf[:])
 
-	if read_error.kind != .None {
+	if read_error != nil {
 		lane.dead = true
 		lane.reusable = false
 		return n, h2_tls_error(read_error, .Unknown, 0)

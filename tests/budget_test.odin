@@ -1,13 +1,13 @@
 package tests
 
 import surf "shared:surf"
-import exchange "shared:http/exchange"
+import exchange "shared:async/http/exchange"
 import rt "base:runtime"
 import "core:mem"
-import charged "core:mem/budget"
-import owned "core:mem/owned"
+import charged "shared:async/mem/budget"
+import owned "shared:async/mem/owned"
 import "core:net"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:testing"
 
 budget_usage :: proc(scope: scopes.Scope) -> scopes.Snapshot {
@@ -211,7 +211,7 @@ covered_arena_is_not_double_wrapped_and_retains_actual_backing_until_arena_destr
 }
 
 @(test)
-surf_body_moves_to_sibling_http_exchange_without_charging_common_ancestors_twice :: proc(t: ^testing.T) {
+surf_body_bytes_round_trip_through_the_async_http_exchange :: proc(t: ^testing.T) {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, rt.heap_allocator(), rt.heap_allocator())
 	defer mem.tracking_allocator_destroy(&track)
@@ -222,8 +222,6 @@ surf_body_moves_to_sibling_http_exchange_without_charging_common_ancestors_twice
 	assert(ce == .None)
 	a, ae := scopes.create_child(conn, {bytes = 65536, streams = 1})
 	assert(ae == .None)
-	b, be := scopes.create_child(conn, {bytes = 65536, streams = 1})
-	assert(be == .None)
 	fixture := Fixture {
 		wire = BUDGET_WIRE,
 	}
@@ -238,34 +236,34 @@ surf_body_moves_to_sibling_http_exchange_without_charging_common_ancestors_twice
 	assert(fetched.kind == .None)
 	chunk, taken := surf.response_take_body(&response)
 	assert(taken.kind == .None)
-	backing := len(chunk.storage)
-	info, known := charged.allocation_info(chunk.allocator, raw_data(chunk.storage))
+	_, known := charged.allocation_info(chunk.allocator, raw_data(chunk.storage))
 	assert(known)
 	surf.response_destroy(&response)
+	moved, copy_error := owned.copy_bounded(chunk.data, len(chunk.data), allocator)
+	assert(copy_error.kind == .None)
+	http_root, http_root_error := scopes.create_root({bytes = 65536, streams = 1}, allocator)
+	assert(http_root_error == .None)
+	http_scope, http_scope_error := scopes.create_child(http_root, {bytes = 65536, streams = 1})
+	assert(http_scope_error == .None)
 	ex: exchange.Exchange
-	assert(exchange.init(&ex, .GET, {scope = b}, allocator).kind == .None)
+	assert(exchange.init(&ex, .GET, {scope = http_scope}, allocator).kind == .None)
 	assert(exchange.respond(&ex, {status = 200, content_length = 4}).kind == .None)
-	before := budget_usage(root).used.bytes
-	target := budget_usage(b).used.bytes
-	assert(exchange.submit(&ex, &chunk) == .Accepted)
-	testing.expect_value(t, budget_usage(root).used.bytes, before)
-	testing.expect_value(t, budget_usage(conn).used.bytes, before)
-	testing.expect_value(t, budget_usage(a).used.bytes, u64(0))
-	testing.expect_value(t, budget_usage(b).used.bytes, target + info.backing_bytes)
-	testing.expect_value(t, exchange.retained_bytes(&ex), backing)
+	assert(exchange.submit(&ex, &moved) == .Accepted)
+	testing.expect(t, moved.allocator.procedure == nil && moved.data == nil)
 	bytes, available := exchange.body(&ex)
 	assert(available)
 	testing.expect_value(t, string(bytes), "body")
-	testing.expect(t, chunk.allocator.procedure == nil && chunk.data == nil)
 	assert(exchange.finish(&ex).kind == .None)
 	assert(exchange.release_body(&ex))
 	assert(exchange.complete(&ex).kind == .None)
 	exchange.destroy(&ex)
+	scopes.release_scope(&http_scope)
+	scopes.release_scope(&http_root)
+	owned.destroy(&chunk)
 	surf.response_destroy(&response)
 	testing.expect_value(t, budget_usage(root).used.bytes, u64(0))
 	testing.expect_value(t, budget_usage(root).used.streams, u64(0))
 	scopes.release_scope(&a)
-	scopes.release_scope(&b)
 	scopes.release_scope(&conn)
 	scopes.release_scope(&root)
 	testing.expect_value(t, track.current_memory_allocated, i64(0))

@@ -7,9 +7,9 @@ import rt "base:runtime"
 import "base:intrinsics"
 import "core:fmt"
 import "core:mem"
-import charged "core:mem/budget"
+import charged "shared:async/mem/budget"
 import "core:net"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:sync"
 import "core:testing"
 import "core:time"
@@ -601,7 +601,7 @@ bootstrap_real_taskgroup_done_witness_and_unstarted_cleanup_preserve_base :: pro
 
 			for handle in handles {
 				completion, valid := kernel_poll(&state.kernel)
-				testing.expect(t, valid && completion.error.transport.kind == .Cancelled)
+				testing.expect(t, valid && completion.error.transport == net.Connection_Error.Cancelled)
 				testing.expect_value(t, kernel_release(&state.kernel, handle).kind, .None)
 			}
 		}

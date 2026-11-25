@@ -1,6 +1,6 @@
 package surf
 
-import http "shared:http"
+import http "shared:async/http"
 import "core:testing"
 
 @(test)

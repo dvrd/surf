@@ -1,7 +1,7 @@
 package surf_async
 
 import "core:sync"
-import http "shared:http"
+import http "shared:async/http"
 import surf ".."
 import "core:mem"
 import "core:strings"
@@ -10,9 +10,9 @@ import stream_api "stream"
 import runtime_async "shared:async"
 import adapter "shared:async/connection"
 import exchange_api "exchange"
-import tls_api "core:crypto/tls"
+import tls_api "shared:async/tls"
 import "core:net"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:time"
 
 pool_session_locked :: proc(k: ^Kernel, handle: Cell_Handle) -> ^Session_Model {
@@ -948,7 +948,7 @@ network_queue_claim_budget :: proc(
 				int(origin.key.port),
 			)
 
-			if error.kind != .None {
+			if error != nil {
 				return {}, network_snapshot_error(error)
 			}
 

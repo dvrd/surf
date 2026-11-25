@@ -2,7 +2,7 @@ package surf_async
 
 import runtime_async "shared:async"
 import "core:mem"
-import "core:mem/owned"
+import "shared:async/mem/owned"
 import "core:testing"
 
 Stream_Negative_Owner_Probe :: struct {

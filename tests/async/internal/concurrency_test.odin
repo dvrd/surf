@@ -1,13 +1,14 @@
 package surf_async
 
 import surf ".."
-import http "shared:http"
+import http "shared:async/http"
 import runtime_async "shared:async"
 import rt "base:runtime"
 import "base:intrinsics"
 import "core:fmt"
 import "core:mem"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
+import "core:net"
 import "core:testing"
 import "core:thread"
 import "core:time"
@@ -135,7 +136,7 @@ conc_consume :: proc(c: ^Conc_Consumer) {
 		c.handles[c.count] = completion.request
 		c.count += 1
 
-		if completion.error.transport.kind != .Cancelled {
+		if completion.error.transport != net.Connection_Error.Cancelled {
 			c.bad += 1
 		}
 

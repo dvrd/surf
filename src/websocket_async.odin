@@ -5,7 +5,7 @@ import runtime_async "shared:async"
 import adapter "shared:async/connection"
 import "base:intrinsics"
 import rt "base:runtime"
-import "core:crypto/tls"
+import "shared:async/tls"
 import x509 "core:crypto/x509"
 import "core:mem"
 import "core:net"
@@ -64,8 +64,8 @@ WebSocket_Async_Error :: struct {
 	upgrade:    websocket.Upgrade_Error,
 	frame:      websocket.Frame_Error,
 	message:    websocket.Message_Error_Kind,
-	transport:  net.Connection_Error,
-	tls_kind:   tls.Handshake_Error_Kind,
+	transport:  net.Network_Error,
+	tls_error:  tls.Error,
 	x509_error: x509.Error,
 	close_code: u16,
 	n:          int,
@@ -127,7 +127,7 @@ WebSocket_Async :: struct {
 	connect_deadline:                                                       runtime_async.Deadline,
 	allocator:                                                              mem.Allocator,
 	failure:                                                                WebSocket_Async_Error,
-	handshake_error:                                                        tls.Handshake_Error,
+	handshake_error:                                                        tls.Error,
 	selected_protocol:                                                      [websocket.MAX_SUBPROTOCOL_SIZE]u8,
 	selected_protocol_size:                                                 int,
 	upgrade_key:                                                            [16]u8,
@@ -147,14 +147,14 @@ WebSocket_Async :: struct {
 	read_state, write_state, close_state:                                   WebSocket_Async_IO,
 	writer:                                                                 WebSocket_Async_Writer,
 	header:                                                                 websocket.Frame_Header,
-	read_error, write_error:                                                net.Connection_Error,
+	read_error, write_error:                                                net.Network_Error,
 	read_deadline, write_deadline, close_deadline:                          time.Time,
 	request_len, upgrade_len, inbox_at, inbox_len, wire_len:                int,
 	header_have, payload_have, payload_need:                                int,
 	write_offset, fragment_len, queue_head, queue_count, queue_bytes:       int,
 	control_len, close_len, peer_close_len, fragments, controls:            int,
 	upgrade_read_armed:                                                     int,
-	handshake_transport:                                                    net.Connection_Error,
+	handshake_transport:                                                    net.Network_Error,
 	bound, secure, tls_ready, executor_ready, connected, connect_started:   bool,
 	handshake_ready, read_cancel_sent:                                      bool,
 	running, request_sent, upgrade_open, released, ops_finished:            bool,
@@ -674,8 +674,8 @@ websocket_async_wrap :: proc(session: ^WebSocket_Async, socket: runtime_async.So
 		adapter.executor(&session.loop),
 		{server_name = name, root_cas = session.config.roots, handshake_timeout = session.config.handshake_timeout},
 		session.allocator,
-	); error != .None {
-		return {kind = .TLS_Failed}
+	); error != nil {
+		return {kind = .TLS_Failed, tls_error = error}
 	}
 
 	session.tls_ready = true
@@ -692,8 +692,8 @@ websocket_async_wrap :: proc(session: ^WebSocket_Async, socket: runtime_async.So
 
 	wall := time.time_add(time.now(), session.config.handshake_timeout)
 
-	if error := tls.async_handshake(&session.secure_conn, &session.hs, wall); error.kind != .None {
-		return {kind = .TLS_Failed, transport = error}
+	if error := tls.async_handshake(&session.secure_conn, &session.hs, wall); error != nil {
+		return {kind = .TLS_Failed, tls_error = error, transport = tls_network(error)}
 	}
 
 	session.phase = .Securing
@@ -703,7 +703,7 @@ websocket_async_wrap :: proc(session: ^WebSocket_Async, socket: runtime_async.So
 
 websocket_async_handshake_done :: proc(op: ^tls.Async_Handshake_Operation) {
 	session := cast(^WebSocket_Async)op.user_data
-	session.handshake_error = op.result
+	session.handshake_error = tls.async_handshake_error(op)
 	session.handshake_transport = op.err
 	session.handshake_ready = true
 }
@@ -813,26 +813,29 @@ websocket_async_secure_step :: proc(session: ^WebSocket_Async) -> bool {
 		return false
 	}
 
-	if session.handshake_transport.kind != .None || session.handshake_error.kind != .None {
+	if session.handshake_transport != nil || session.handshake_error != nil {
+		transport := session.handshake_transport
+		if transport == nil {
+			transport = tls_network(session.handshake_error)
+		}
 		websocket_async_fail(
 			session,
 			{
 				kind = .TLS_Failed,
-				transport = session.handshake_transport,
-				tls_kind = session.handshake_error.kind,
-				x509_error = session.handshake_error.authentication.x509,
+				transport = transport,
+				tls_error = session.handshake_error,
 			},
 		)
 		return true
 	}
 
-	if budget := adapter.budget_error(&session.loop); budget.kind != .None {
+	if budget := adapter.budget_error(&session.loop); budget != nil {
 		websocket_async_fail(session, websocket_async_net_error(budget))
 		return true
 	}
 
 	if !tls.async_connection_state(&session.secure_conn).handshake_complete {
-		websocket_async_fail(session, {kind = .TLS_Failed, tls_kind = .Invalid_State})
+		websocket_async_fail(session, {kind = .TLS_Failed, tls_error = tls.General_Error.Invalid_State})
 		return true
 	}
 
@@ -927,7 +930,7 @@ websocket_async_upgrade_step :: proc(session: ^WebSocket_Async) -> bool {
 			return true
 		}
 
-		if budget := adapter.budget_error(&session.loop); budget.kind != .None && session.secure {
+		if budget := adapter.budget_error(&session.loop); budget != nil && session.secure {
 			websocket_async_fail(session, websocket_async_net_error(budget))
 			return true
 		}
@@ -956,8 +959,8 @@ websocket_async_take_upgrade :: proc(session: ^WebSocket_Async) -> bool {
 		session.read_state = .Idle
 
 		if got == 0 {
-			if error.kind == .None {
-				error.kind = .No_Progress
+			if error == nil {
+				error = .No_Progress
 			}
 			websocket_async_fail(session, websocket_async_upgrade_io(error))
 			return false
@@ -1020,12 +1023,12 @@ websocket_async_open_step :: proc(session: ^WebSocket_Async) -> bool {
 	if session.read_state == .Done {
 		session.read_cancel_sent = false
 
-		if session.read_error.kind == .Cancelled || (session.read_error.kind == .None && session.inbox_len == 0) {
-			empty := session.read_error.kind == .None && session.inbox_len == 0
+		if session.read_error == net.Connection_Error.Cancelled || (session.read_error == nil && session.inbox_len == 0) {
+			empty := session.read_error == nil && session.inbox_len == 0
 			session.read_state = .Idle
 
 			if empty {
-				websocket_async_fail(session, {kind = .IO_Failed, transport = {kind = .No_Progress}})
+				websocket_async_fail(session, {kind = .IO_Failed, transport = net.Connection_Error.No_Progress})
 				return true
 			}
 
@@ -1037,11 +1040,11 @@ websocket_async_open_step :: proc(session: ^WebSocket_Async) -> bool {
 
 		terminal_read :=
 			session.phase == .Closing &&
-			(session.read_error.kind == .Peer_Closed ||
-					session.read_error.kind == .Closed ||
-					session.read_error.kind == .Cancelled)
+			(session.read_error == net.Connection_Error.Peer_Closed ||
+					session.read_error == net.Connection_Error.Closed ||
+					session.read_error == net.Connection_Error.Cancelled)
 
-		if session.read_error.kind != .None && session.inbox_len == 0 && !terminal_read {
+		if session.read_error != nil && session.inbox_len == 0 && !terminal_read {
 			websocket_async_fail(session, websocket_async_net_error(session.read_error))
 			session.read_state = .Idle
 			return true
@@ -1414,8 +1417,8 @@ websocket_async_finish_write :: proc(session: ^WebSocket_Async) {
 	session.writer = .None
 	session.write_error = {}
 
-	if error.kind != .None {
-		if error.kind == .Cancelled {
+	if error != nil {
+		if error == net.Connection_Error.Cancelled {
 			websocket_async_fail(session, {kind = .Cancelled, transport = error, n = count})
 			return
 		}
@@ -1478,6 +1481,26 @@ websocket_async_discard_queue :: proc(session: ^WebSocket_Async) {
 	session.fragment_len = 0
 }
 
+// Socket deadlines are monotonic ticks. A zero wall time means no deadline.
+// A time already reached must stay a deadline: the zero tick would disable it.
+websocket_async_deadline_tick :: proc(deadline: time.Time) -> time.Tick {
+	if deadline == {} {
+		return {}
+	}
+
+	remain := time.diff(time.now(), deadline)
+	if remain <= 0 {
+		return time.tick_add(time.tick_now(), -time.Nanosecond)
+	}
+
+	tick := time.tick_add(time.tick_now(), remain)
+	if tick == {} {
+		return time.tick_add(time.tick_now(), time.Nanosecond)
+	}
+
+	return tick
+}
+
 websocket_async_arm_read :: proc(session: ^WebSocket_Async) -> bool {
 	if session.read_state != .Idle || session.phase == .Failed || session.phase == .Terminal {
 		return false
@@ -1486,10 +1509,10 @@ websocket_async_arm_read :: proc(session: ^WebSocket_Async) -> bool {
 		websocket_async_stream(session),
 		&session.net_read,
 		session.inbox[:],
-		session.read_deadline,
+		websocket_async_deadline_tick(session.read_deadline),
 	)
 
-	if error.kind != .None {
+	if error != nil {
 		websocket_async_fail(session, websocket_async_net_error(error))
 		return false
 	}
@@ -1505,9 +1528,9 @@ websocket_async_arm_write :: proc(session: ^WebSocket_Async, src: []u8, writer: 
 	if session.write_state != .Idle {
 		return false
 	}
-	error := net.async_write(websocket_async_stream(session), &session.net_write, src, session.write_deadline)
+	error := net.async_write(websocket_async_stream(session), &session.net_write, src, websocket_async_deadline_tick(session.write_deadline))
 
-	if error.kind != .None {
+	if error != nil {
 		websocket_async_fail(session, websocket_async_net_error(error))
 		return false
 	}
@@ -1586,7 +1609,7 @@ websocket_async_begin_transport_close :: proc(session: ^WebSocket_Async) {
 	session.close_started = true
 	error := net.async_close(websocket_async_stream(session), &session.net_close)
 
-	if error.kind != .None {
+	if error != nil {
 		session.close_state = .Done
 	}
 }
@@ -1610,36 +1633,42 @@ websocket_async_runtime_error :: proc(error: runtime_async.Error) -> WebSocket_A
 	if error.kind == .Invalid_Config || error.kind == .Wrong_Task {
 		kind = .Invalid_Config
 	}
-	transport := net.Connection_Error{}
+	transport: net.Network_Error
 	if kind == .Timeout {
-		transport.kind = .Timeout
+		transport = net.TCP_Recv_Error.Timeout
 	}
 	if kind == .Cancelled {
-		transport.kind = .Cancelled
+		transport = net.Connection_Error.Cancelled
 	}
 
 	return {kind = kind, transport = transport}
 }
 
-websocket_async_net_error :: proc(error: net.Connection_Error) -> WebSocket_Async_Error {
+websocket_async_net_error :: proc(error: net.Network_Error) -> WebSocket_Async_Error {
 	kind := WebSocket_Async_Error_Kind.IO_Failed
-	if error.kind == .Timeout {
+	if recv, ok := error.(net.TCP_Recv_Error); ok && recv == .Timeout {
 		kind = .Timeout
 	}
-	if error.kind == .Cancelled {
+	if sent, ok := error.(net.TCP_Send_Error); ok && sent == .Timeout {
+		kind = .Timeout
+	}
+	if dial, ok := error.(net.Dial_Error); ok && dial == .Timeout {
+		kind = .Timeout
+	}
+	if error == net.Connection_Error.Cancelled {
 		kind = .Cancelled
 	}
-	if error.kind == .Peer_Closed {
+	if error == net.Connection_Error.Peer_Closed {
 		kind = .EOF
 	}
-	if error.kind == .Protocol_Failed {
+	if error == net.Connection_Error.Protocol_Failed {
 		kind = .Protocol_Failed
 	}
 
 	return {kind = kind, transport = error}
 }
 
-websocket_async_upgrade_io :: proc(error: net.Connection_Error) -> WebSocket_Async_Error {
+websocket_async_upgrade_io :: proc(error: net.Network_Error) -> WebSocket_Async_Error {
 	mapped := websocket_async_net_error(error)
 	if mapped.kind == .IO_Failed || mapped.kind == .EOF {
 		mapped.kind = .Upgrade_Failed

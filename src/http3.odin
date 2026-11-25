@@ -1,7 +1,7 @@
 package surf
 
-import http "shared:http"
-import http3 "shared:http/v3"
+import http "shared:async/http"
+import http3 "shared:async/http/v3"
 import "core:mem"
 import "core:io"
 import "core:net"
@@ -131,9 +131,9 @@ execute_http3 :: proc(
 		}
 	}
 	wire := http3.Client_Request {
-		session_cache           = config.tls.session_cache,
 		cancel                  = config._http3_cancel,
 		cancel_data             = config._http3_cancel_data,
+		session_cache           = config.tls.session_cache,
 		qpack                   = config.http3_qpack,
 		ecn                     = config.http3_ecn,
 		client_credentials      = config.tls.client_credentials,
@@ -306,7 +306,7 @@ http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) 
 	}
 
 	if result.error == .Cancelled {
-		return {kind = .IO_Failed, phase = .Cancellation, write_effect = effect, transport = {kind = .Cancelled}}
+		return {kind = .IO_Failed, phase = .Cancellation, write_effect = effect, transport = net.Connection_Error.Cancelled}
 	}
 
 	if result.error == .Certificate {
@@ -778,15 +778,16 @@ websocket_http3_open :: proc(
 	tunnel.client = client
 	intrinsics.atomic_store(&client.cancel, 0)
 	request := http3.Client_Request {
-		method                  = "CONNECT",
+		session_cache           = client.config.tls.session_cache,
 		protocol                = "websocket",
-		authority               = parsed.authority,
-		target                  = options.target,
-		headers                 = fields[:count],
-		qpack                   = client.config.http3_qpack,
 		ecn                     = client.config.http3_ecn,
 		client_credentials      = client.config.tls.client_credentials,
 		client_credential_lease = client.config.tls.client_credential_lease,
+		qpack                   = client.config.http3_qpack,
+		method                  = "CONNECT",
+		target                  = options.target,
+		authority               = parsed.authority,
+		headers                 = fields[:count],
 	}
 	// endpoint is the address just checked. A new lane dials it; an open lane is reused.
 	e := http3.pool_connect_open(
@@ -843,7 +844,7 @@ h3_tunnel_progress :: proc(t: ^HTTP3_Tunnel, write: bool) -> WebSocket_Stream_Er
 
 	if h2_cancelled(&t.client.cancel) {
 		http3.client_connect_abort(&t.wire)
-		return {kind = .TCP_Failed, transport = {kind = .Cancelled}}
+		return {kind = .TCP_Failed, transport = net.Connection_Error.Cancelled}
 	}
 
 	e := http3.client_connect_step(&t.wire, h3_tunnel_deadline(t, write))
@@ -852,9 +853,15 @@ h3_tunnel_progress :: proc(t: ^HTTP3_Tunnel, write: bool) -> WebSocket_Stream_Er
 		return {}
 	}
 
+	transport: net.Network_Error = net.Connection_Error.Protocol_Failed
+	if e == .Deadline {
+		transport = net.TCP_Recv_Error.Timeout
+	} else if e == .Cancelled {
+		transport = net.Connection_Error.Cancelled
+	}
 	return {
 		kind = .TCP_Failed,
-		transport = {kind = .Timeout if e == .Deadline else .Cancelled if e == .Cancelled else .Protocol_Failed},
+		transport = transport,
 	}
 }
 h3_tunnel_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_Stream_Error) {

@@ -1,7 +1,7 @@
 package surf_exchange
 
 import channel "../stream"
-import h1 "shared:http/v1"
+import h1 "shared:async/http/v1"
 import "core:testing"
 
 @(test)

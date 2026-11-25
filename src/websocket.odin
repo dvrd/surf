@@ -1,7 +1,7 @@
 package surf
 
 import websocket "shared:websocket"
-import tls_api "core:crypto/tls"
+import tls_api "shared:async/tls"
 import "core:crypto"
 import "core:fmt"
 import "core:strings"
@@ -309,7 +309,7 @@ WebSocket_Dial_Error_Kind :: enum {
 WebSocket_Dial_Error :: struct {
 	kind:      WebSocket_Dial_Error_Kind,
 	client:    WebSocket_Client_Error,
-	tls:       tls_api.Dial_Error,
+	tls:       tls_api.Error,
 	websocket: WebSocket_Error,
 }
 
@@ -369,7 +369,7 @@ websocket_dial :: proc(
 	conn.config.host = cast(string)conn.dial_host[:len(settings.host)]
 
 	if resolve_error != nil {
-		return websocket_dial_fail(conn, {kind = .TCP_Dial_Failed, network = resolve_error})
+		return websocket_dial_network(conn, resolve_error)
 	}
 
 	tls_settings := tls_config
@@ -377,43 +377,43 @@ websocket_dial :: proc(
 		tls_settings.server_name = host
 	}
 
-	if err := tls_api.config_validate(tls_settings); err != .None {
-		return websocket_dial_fail(conn, {kind = .Invalid_Config, config = err})
+	if err := tls_api.config_validate(tls_settings); err != nil {
+		return websocket_dial_fail(conn, err)
 	}
 
 	// h3 is not a TCP record offer. Reject it before any socket, as tls.dial does.
 	for protocol in tls_settings.alpn_protocols {
 		if protocol == "h3" {
-			return websocket_dial_fail(conn, {kind = .Invalid_Config, config = .Invalid_ALPN})
+			return websocket_dial_fail(conn, tls_api.General_Error.Invalid_Config)
 		}
 	}
 
 	socket, connect_error := tcp_api.dial_tcp_candidates_until(endpoints, {})
 
 	if connect_error != nil {
-		return websocket_dial_fail(conn, {kind = .TCP_Dial_Failed, network = connect_error})
+		return websocket_dial_network(conn, connect_error)
 	}
 
 	underlying := tcp_api.tcp_connection(&conn.tls_client.tcp)
-	if err := tls_api.client(&conn.tls_client, underlying, tls_settings); err != .None {
+	if err := tls_api.client(&conn.tls_client, underlying, tls_settings); err != nil {
 		tcp_api.close(socket)
-		return websocket_dial_fail(conn, {kind = .Invalid_Config, config = err})
+		return websocket_dial_fail(conn, err)
 	}
 
 	conn.tls_client.tcp = {
 		socket = socket,
 	}
 
-	if err := tls_api.handshake(&conn.tls_client); err.kind != .None {
+	if err := tls_api.handshake(&conn.tls_client); err != nil {
 		_ = tls_api.conn_close(&conn.tls_client)
 		conn.phase = .Failed
 		conn.transport_closed = true
 		conn.last_error = {
 			kind = .Upgrade_Failed,
-			stream = {kind = .TLS_Failed, tls_dial = {kind = .Handshake_Failed, handshake = err}},
+			stream = {kind = .TLS_Failed, tls = err},
 		}
 
-		return {kind = .TLS_Failed, tls = {kind = .Handshake_Failed, handshake = err}}
+		return {kind = .TLS_Failed, tls = err}
 	}
 
 	if err := websocket_upgrade(conn); err.kind != .None {
@@ -423,15 +423,25 @@ websocket_dial :: proc(
 	return {}
 }
 
-websocket_dial_fail :: proc(conn: ^WebSocket_Conn, err: tls_api.Dial_Error) -> WebSocket_Dial_Error {
+websocket_dial_fail :: proc(conn: ^WebSocket_Conn, err: tls_api.Error) -> WebSocket_Dial_Error {
 	conn.phase = .Failed
 	conn.transport_closed = true
 	conn.last_error = {
 		kind = .Upgrade_Failed,
-		stream = {kind = .TLS_Failed, tls_dial = err},
+		stream = {kind = .TLS_Failed, tls = err},
 	}
 
 	return {kind = .TLS_Failed, tls = err}
+}
+websocket_dial_network :: proc(conn: ^WebSocket_Conn, err: tcp_api.Network_Error) -> WebSocket_Dial_Error {
+	conn.phase = .Failed
+	conn.transport_closed = true
+	conn.last_error = {
+		kind = .Upgrade_Failed,
+		stream = {kind = .TCP_Failed, transport = err},
+	}
+
+	return {kind = .TLS_Failed, tls = tls_api.General_Error.Name_Resolution_Failed}
 }
 
 websocket_dial_host :: proc(host_storage: []u8, host: string, port: int) -> string {
@@ -1093,9 +1103,8 @@ WebSocket_Stream_Error_Kind :: enum {
 
 WebSocket_Stream_Error :: struct {
 	kind:      WebSocket_Stream_Error_Kind,
-	tls:       tls_api.IO_Error,
-	tls_dial:  tls_api.Dial_Error,
-	transport: tcp_api.Connection_Error,
+	tls:       tls_api.Error,
+	transport: tcp_api.Network_Error,
 }
 
 // A blocking byte stream. Callbacks may return bytes together with an error.
@@ -1127,7 +1136,27 @@ websocket_stream_read_exact :: proc(
 		return 0, {kind = .Invalid_Stream}
 	}
 
-	return tcp_api.read_exact_callback(WebSocket_Stream_Error, stream.data, dst, stream.read)
+	for received < len(dst) {
+		count, read_err := stream.read(stream.data, dst[received:])
+		if count < 0 || count > len(dst) - received {
+			return received, {kind = .Invalid_Count}
+		}
+
+		received += count
+		if received == len(dst) {
+			return received, {}
+		}
+
+		if read_err.kind != .None {
+			return received, read_err
+		}
+
+		if count == 0 {
+			return received, {kind = .No_Progress}
+		}
+	}
+
+	return received, {}
 }
 
 websocket_stream_write_all :: proc(
@@ -1141,7 +1170,23 @@ websocket_stream_write_all :: proc(
 		return 0, {kind = .Invalid_Stream}
 	}
 
-	return tcp_api.write_all_callback(WebSocket_Stream_Error, stream.data, src, stream.write)
+	for written < len(src) {
+		count, write_err := stream.write(stream.data, src[written:])
+		if count < 0 || count > len(src) - written {
+			return written, {kind = .Invalid_Count}
+		}
+
+		written += count
+		if write_err.kind != .None {
+			return written, write_err
+		}
+
+		if count == 0 {
+			return written, {kind = .No_Progress}
+		}
+	}
+
+	return written, {}
 }
 
 websocket_stream_from_tls_address :: proc(conn: ^tls_api.Conn) -> WebSocket_Stream {
@@ -1175,11 +1220,11 @@ websocket_tcp_stream :: proc(conn: ^tcp_api.TCP_Connection) -> WebSocket_Stream 
 websocket_stream_tls_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_Stream_Error) {
 	count, err := tls_api.read(cast(^tls_api.Conn)data, dst)
 
-	if err.kind == .EOF {
+	if protocol, ok := err.(tls_api.Protocol_Error); ok && protocol == .Close_Notify {
 		return count, {kind = .EOF, tls = err}
 	}
 
-	if err.kind != .None {
+	if err != nil {
 		return count, {kind = .TLS_Failed, tls = err}
 	}
 
@@ -1189,7 +1234,7 @@ websocket_stream_tls_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_St
 websocket_stream_tls_write :: proc(data: rawptr, src: []u8) -> (int, WebSocket_Stream_Error) {
 	count, err := tls_api.write(cast(^tls_api.Conn)data, src)
 
-	if err.kind != .None {
+	if err != nil {
 		return count, {kind = .TLS_Failed, tls = err}
 	}
 
@@ -1197,7 +1242,7 @@ websocket_stream_tls_write :: proc(data: rawptr, src: []u8) -> (int, WebSocket_S
 }
 
 websocket_stream_tls_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
-	if err := tls_api.conn_close(cast(^tls_api.Conn)data); err.kind != .None {
+	if err := tls_api.conn_close(cast(^tls_api.Conn)data); err != nil {
 		return {kind = .TLS_Failed, tls = err}
 	}
 
@@ -1205,7 +1250,7 @@ websocket_stream_tls_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 }
 
 websocket_stream_tls_abort :: proc(data: rawptr) -> WebSocket_Stream_Error {
-	if err := tls_api.abort(cast(^tls_api.Conn)data); err.kind != .None {
+	if err := tls_api.abort(cast(^tls_api.Conn)data); err != nil {
 		return {kind = .TLS_Failed, tls = err}
 	}
 
@@ -1213,16 +1258,16 @@ websocket_stream_tls_abort :: proc(data: rawptr) -> WebSocket_Stream_Error {
 }
 
 websocket_stream_tls_read_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
-	if err := tls_api.set_read_deadline(cast(^tls_api.Conn)data, deadline); err.kind != .None {
-		return {kind = .TCP_Failed, transport = err}
+	if err := tls_api.set_read_deadline(cast(^tls_api.Conn)data, deadline); err != nil {
+		return {kind = .TCP_Failed, tls = err, transport = tls_network(err)}
 	}
 
 	return {}
 }
 
 websocket_stream_tls_write_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
-	if err := tls_api.set_write_deadline(cast(^tls_api.Conn)data, deadline); err.kind != .None {
-		return {kind = .TCP_Failed, transport = err}
+	if err := tls_api.set_write_deadline(cast(^tls_api.Conn)data, deadline); err != nil {
+		return {kind = .TCP_Failed, tls = err, transport = tls_network(err)}
 	}
 
 	return {}
@@ -1232,11 +1277,11 @@ websocket_stream_tcp_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_St
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
 	count, err := conn.read(conn.data, dst)
 
-	if err.kind == .Peer_Closed {
+	if err == tcp_api.Connection_Error.Peer_Closed {
 		return count, {kind = .EOF, transport = err}
 	}
 
-	if err.kind != .None {
+	if err != nil {
 		return count, {kind = .TCP_Failed, transport = err}
 	}
 
@@ -1247,7 +1292,7 @@ websocket_stream_tcp_write :: proc(data: rawptr, src: []u8) -> (int, WebSocket_S
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
 	count, err := conn.write(conn.data, src)
 
-	if err.kind != .None {
+	if err != nil {
 		return count, {kind = .TCP_Failed, transport = err}
 	}
 
@@ -1257,7 +1302,7 @@ websocket_stream_tcp_write :: proc(data: rawptr, src: []u8) -> (int, WebSocket_S
 websocket_stream_tcp_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
 
-	if err := conn.close(conn.data); err.kind != .None {
+	if err := conn.close(conn.data); err != nil {
 		return {kind = .TCP_Failed, transport = err}
 	}
 
@@ -1267,7 +1312,7 @@ websocket_stream_tcp_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 websocket_stream_tcp_read_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
 
-	if err := tcp_api.set_read_deadline(conn, deadline); err.kind != .None {
+	if err := tcp_api.set_read_deadline(conn, deadline); err != nil {
 		return {kind = .TCP_Failed, transport = err}
 	}
 
@@ -1277,7 +1322,7 @@ websocket_stream_tcp_read_deadline :: proc(data: rawptr, deadline: time.Time) ->
 websocket_stream_tcp_write_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket_Stream_Error {
 	conn := tcp_api.tcp_connection(cast(^tcp_api.TCP_Connection)data)
 
-	if err := tcp_api.set_write_deadline(conn, deadline); err.kind != .None {
+	if err := tcp_api.set_write_deadline(conn, deadline); err != nil {
 		return {kind = .TCP_Failed, transport = err}
 	}
 

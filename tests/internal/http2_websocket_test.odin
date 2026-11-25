@@ -1,6 +1,6 @@
 package surf
 
-import tls "core:crypto/tls"
+import tls "shared:async/tls"
 import "core:testing"
 import "core:time"
 

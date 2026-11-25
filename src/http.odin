@@ -1,25 +1,24 @@
 package surf
 
-import http "shared:http"
-import h3 "shared:http/v3"
 import step "core:compress/step"
-import http1 "shared:http/v1"
-import tls_api "core:crypto/tls"
-import trans "core:net"
-import "core:mem"
-import resources "core:sync/budget"
+import "shared:async/tls"
 import "core:io"
+import "core:mem"
+import charged "shared:async/mem/budget"
+import owned "shared:async/mem/owned"
+import trans "core:net"
 import "core:strings"
+import resources "shared:async/sync/budget"
 import "core:time"
-import owned "core:mem/owned"
-import charged "core:mem/budget"
+import http "shared:async/http"
+import http1 "shared:async/http/v1"
+import h3 "shared:async/http/v3"
 
 HTTP_Error :: struct {
 	kind:          http.Error_Kind,
-	transport:     trans.Connection_Error,
+	transport:     trans.Network_Error,
 	network:       trans.Network_Error,
-	tls_dial:      tls_api.Dial_Error,
-	tls_io:        tls_api.IO_Error,
+	tls_error:     tls.Error,
 	allocation:    mem.Allocator_Error,
 	phase:         HTTP_Phase,
 	write_effect:  HTTP_Write_Effect,
@@ -39,20 +38,20 @@ HTTP_Error :: struct {
 Address_Policy :: proc(host: string, addresses: []trans.Endpoint, user: rawptr) -> bool
 
 Config :: struct {
-	_http3_cancel:      proc(_: rawptr) -> bool,
-	_http3_cancel_data: rawptr,
-	tls:                tls_api.Config,
+	_http3_cancel:       proc(_: rawptr) -> bool,
+	_http3_cancel_data:  rawptr,
+	tls:                 tls.Config,
 	// Zero selects 8 MiB. All responses, including redirect bodies, are bounded.
-	max_body_size:      int,
+	max_body_size:       int,
 	// Zero disables automatic redirects; maximum5. POST follows only307/308.
-	max_redirects:      int,
+	max_redirects:       int,
 	// Zero selects30s for the entire setup/I/O/redirect budget.
-	timeout:            time.Duration,
-	allow_http:         bool,
+	timeout:             time.Duration,
+	allow_http:          bool,
 	// Zero uses the remaining total budget. A positive value bounds DNS+TCP+TLS
 	// together for each new connection, always capped by the total deadline.
-	setup_timeout:      time.Duration,
-	resolver:           trans.Resolver_Options,
+	setup_timeout:       time.Duration,
+	resolver:            trans.Resolver_Options,
 	// Nil allows every resolved address. Called with the URL host, the exact
 	// endpoints about to be dialed, and address_policy_data, after DNS or an IP
 	// literal is known and before any socket is opened. Each redirect hop is
@@ -61,24 +60,24 @@ Config :: struct {
 	// are valid only for the call. address_policy_data is borrowed for every
 	// check this config performs. A pooled connection that is reused is not
 	// resolved or passed through this policy again.
-	address_policy:     Address_Policy,
+	address_policy:      Address_Policy,
 	address_policy_data: rawptr,
 	// Zero preserves unmanaged compatibility. Host supplies an operation Scope
 	// below its connection/global hierarchy.
-	scope:              resources.Scope,
+	scope:               resources.Scope,
 	// Trusted coverage for a caller arena whose BOTH backings are charged.
 	// This reference does not extend the arena/storage lifetime.
-	allocator_scope:    resources.Scope,
+	allocator_scope:     resources.Scope,
 	// Explicit HTTP/3. Default off. Cleartext is refused. GET and HEAD may
 	// fall back to TCP once; other methods are not sent again. Early data requires its explicit predicate.
-	http3:              bool,
-	http3_qpack:        h3.Qpack_Config,
-	http3_ecn:          bool,
-	http3_early_data:   proc(_: ^http.Request) -> bool,
+	http3:               bool,
+	http3_qpack:         h3.Qpack_Config,
+	http3_ecn:           bool,
+	http3_early_data:    proc(_: ^http.Request) -> bool,
 	// Written only after an authenticated TLS response. Nil disables discovery.
-	alt_svc:            ^Alt_Svc_Cache,
+	alt_svc:             ^Alt_Svc_Cache,
 	// Nil opens one HTTP/3 connection per call. A pool reuses an authenticated origin.
-	http3_pool:         ^h3.Pool,
+	http3_pool:          ^h3.Pool,
 }
 
 // Owns header strings/body. Do not copy and destroy twice. Destroy on success;
@@ -128,7 +127,14 @@ response_header :: proc(response: ^Response, name: string) -> (string, bool) {
 // Single blocking request. HTTPS authentication always derives server_name
 // from the URL rather than reusing a different host's TLS config. Roots borrow
 // the caller's Root_Pool. Each redirect establishes a fresh connection.
-execute :: proc(request: http.Request, config: Config, allocator := context.allocator) -> (Response, HTTP_Error) {
+execute :: proc(
+	request: http.Request,
+	config: Config,
+	allocator := context.allocator,
+) -> (
+	Response,
+	HTTP_Error,
+) {
 	return execute_with_upload(request, config, nil, allocator)
 }
 
@@ -193,7 +199,7 @@ execute_internal :: proc(
 			kind = .IO_Failed,
 			phase = .Cancellation,
 			write_effect = .Not_Sent,
-			transport = {kind = .Cancelled},
+			transport = trans.Connection_Error.Cancelled,
 		}
 	}
 	current := request
@@ -267,7 +273,7 @@ execute_internal :: proc(
 						kind = .IO_Failed,
 						phase = .Cancellation,
 						write_effect = err.write_effect,
-						transport = {kind = .Cancelled},
+						transport = trans.Connection_Error.Cancelled,
 					}
 				}
 
@@ -282,7 +288,9 @@ execute_internal :: proc(
 					return {}, err
 				}
 
-				if upload != nil || len(current.trailers) > 0 || !http3_fallback_allowed(current.method) {
+				if upload != nil ||
+				   len(current.trailers) > 0 ||
+				   !http3_fallback_allowed(current.method) {
 					return {}, err
 				}
 
@@ -316,7 +324,14 @@ execute_internal :: proc(
 			return response, {}
 		}
 
-		new_url, redirect_error := execute_redirect(&response, current, u, config, redirects, allocator)
+		new_url, redirect_error := execute_redirect(
+			&response,
+			current,
+			u,
+			config,
+			redirects,
+			allocator,
+		)
 
 		if redirect_error.kind != .None {
 			return {}, redirect_error
@@ -341,29 +356,50 @@ execute_tls :: proc(
 	response: Response,
 	err: HTTP_Error,
 ) {
-	connection: ^tls_api.Conn
+	connection: ^tls.Conn
 	connection, err = http_tls_connect(url, config, total_deadline, allocator, nil)
 	if err.kind != .None {
 		return {}, err
 	}
 	defer {
-		tls_api.abort(connection)
+		tls.abort(connection)
 		free(connection, allocator)
 	}
 
-	deadline_err := tls_api.set_deadline(connection, total_deadline)
-	if deadline_err.kind != .None {
-		return {}, {kind = .Deadline_Failed, transport = deadline_err, phase = .Deadline, write_effect = .Not_Sent}
+	deadline_err := tls.set_deadline(connection, total_deadline)
+	if deadline_err != nil {
+		return {}, {
+			kind = .Deadline_Failed,
+			tls_error = deadline_err,
+			transport = tls_network(deadline_err),
+			phase = .Deadline,
+			write_effect = .Not_Sent,
+		}
 	}
-	selected := tls_api.connection_state(connection).negotiated_protocol
+	selected := tls.connection_state(connection).negotiated_protocol
 	if selected == "h2" {
-		return h2_exchange_once(connection, request, upload, config, total_deadline, allocator, nil)
+		return h2_exchange_once(
+			connection,
+			request,
+			upload,
+			config,
+			total_deadline,
+			allocator,
+			nil,
+		)
 	}
 	if selected != "" && selected != "http/1.1" {
 		return {}, {kind = .IO_Failed, phase = .Protocol, write_effect = .Not_Sent}
 	}
 
-	response, err = exchange_tls(connection, request, upload, config.max_body_size, allocator, total_deadline)
+	response, err = exchange_tls(
+		connection,
+		request,
+		upload,
+		config.max_body_size,
+		allocator,
+		total_deadline,
+	)
 	if err.kind != .None && err.phase == .Unknown {
 		err = http_error_classify(err, .TLS, .Not_Sent)
 	}
@@ -373,7 +409,7 @@ execute_tls :: proc(
 // HTTP/1.1 over an established TLS connection. The TLS diagnostic behind an I/O
 // failure is kept so classification can tell record failures from transport ones.
 exchange_tls :: proc(
-	connection: ^tls_api.Conn,
+	connection: ^tls.Conn,
 	request: http.Request,
 	upload: ^Upload_Source,
 	max_body_size: int,
@@ -392,9 +428,18 @@ exchange_tls :: proc(
 		write = tls_write,
 		close = tls_close,
 	}
-	response, err := exchange_run(stream, request, upload, max_body_size, allocator, deadline, {}, {})
+	response, err := exchange_run(
+		stream,
+		request,
+		upload,
+		max_body_size,
+		allocator,
+		deadline,
+		{},
+		{},
+	)
 	if err.kind == .IO_Failed {
-		err.tls_io = adapter.last_error
+		err.tls_error = adapter.last_error
 		err = http_error_classify(err, err.phase, err.write_effect, err.status)
 	}
 	return response, err
@@ -411,7 +456,11 @@ execute_tcp :: proc(
 	response: Response,
 	err: HTTP_Error,
 ) {
-	socket, setup_error := bounded_socket(url, config, connection_setup_deadline(config, total_deadline))
+	socket, setup_error := bounded_socket(
+		url,
+		config,
+		connection_setup_deadline(config, total_deadline),
+	)
 	if setup_error.kind != .None {
 		return {}, setup_error
 	}
@@ -421,8 +470,17 @@ execute_tcp :: proc(
 	}
 	stream := trans.tcp_connection(&connection)
 	deadline_err := trans.set_deadline(stream, total_deadline)
-	if deadline_err.kind == .None {
-		response, err = exchange_run(stream, request, upload, config.max_body_size, allocator, total_deadline, {}, {})
+	if deadline_err == nil {
+		response, err = exchange_run(
+			stream,
+			request,
+			upload,
+			config.max_body_size,
+			allocator,
+			total_deadline,
+			{},
+			{},
+		)
 	} else {
 		err = {
 			kind      = .Deadline_Failed,
@@ -503,8 +561,11 @@ execute_redirect :: proc(
 				address = literal,
 				port    = new_parsed.port,
 			}
-			if rejected := address_policy_check(config, new_parsed.host, []trans.Endpoint{endpoint});
-			   rejected.kind != .None {
+			if rejected := address_policy_check(
+				config,
+				new_parsed.host,
+				[]trans.Endpoint{endpoint},
+			); rejected.kind != .None {
 				delete(new_url, allocator)
 				return "", rejected
 			}
@@ -515,7 +576,9 @@ execute_redirect :: proc(
 
 redirect_origin_safe :: proc(request: http.Request, previous, next: http.URL) -> bool {
 	cross_origin :=
-		previous.secure != next.secure || previous.port != next.port || !strings.equal_fold(previous.host, next.host)
+		previous.secure != next.secure ||
+		previous.port != next.port ||
+		!strings.equal_fold(previous.host, next.host)
 
 	if !cross_origin {
 		return true
@@ -601,7 +664,13 @@ exchange_run :: proc(
 			&outcome,
 		)
 	} else {
-		response, error = exchange_internal(stream, request, max_body_size, call_allocator, &outcome)
+		response, error = exchange_internal(
+			stream,
+			request,
+			max_body_size,
+			call_allocator,
+			&outcome,
+		)
 	}
 	if error.kind != .None {
 		effect: HTTP_Write_Effect = .Not_Sent
@@ -664,11 +733,11 @@ exchange_internal :: proc(
 	}
 
 	outcome.write_started = true
-	if _, write_err := trans.write_all(stream, encoded[:n]); write_err.kind != .None {
+	if _, write_err := trans.write_all(stream, encoded[:n]); write_err != nil {
 		return {}, {kind = .IO_Failed, transport = write_err, phase = .Write}
 	}
 
-	if _, write_err := trans.write_all(stream, request.body); write_err.kind != .None {
+	if _, write_err := trans.write_all(stream, request.body); write_err != nil {
 		return {}, {kind = .IO_Failed, transport = write_err, phase = .Write}
 	}
 
@@ -711,7 +780,8 @@ exchange_read_response :: proc(
 	outcome.status = head.status
 	// HEAD describes the representation, but carries no response body.
 	http1.response_apply_method(&head, request.method)
-	if body_error := response_read_body(&reader, &response, head, limit); body_error.kind != .None {
+	if body_error := response_read_body(&reader, &response, head, limit);
+	   body_error.kind != .None {
 		return {}, body_error
 	}
 	response.body = response.body_storage[:]
@@ -719,7 +789,14 @@ exchange_read_response :: proc(
 	return response, {}
 }
 
-response_read_header :: proc(reader: ^Reader, storage: []u8, observed_status: ^int = nil) -> (int, HTTP_Error) {
+response_read_header :: proc(
+	reader: ^Reader,
+	storage: []u8,
+	observed_status: ^int = nil,
+) -> (
+	int,
+	HTTP_Error,
+) {
 	assert(len(storage) == http.MAX_HEADER_SIZE)
 	used := 0
 
@@ -806,7 +883,12 @@ response_initialize :: proc(
 	return head, {}
 }
 
-response_read_body :: proc(reader: ^Reader, response: ^Response, head: http1.Response_Head, limit: int) -> HTTP_Error {
+response_read_body :: proc(
+	reader: ^Reader,
+	response: ^Response,
+	head: http1.Response_Head,
+	limit: int,
+) -> HTTP_Error {
 	if head.framing == .Length && head.content_length > cast(u64)limit {
 		return {kind = .Body_Oversized}
 	}
@@ -814,8 +896,12 @@ response_read_body :: proc(reader: ^Reader, response: ^Response, head: http1.Res
 	switch head.framing {
 	case .None:
 	case .Length:
-		if operation_error := body_read(reader, &response.body_storage, cast(int)head.content_length, limit);
-		   operation_error.kind != .None {
+		if operation_error := body_read(
+			reader,
+			&response.body_storage,
+			cast(int)head.content_length,
+			limit,
+		); operation_error.kind != .None {
 			return operation_error
 		}
 
@@ -833,14 +919,15 @@ response_read_eof :: proc(reader: ^Reader, body: ^[dynamic]u8, limit: int) -> HT
 		operation_error_2 := reader_fill(reader)
 
 		if operation_error_2.kind != .None {
-			if reader.pending.kind == .Peer_Closed {
+			if reader.pending == trans.Connection_Error.Peer_Closed {
 				break
 			}
 
 			return operation_error_2
 		}
 
-		if operation_error := body_read(reader, body, reader.used - reader.at, limit); operation_error.kind != .None {
+		if operation_error := body_read(reader, body, reader.used - reader.at, limit);
+		   operation_error.kind != .None {
 			return operation_error
 		}
 	}
@@ -871,7 +958,8 @@ response_read_chunked :: proc(reader: ^Reader, body: ^[dynamic]u8, limit: int) -
 			return {kind = .Body_Oversized}
 		}
 
-		if operation_error := body_read(reader, body, cast(int)size, limit); operation_error.kind != .None {
+		if operation_error := body_read(reader, body, cast(int)size, limit);
+		   operation_error.kind != .None {
 			return operation_error
 		}
 
@@ -911,7 +999,7 @@ Reader :: struct {
 	stream:   trans.Connection,
 	buffer:   [8192]u8,
 	at, used: int,
-	pending:  trans.Connection_Error,
+	pending:  trans.Network_Error,
 }
 HTTP_MAX_CHUNK_METADATA_SIZE :: 65536
 
@@ -920,8 +1008,8 @@ reader_fill :: proc(r: ^Reader) -> HTTP_Error {
 		return {}
 	}
 
-	if r.pending.kind != .None {
-		if r.pending.kind == .Peer_Closed {
+	if r.pending != nil {
+		if r.pending == trans.Connection_Error.Peer_Closed {
 			return {kind = .Unexpected_EOF, transport = r.pending}
 		}
 
@@ -931,7 +1019,7 @@ reader_fill :: proc(r: ^Reader) -> HTTP_Error {
 	n, e := r.stream.read(r.stream.data, r.buffer[:])
 
 	if n < 0 || n > len(r.buffer) {
-		return {kind = .IO_Failed, transport = {kind = .Invalid_Count}}
+		return {kind = .IO_Failed, transport = trans.Connection_Error.Invalid_Count}
 	}
 
 	r.at, r.used, r.pending = 0, n, e
@@ -939,11 +1027,11 @@ reader_fill :: proc(r: ^Reader) -> HTTP_Error {
 		return {}
 	}
 
-	if e.kind == .None {
+	if e == nil {
 		return {kind = .No_Progress}
 	}
 
-	if e.kind == .Peer_Closed {
+	if e == trans.Connection_Error.Peer_Closed {
 		return {kind = .Unexpected_EOF, transport = e}
 	}
 
@@ -1049,7 +1137,7 @@ config_validate :: proc(c: Config) -> HTTP_Error {
 	// Offering h2 does not speak HTTP/2; that starts only after the peer
 	// selects it. h3 is rejected here, before DNS, sockets or upload reads.
 	// QUIC is not this stack.
-	if tls_api.alpn_transport_offers(.TCP, c.tls.alpn_protocols) != .None {
+	if tls.alpn_transport_offers(.TCP, c.tls.alpn_protocols) != nil {
 		return {kind = .Invalid_Config}
 	}
 
@@ -1064,38 +1152,60 @@ effective_timeout :: proc(c: Config) -> time.Duration {
 }
 
 TLS_Adapter :: struct {
-	connection: ^tls_api.Conn,
-	last_error: tls_api.IO_Error,
+	connection: ^tls.Conn,
+	last_error: tls.Error,
 }
-tls_read :: proc(data: rawptr, dst: []u8) -> (int, trans.Connection_Error) {
+tls_network :: proc(error: tls.Error) -> trans.Network_Error {
+	#partial switch cause in error {
+	case trans.TCP_Recv_Error:
+		return cause
+	case trans.TCP_Send_Error:
+		return cause
+	case trans.Dial_Error:
+		return cause
+	}
+
+	return nil
+}
+tls_read :: proc(data: rawptr, dst: []u8) -> (int, trans.Network_Error) {
 	a := cast(^TLS_Adapter)data
-	n, e := tls_api.read(a.connection, dst)
+	n, e := tls.read(a.connection, dst)
 	a.last_error = e
-	if e.kind == .EOF {
-		return n, {kind = .Peer_Closed}
+
+	if e == nil {
+		return n, nil
 	}
 
-	if e.kind != .None {
-		return n, {kind = .Read_Failed}
+	if protocol, ok := e.(tls.Protocol_Error); ok && protocol == .Close_Notify {
+		return n, trans.Connection_Error.Peer_Closed
 	}
 
-	return n, {}
+	if network := tls_network(e); network != nil {
+		return n, network
+	}
+
+	return n, trans.Connection_Error.Protocol_Failed
 }
-tls_write :: proc(data: rawptr, src: []u8) -> (int, trans.Connection_Error) {
+tls_write :: proc(data: rawptr, src: []u8) -> (int, trans.Network_Error) {
 	a := cast(^TLS_Adapter)data
-	n, e := tls_api.write(a.connection, src)
+	n, e := tls.write(a.connection, src)
 	a.last_error = e
-	if e.kind != .None {
-		return n, {kind = .Write_Failed}
+
+	if e == nil {
+		return n, nil
 	}
 
-	return n, {}
+	if network := tls_network(e); network != nil {
+		return n, network
+	}
+
+	return n, trans.Connection_Error.Protocol_Failed
 }
-tls_close :: proc(data: rawptr) -> trans.Connection_Error {
+tls_close :: proc(data: rawptr) -> trans.Network_Error {
 	a := cast(^TLS_Adapter)data
-	e := tls_api.abort(a.connection)
-	if e.kind != .None {
-		return {kind = .Closed}
+	e := tls.abort(a.connection)
+	if e != nil {
+		return trans.Connection_Error.Closed
 	}
 
 	return {}
@@ -1103,7 +1213,14 @@ tls_close :: proc(data: rawptr) -> trans.Connection_Error {
 
 // Resolve absolute, network-path, root-relative, query-only and relative paths.
 // Dot segments are removed without decoding percent escapes (RFC3986 section5).
-redirect_url :: proc(base: http.URL, location: string, allocator: mem.Allocator) -> (string, HTTP_Error) {
+redirect_url :: proc(
+	base: http.URL,
+	location: string,
+	allocator: mem.Allocator,
+) -> (
+	string,
+	HTTP_Error,
+) {
 	if len(location) == 0 || len(location) > http.MAX_HEADER_SIZE {
 		return "", {kind = .Invalid_Redirect}
 	}
@@ -1177,7 +1294,8 @@ redirect_parts :: proc(base: http.URL, location: string, parts: ^[5]string) -> i
 	} else if strings.has_prefix(location, "//") {
 		parts[0], parts[1], parts[2], count = base.scheme, ":", location, 3
 	} else if location[0] == '/' {
-		parts[0], parts[1], parts[2], parts[3], count = base.scheme, "://", base.authority, location, 4
+		parts[0], parts[1], parts[2], parts[3], count =
+			base.scheme, "://", base.authority, location, 4
 	} else if location[0] == '?' {
 		target := base.target
 		if target == "" || target[0] == '?' {
@@ -1306,7 +1424,11 @@ response_take_body :: proc(response: ^Response) -> (chunk: owned.Chunk, error: o
 
 // Nil policy allows the dial. An empty set or a false result refuses every
 // address before connect. The slice is the exact set the dial will walk.
-address_policy_check :: proc(config: Config, host: string, addresses: []trans.Endpoint) -> HTTP_Error {
+address_policy_check :: proc(
+	config: Config,
+	host: string,
+	addresses: []trans.Endpoint,
+) -> HTTP_Error {
 	if config.address_policy == nil {
 		return {}
 	}
@@ -1317,17 +1439,18 @@ address_policy_check :: proc(config: Config, host: string, addresses: []trans.En
 }
 
 // Refuses an empty set and any address that is not global unicast. IPv4:
-// loopback, RFC 1918, link-local 169.254.0.0/16 (including 169.254.169.254),
-// 0.0.0.0, and 224.0.0.0/4. IPv6: ::1, fe80::/10, fc00::/7, ::, and ff00::/8.
-// An IPv4-mapped address is refused when its IPv4 form is. One refused
-// address refuses the whole set.
+// loopback, RFC 1918, shared address space 100.64.0.0/10, link-local
+// 169.254.0.0/16 (including 169.254.169.254), 0.0.0.0/8, 224.0.0.0/4, and
+// 240.0.0.0/4. IPv6: ::1, fe80::/10, fc00::/7, ::, ff00::/8, and the NAT64
+// well-known prefix 64:ff9b::/96. An IPv4-mapped address is refused when its
+// IPv4 form is. One refused address refuses the whole set.
 address_policy_public_only :: proc(_: string, addresses: []trans.Endpoint, _: rawptr) -> bool {
 	ip4_refused :: proc(ip: trans.IP4_Address) -> bool {
-		if ip == {} {
+		if ip[0] == 0 || ip[0] == 10 || ip[0] == 127 {
 			return true
 		}
 
-		if ip[0] == 10 || ip[0] == 127 {
+		if ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127 {
 			return true
 		}
 
@@ -1343,7 +1466,7 @@ address_policy_public_only :: proc(_: string, addresses: []trans.Endpoint, _: ra
 			return true
 		}
 
-		if ip[0] >= 224 && ip[0] <= 239 {
+		if ip[0] >= 224 {
 			return true
 		}
 
@@ -1358,6 +1481,15 @@ address_policy_public_only :: proc(_: string, addresses: []trans.Endpoint, _: ra
 		first := u16(ip[0])
 
 		if first & 0xffc0 == 0xfe80 || first & 0xfe00 == 0xfc00 || first & 0xff00 == 0xff00 {
+			return true
+		}
+
+		if u16(ip[0]) == 0x0064 &&
+		   u16(ip[1]) == 0xff9b &&
+		   u16(ip[2]) == 0 &&
+		   u16(ip[3]) == 0 &&
+		   u16(ip[4]) == 0 &&
+		   u16(ip[5]) == 0 {
 			return true
 		}
 
@@ -1419,22 +1551,43 @@ connection_setup_deadline :: proc(config: Config, total: time.Time) -> time.Time
 	return time.time_add(now, budget)
 }
 
-bounded_socket :: proc(url: http.URL, config: Config, deadline: time.Time) -> (trans.TCP_Socket, HTTP_Error) {
-	endpoints, resolve_error := trans.resolve_endpoints_until(url.host, url.port, deadline, config.resolver)
+bounded_socket :: proc(
+	url: http.URL,
+	config: Config,
+	deadline: time.Time,
+) -> (
+	trans.TCP_Socket,
+	HTTP_Error,
+) {
+	endpoints, resolve_error := trans.resolve_endpoints_until(
+		url.host,
+		url.port,
+		deadline,
+		config.resolver,
+	)
 
 	if resolve_error != nil {
-		return 0, http_error_classify({kind = .Dial_Failed, network = resolve_error}, .DNS, .Not_Sent)
+		return 0, http_error_classify(
+			{kind = .Dial_Failed, network = resolve_error},
+			.DNS,
+			.Not_Sent,
+		)
 	}
 
 	// Dial this set only. A later lookup would reopen the DNS-rebinding window.
-	if rejected := address_policy_check(config, url.host, endpoints.items[:endpoints.count]); rejected.kind != .None {
+	if rejected := address_policy_check(config, url.host, endpoints.items[:endpoints.count]);
+	   rejected.kind != .None {
 		return 0, rejected
 	}
 
 	socket, connect_error := trans.dial_tcp_candidates_until(endpoints, deadline)
 
 	if connect_error != nil {
-		return 0, http_error_classify({kind = .Dial_Failed, network = connect_error}, .Connect, .Not_Sent)
+		return 0, http_error_classify(
+			{kind = .Dial_Failed, network = connect_error},
+			.Connect,
+			.Not_Sent,
+		)
 	}
 
 	return socket, {}
@@ -1514,7 +1667,13 @@ budget_retain_allocator :: proc(source: mem.Allocator) -> (charged.Binding, HTTP
 
 	return binding, budget_allocator_error(error)
 }
-budget_create_allocator :: proc(scope: resources.Scope, backing: mem.Allocator) -> (charged.Binding, HTTP_Error) {
+budget_create_allocator :: proc(
+	scope: resources.Scope,
+	backing: mem.Allocator,
+) -> (
+	charged.Binding,
+	HTTP_Error,
+) {
 	binding, error := charged.create(scope, {backing = backing})
 
 	return binding, budget_allocator_error(error)
@@ -1625,12 +1784,6 @@ http_error_classify :: proc(
 			result.phase = http_network_phase(result.network)
 		case .TLS_Failed:
 			result.phase = .TLS
-			#partial switch result.tls_dial.kind {
-			case .Invalid_Config, .Invalid_State:
-				result.phase = .Configuration
-			case .TCP_Dial_Failed:
-				result.phase = http_network_phase(result.tls_dial.network)
-			}
 		case .Address_Rejected:
 			result.phase = .Connect
 		case .Invalid_Status,
@@ -1648,45 +1801,28 @@ http_error_classify :: proc(
 			result.phase = .Protocol
 		}
 	}
-	// Record/authentication failures remain TLS failures; transport failures
-	// retain the read/write phase until a more specific timeout/cancel is known.
-	#partial switch result.tls_io.kind {
-	case .Handshake_Failed,
-	     .Unexpected_EOF,
-	     .Invalid_Record,
-	     .Encryption_Failed,
-	     .Decryption_Failed,
-	     .Unexpected_Content_Type,
-	     .Peer_Alert,
-	     .Interleaved_Record,
-	     .Record_Boundary_Violation,
-	     .Invalid_Post_Handshake,
-	     .Post_Handshake_Oversized:
+	// Record failures stay TLS. A transport cause keeps the read or write phase
+	// until a timeout or cancellation is known.
+	if protocol, ok := result.tls_error.(tls.Protocol_Error); ok && protocol != .None && protocol != .Close_Notify {
 		result.phase = .TLS
 	}
-	// TLS adapters retain their underlying timeout/cancellation diagnostics.
-	transport := result.transport
-	if result.tls_io.transport.kind != .None {
-		transport = result.tls_io.transport
-	}
-	for candidate in ([?]trans.Connection_Error {
-			result.tls_dial.handshake.client_hello.transport,
-			result.tls_dial.handshake.server_hello.record.transport,
-			result.tls_dial.handshake.record.transport,
-			result.tls_dial.handshake.transport,
-		}) {
-		if candidate.kind != .None {
-			transport = candidate
+	if general, ok := result.tls_error.(tls.General_Error); ok {
+		#partial switch general {
+		case .Invalid_Config, .Invalid_State, .Invalid_Trust_Roots:
+			if result.kind == .TLS_Failed {
+				result.phase = .Configuration
+			}
+		case .Cancelled:
+			result.phase = .Cancellation
 		}
 	}
-	if transport.kind == .Timeout {
-		result.phase = .Deadline
+	transport := result.transport
+	if carried := tls_network(result.tls_error); carried != nil {
+		transport = carried
 	}
-	if transport.kind == .Cancelled {
-		result.phase = .Cancellation
-	}
-	if result.tls_dial.handshake.kind == .Deadline_Failed {
-		result.phase = .Deadline
+	carried_phase := http_network_phase(transport)
+	if carried_phase == .Deadline || carried_phase == .Cancellation {
+		result.phase = carried_phase
 	}
 	result.write_effect = effect
 	if result.status == 0 {
@@ -1713,6 +1849,20 @@ http_network_phase :: proc(error: trans.Network_Error) -> HTTP_Phase {
 			return .Deadline
 		}
 		return .Connect
+	case trans.TCP_Recv_Error:
+		if cause == .Timeout {
+			return .Deadline
+		}
+		return .Read
+	case trans.TCP_Send_Error:
+		if cause == .Timeout {
+			return .Deadline
+		}
+		return .Write
+	case trans.Connection_Error:
+		if cause == .Cancelled {
+			return .Cancellation
+		}
 	case trans.Create_Socket_Error:
 		return .Connect
 	case trans.Parse_Endpoint_Error:

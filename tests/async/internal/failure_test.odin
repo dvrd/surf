@@ -4,7 +4,7 @@ import runtime_async "shared:async"
 import rt "base:runtime"
 import "core:bytes"
 import "core:mem"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:testing"
 import "core:time"
 

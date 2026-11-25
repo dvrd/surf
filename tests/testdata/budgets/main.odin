@@ -1,15 +1,15 @@
 package main
 
 import surf "shared:surf"
-import http "shared:http"
+import http "shared:async/http"
 import rt "base:runtime"
-import tls "core:crypto/tls"
+import tls "shared:async/tls"
 import "core:fmt"
 import "core:mem"
-import charged "core:mem/budget"
-import owned "core:mem/owned"
+import charged "shared:async/mem/budget"
+import owned "shared:async/mem/owned"
 import "core:os"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:sys/posix"
 import "core:time"
 

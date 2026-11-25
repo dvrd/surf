@@ -1,11 +1,12 @@
 package surf
 
-import http "shared:http"
-import h2 "shared:http/v2"
-import hpack "shared:http/v2/hpack"
-import tls "core:crypto/tls"
+import http "shared:async/http"
+import h2 "shared:async/http/v2"
+import hpack "shared:async/http/v2/hpack"
+import tls "shared:async/tls"
+import "core:net"
 import "base:intrinsics"
-import owned "core:mem/owned"
+import owned "shared:async/mem/owned"
 import "core:strings"
 import "core:time"
 
@@ -132,8 +133,8 @@ websocket_http2_open :: proc(
 		http_lane_close(client, lane)
 		return {kind = .Invalid_Config, phase = .Protocol, write_effect = .Not_Sent}
 	}
-	if de := tls.set_deadline(lane.tls, deadline); de.kind != .None {
-		return {kind = .IO_Failed, phase = .Deadline, write_effect = .Not_Sent, transport = de}
+	if de := tls.set_deadline(lane.tls, deadline); de != nil {
+		return {kind = .IO_Failed, phase = .Deadline, write_effect = .Not_Sent, tls_error = de, transport = tls_network(de)}
 	}
 	if !reused {
 		if e = h2_boot(lane, deadline, &client.cancel); e.kind != .None {
@@ -313,8 +314,8 @@ h2_tunnel_progress :: proc(stream: ^HTTP2_Tunnel, read: bool, force_read: bool =
 
 	http_arm_socket(stream._client, lane.tls.tcp.socket)
 
-	if de := tls.set_deadline(lane.tls, deadline); de.kind != .None {
-		return {kind = .IO_Failed, phase = .Deadline, write_effect = .Response_Received, transport = de}
+	if de := tls.set_deadline(lane.tls, deadline); de != nil {
+		return {kind = .IO_Failed, phase = .Deadline, write_effect = .Response_Received, tls_error = de, transport = tls_network(de)}
 	}
 
 	if h2_cancelled(&stream._client.cancel) {
@@ -560,22 +561,18 @@ h2_tunnel_reap :: proc(lane: ^HTTP_Lane) {
 }
 
 h2_tunnel_stream_error :: proc(error: HTTP_Error) -> WebSocket_Stream_Error {
-	if error.tls_io.kind != .None {
-		return {kind = .TLS_Failed, tls = error.tls_io}
+	if error.tls_error != nil {
+		return {kind = .TLS_Failed, tls = error.tls_error}
 	}
 
 	transport := error.transport
 
 	if error.kind == .Deadline_Failed {
-		transport = {
-			kind = .Timeout,
-		}
+		transport = net.TCP_Recv_Error.Timeout
 	}
 
 	if error.phase == .Cancellation {
-		transport = {
-			kind = .Cancelled,
-		}
+		transport = net.Connection_Error.Cancelled
 	}
 
 	return {kind = .TCP_Failed, transport = transport}

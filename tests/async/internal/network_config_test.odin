@@ -5,7 +5,7 @@ import "core:crypto/x509"
 import "core:fmt"
 import "core:mem"
 import "core:net"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:testing"
 import "core:time"
 
