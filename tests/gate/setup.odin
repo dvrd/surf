@@ -1,11 +1,10 @@
 // Owned stand-ins for the setup matrix. TLS 1.3 is tests/support/loopback. The
 // refused port is bound and not listening. Silent connections stay open
 // on their own threads so the accept loop can take the next attempt.
+
 package main
 
-import loopback "../../support/loopback"
-
-import "core:c"
+import "../support/loopback"
 import "core:fmt"
 import "core:net"
 import "core:os"
@@ -13,9 +12,6 @@ import "core:sync"
 import "core:sys/posix"
 import "core:thread"
 import "core:time"
-
-DIR_PERM :: os.Permissions{.Read_User, .Write_User, .Execute_User}
-FILE_PERM :: os.Permissions{.Read_User, .Write_User}
 
 Dns :: struct {
 	socket:   net.UDP_Socket,
@@ -28,9 +24,11 @@ Dns :: struct {
 
 handshake_mu: sync.Mutex
 
-main :: proc() {
+run_setup :: proc() {
+	gate_label = "setup"
+
 	_ = posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
-	compiler, shared, report_path, sanitizer := parse_args()
+	compiler, shared, report_path, sanitizer := setup_parse_args()
 	root := fmt.aprintf("/tmp/okami-setup-%d", posix.getpid())
 	defer delete(root)
 	if err := os.make_directory_all(root, DIR_PERM); err != nil && err != .Exist {
@@ -47,29 +45,29 @@ main :: proc() {
 	defer loopback.identity_clear()
 	binary := join(root, "checks")
 	defer delete(binary)
-	if !build(compiler, shared, binary, sanitizer) {
+	if !setup_build(compiler, shared, binary, sanitizer) {
 		fail("build")
 	}
 
 	dns := start_dns()
-	run_mode(binary, "dns", port_of(dns.socket), cert, "")
-	run_mode(binary, "surf-dns", port_of(dns.socket), cert, "")
+	run_mode(binary, "dns", setup_port_of(dns.socket), cert, "")
+	run_mode(binary, "surf-dns", setup_port_of(dns.socket), cert, "")
 	if dns_count(dns) != 16 {
 		fail(fmt.tprintf("dns requests %d", dns_count(dns)))
 	}
 	set_answer(dns, true, 0)
-	run_mode(binary, "resolve", port_of(dns.socket), cert, "")
+	run_mode(binary, "resolve", setup_port_of(dns.socket), cert, "")
 	if dns_count(dns) != 24 {
 		fail(fmt.tprintf("resolve requests %d", dns_count(dns)))
 	}
-	run_mode(binary, "dns-tiny", port_of(dns.socket), cert, "")
+	run_mode(binary, "dns-tiny", setup_port_of(dns.socket), cert, "")
 	set_answer(dns, true, 25 * time.Millisecond)
 	silent := listen_tcp(0)
 	silent_thread := thread.create_and_start_with_poly_data(silent, serve_silent)
 	if silent_thread == nil {
 		fail("thread")
 	}
-	run_mode(binary, "tls-dns", port_of(silent), cert, fmt.tprintf("%d", port_of(dns.socket)))
+	run_mode(binary, "tls-dns", setup_port_of(silent), cert, fmt.tprintf("%d", setup_port_of(dns.socket)))
 	stop_tcp(silent, silent_thread)
 	stop_dns(dns)
 
@@ -78,7 +76,7 @@ main :: proc() {
 	if send_thread == nil {
 		fail("thread")
 	}
-	run_mode(binary, "connect", port_of(send_listener), cert, "")
+	run_mode(binary, "connect", setup_port_of(send_listener), cert, "")
 	stop_tcp(send_listener, send_thread)
 
 	refused := reserve_refused()
@@ -92,7 +90,7 @@ main :: proc() {
 	}
 	held_modes := [?]string{"tls", "tls-setup", "tls-handshake"}
 	for mode in held_modes {
-		run_mode(binary, mode, port_of(held), cert, "")
+		run_mode(binary, mode, setup_port_of(held), cert, "")
 	}
 	stop_tcp(held, held_thread)
 
@@ -103,7 +101,7 @@ main :: proc() {
 	}
 	secure_modes := [?]string{"tls-finished", "tls-clear", "tls-finished-configured", "tls-clear-configured"}
 	for mode in secure_modes {
-		run_mode(binary, mode, port_of(secure), cert, "")
+		run_mode(binary, mode, setup_port_of(secure), cert, "")
 	}
 	stop_tcp(secure, secure_thread)
 
@@ -320,36 +318,10 @@ stop_tcp :: proc(listener: net.TCP_Socket, worker: ^thread.Thread) {
 	}
 }
 
-reserve_refused :: proc() -> posix.FD {
-	fd := posix.socket(.INET, .STREAM)
-	if fd < 0 {
-		fail("reserve")
-	}
-	addr: posix.sockaddr_in
-	addr.sin_len = c.uint8_t(size_of(addr))
-	addr.sin_family = .INET
-	addr.sin_port = 0
-	addr.sin_addr.s_addr = 0x7f000001
-	if posix.bind(fd, (^posix.sockaddr)(&addr), posix.socklen_t(size_of(addr))) != .OK {
-		posix.close(fd)
-		fail("reserve bind")
-	}
-	return fd
-}
-
-refused_port_of :: proc(fd: posix.FD) -> int {
-	addr: posix.sockaddr_in
-	n := posix.socklen_t(size_of(addr))
-	if posix.getsockname(fd, (^posix.sockaddr)(&addr), &n) != .OK {
-		fail("reserve name")
-	}
-	return int(addr.sin_port)
-}
-
 saturate_backlog :: proc(binary, cert: string) -> bool {
 	listener := listen_tcp(1)
 	defer net.close(listener)
-	endpoint := port_of(listener)
+	endpoint := setup_port_of(listener)
 	held: [32]net.TCP_Socket
 	count := 0
 	full := false
@@ -396,7 +368,7 @@ run_mode :: proc(binary, mode: string, port: int, cert, extra: string) {
 	}
 }
 
-build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
+setup_build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 	out_flag := fmt.aprintf("-out:%s", binary)
 	defer delete(out_flag)
 	collection := fmt.aprintf("-collection:shared=%s", shared)
@@ -415,7 +387,7 @@ build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 	return wait_error == nil && state.exit_code == 0
 }
 
-port_of :: proc(socket: net.Any_Socket) -> int {
+setup_port_of :: proc(socket: net.Any_Socket) -> int {
 	endpoint, err := net.bound_endpoint(socket)
 	if err != nil {
 		fail("bound")
@@ -423,11 +395,7 @@ port_of :: proc(socket: net.Any_Socket) -> int {
 	return int(endpoint.port)
 }
 
-join :: proc(dir, name: string) -> string {
-	return fmt.aprintf("%s/%s", dir, name)
-}
-
-parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
+setup_parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 	sanitizer = "address"
 	for i in 1 ..< len(os.args) {
 		arg := os.args[i]
@@ -451,8 +419,3 @@ parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 	return
 }
 
-fail :: proc(reason: string) {
-	fmt.eprintf("setup: %s\n", reason)
-	_ = os.flush(os.stderr)
-	os.exit(1)
-}

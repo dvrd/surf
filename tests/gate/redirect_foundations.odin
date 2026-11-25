@@ -1,9 +1,9 @@
 // Name-filtered private redirect tests. The names are read from the redirect
 // unit file, then task test runs that list once.
+
 package main
 
-import support "../support"
-
+import "support"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -12,7 +12,9 @@ SOURCES :: [?]string{
 	"tests/unit/async/redirect_test.odin",
 }
 
-main :: proc() {
+run_redirect_foundations :: proc() {
+	gate_label = "redirect_foundations"
+
 	g := support.begin("redirect_foundations101")
 	defer support.end(&g)
 	names := make([dynamic]string)

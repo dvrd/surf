@@ -1,16 +1,17 @@
 // Public Client prestart consumer. The fixture prints one marker line.
+
 package main
 
-import support "../support"
-
+import "support"
 import "core:fmt"
-import "core:os"
 import "core:strings"
 import "core:time"
 
 MARKER :: "CONSUMER101 public_client_prestart=true unchanged_facade=true http1=true heap_zero=true"
 
-main :: proc() {
+run_consumer :: proc() {
+	gate_label = "consumer"
+
 	g := support.begin("consumer101")
 	defer support.end(&g)
 	binary := support.path(&g, "fixture")

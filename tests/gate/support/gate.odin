@@ -1,5 +1,5 @@
 // Shared process, build, and JSON helpers for the acceptance gates.
-// Each gate stays package main and imports this directory.
+// The gates are one package main in the parent directory.
 package support
 
 import "core:fmt"

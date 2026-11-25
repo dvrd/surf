@@ -1,16 +1,16 @@
 // Held-phase cancel matrix. The peer is tests/support/cancel/peer.
 // Cases live in tests/support/cancel/cases.json.
+
 package main
 
-import support "../support"
-
+import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
 
-Case :: struct {
+cancel_Case :: struct {
 	name:               string,
 	phase:              string,
 	transport:          string,
@@ -21,7 +21,9 @@ Case :: struct {
 	expected_runtime:   string,
 }
 
-main :: proc() {
+run_cancel :: proc() {
+	gate_label = "cancel"
+
 	g := support.begin("cancel101")
 	defer support.end(&g)
 	cases, loaded := load_cases()
@@ -40,7 +42,7 @@ main :: proc() {
 		support.fail(&g, "fixture build")
 	}
 	for item in cases {
-		if reason := cell(&g, peer_bin, fixture_bin, item); reason != "" {
+		if reason := cancel_cell(&g, peer_bin, fixture_bin, item); reason != "" {
 			support.fail(&g, reason)
 		}
 	}
@@ -50,7 +52,7 @@ main :: proc() {
 	fmt.println(len(cases), "cancel cells passed")
 }
 
-cell :: proc(g: ^support.Gate, peer_bin, fixture_bin: string, item: Case) -> string {
+cancel_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin: string, item: cancel_Case) -> string {
 	support.note(g, item.name)
 	dir := support.path(g, item.name)
 	defer delete(dir)
@@ -97,10 +99,10 @@ cell :: proc(g: ^support.Gate, peer_bin, fixture_bin: string, item: Case) -> str
 		return "peer json"
 	}
 	defer json.destroy_value(oracle)
-	return verify(item, native, oracle)
+	return cancel_verify(item, native, oracle)
 }
 
-verify :: proc(item: Case, native, peer: json.Value) -> string {
+cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	if item.layer == "runtime_connect_slot" {
 		return verify_raw(item, native, peer)
 	}
@@ -287,7 +289,7 @@ verify :: proc(item: Case, native, peer: json.Value) -> string {
 	return ""
 }
 
-verify_raw :: proc(item: Case, native, peer: json.Value) -> string {
+verify_raw :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	encrypted := item.transport == "tls"
 	if !support.eq_string(native, "layer", "runtime_connect_slot") || !support.eq_string(native, "mode", item.action) {
 		return "raw layer"
@@ -376,7 +378,7 @@ verify_raw :: proc(item: Case, native, peer: json.Value) -> string {
 	return ""
 }
 
-load_cases :: proc() -> (cases: [dynamic]Case, ok: bool) {
+load_cases :: proc() -> (cases: [dynamic]cancel_Case, ok: bool) {
 	data, read_err := os.read_entire_file("tests/support/cancel/cases.json", context.allocator)
 	if read_err != nil {
 		return
@@ -394,11 +396,11 @@ load_cases :: proc() -> (cases: [dynamic]Case, ok: bool) {
 	if !items_ok || len(items) != 80 {
 		return
 	}
-	cases = make([dynamic]Case, 0, 80)
+	cases = make([dynamic]cancel_Case, 0, 80)
 	public := 0
 	raw := 0
 	for item in items {
-		row := Case{}
+		row := cancel_Case{}
 		cloned := false
 		row.name, cloned = clone_field(item, "name")
 		if !cloned {
@@ -444,7 +446,7 @@ load_cases :: proc() -> (cases: [dynamic]Case, ok: bool) {
 	return cases, true
 }
 
-covers :: proc(cases: []Case) -> bool {
+covers :: proc(cases: []cancel_Case) -> bool {
 	phases := [?]string{"dns", "tls", "write", "header", "body", "redirect", "queued"}
 	actions := [?]string{"cancel", "total", "lifetime", "close", "shutdown"}
 	raw_actions := [?]string{"release_success", "owner_cancel", "close_connect", "runtime_shutdown", "later_finish", "earlier_finish"}
@@ -482,7 +484,7 @@ covers :: proc(cases: []Case) -> bool {
 	return seen == len(cases)
 }
 
-has_case :: proc(cases: []Case, name: string) -> bool {
+has_case :: proc(cases: []cancel_Case, name: string) -> bool {
 	for item in cases {
 		if item.name == name {
 			return true
@@ -499,7 +501,7 @@ clone_field :: proc(value: json.Value, key: string) -> (string, bool) {
 	return strings.clone(text), true
 }
 
-free_cases :: proc(cases: ^[dynamic]Case) {
+free_cases :: proc(cases: ^[dynamic]cancel_Case) {
 	for item in cases {
 		delete(item.name)
 		delete(item.phase)

@@ -1,10 +1,10 @@
 // Actor and runtime fixture. The peer ready line is JSON with tcp and dns
 // endpoints; the summary is a later object on the same stdout.
 // The peer is tests/support/session/peer.
+
 package main
 
-import support "../support"
-
+import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
@@ -15,7 +15,9 @@ MODES :: [?]string{
 	"cancel-read", "cancel-mailbox", "uncertain", "one-worker", "lifetime", "reuse-waiter",
 }
 
-main :: proc() {
+run_session :: proc() {
+	gate_label = "session"
+
 	g := support.begin("session_actor101")
 	defer support.end(&g)
 	peer_bin := support.path(&g, "peer")
@@ -31,7 +33,7 @@ main :: proc() {
 	cells := 0
 	for transport in ([?]string{"tcp", "tls"}) {
 		for mode in MODES {
-			if reason := cell(&g, peer_bin, fixture_bin, transport, mode); reason != "" {
+			if reason := session_cell(&g, peer_bin, fixture_bin, transport, mode); reason != "" {
 				support.fail(&g, reason)
 			}
 			cells += 1
@@ -46,7 +48,7 @@ main :: proc() {
 	fmt.println(cells, "session actor cells passed")
 }
 
-cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string) -> string {
+session_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string) -> string {
 	support.note(g, fmt.tprintf("%s %s", transport, mode))
 	dir := support.path(g, fmt.tprintf("%s-%s", transport, mode))
 	defer delete(dir)
@@ -114,10 +116,10 @@ cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string) -
 	if !oracle_ok {
 		return "peer summary"
 	}
-	return verify(mode, transport == "tls", native[:], oracle)
+	return session_verify(mode, transport == "tls", native[:], oracle)
 }
 
-verify :: proc(mode: string, encrypted: bool, native: []json.Value, peer: json.Value) -> string {
+session_verify :: proc(mode: string, encrypted: bool, native: []json.Value, peer: json.Value) -> string {
 	summary, summary_ok := support.find_event(native, "summary")
 	cleanup, cleanup_ok := support.find_event(native, "cleanup")
 	if !summary_ok || !cleanup_ok || !exact_cleanup(cleanup) {
@@ -462,17 +464,3 @@ response_order :: proc(events: json.Array) -> bool {
 	return n == len(want)
 }
 
-rows_or_empty :: proc(value: json.Value, key: string) -> (items: json.Array, ok: bool) {
-	field, exists := support.get(value, key)
-	if !exists {
-		return nil, true
-	}
-	if _, is_null := field.(json.Null); is_null {
-		return nil, true
-	}
-	array, is_array := field.(json.Array)
-	if !is_array {
-		return nil, false
-	}
-	return array, true
-}

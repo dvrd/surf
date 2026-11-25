@@ -1,15 +1,15 @@
 // Public Client pool, framing, and trust matrix.
 // The peer is tests/support/pool/peer.
+
 package main
 
-import support "../support"
-
+import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:time"
 
-TCP_MODES :: [?]string{
+pool_TCP_MODES :: [?]string{
 	"framing", "framing-fragmented", "host-alias", "ports", "clients",
 	"idle", "maxage", "stale", "partial", "separate", "peer-close",
 }
@@ -21,7 +21,9 @@ FRAMING_PATHS :: [?]string{
 	"/http10-close", "/connection-close", "/eof", "/truncated", "/malformed", "/badchunk", "/101", "/surplus", "/last",
 }
 
-main :: proc() {
+run_pool :: proc() {
+	gate_label = "pool"
+
 	g := support.begin("pool101")
 	defer support.end(&g)
 	peer_bin := support.path(&g, "peer")
@@ -36,8 +38,8 @@ main :: proc() {
 	}
 	cells := 0
 	for transport in ([?]string{"tcp", "tls"}) {
-		for mode in TCP_MODES {
-			if reason := cell(&g, peer_bin, fixture_bin, transport, mode); reason != "" {
+		for mode in pool_TCP_MODES {
+			if reason := pool_cell(&g, peer_bin, fixture_bin, transport, mode); reason != "" {
 				support.fail(&g, reason)
 			}
 			cells += 1
@@ -46,7 +48,7 @@ main :: proc() {
 			continue
 		}
 		for mode in TLS_MODES {
-			if reason := cell(&g, peer_bin, fixture_bin, transport, mode); reason != "" {
+			if reason := pool_cell(&g, peer_bin, fixture_bin, transport, mode); reason != "" {
 				support.fail(&g, reason)
 			}
 			cells += 1
@@ -58,7 +60,7 @@ main :: proc() {
 	fmt.println(cells, "pool cells passed")
 }
 
-cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string) -> string {
+pool_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string) -> string {
 	support.note(g, fmt.tprintf("%s %s", transport, mode))
 	dir := support.path(g, fmt.tprintf("%s-%s", transport, mode))
 	defer delete(dir)
@@ -105,10 +107,10 @@ cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string) -
 		return "peer json"
 	}
 	defer json.destroy_value(oracle)
-	return verify(mode, transport == "tls", native, oracle)
+	return pool_verify(mode, transport == "tls", native, oracle)
 }
 
-verify :: proc(mode: string, encrypted: bool, native, peer: json.Value) -> string {
+pool_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value) -> string {
 	if !support.is_true(native, "heap_zero") || !support.is_true(native, "scope_zero") || !support.is_true(native, "fd_zero") {
 		return "cleanup"
 	}
@@ -260,9 +262,3 @@ same_host :: proc(events: json.Array, a, b: int) -> bool {
 	return left_ok && right_ok && left == right
 }
 
-hostname :: proc(host: string) -> string {
-	if cut := strings.index(host, ":"); cut >= 0 {
-		return host[:cut]
-	}
-	return host
-}

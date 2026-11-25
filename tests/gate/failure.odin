@@ -1,25 +1,27 @@
 // Public submit and redirect allocation failures. The cell count comes from
 // the baseline allocation census, not a fixed native total.
 // The peer is tests/support/failure/peer.
+
 package main
 
-import support "../support"
-
+import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:time"
 
-UNIT_NAMES :: [?]string{
+failure_UNIT_NAMES :: [?]string{
 	"failure32_public_submit_grants_preserve_full_caller_inputs_and_rollback",
 	"failure32_closed_scope_rejects_before_new_allocation_and_refunds_lease",
 	"failure32_allocation_callbacks_use_public_close_stats_cancel_and_fresh_clock",
 }
 
-main :: proc() {
+run_failure :: proc() {
+	gate_label = "failure"
+
 	g := support.begin("failure101")
 	defer support.end(&g)
-	units := UNIT_NAMES
+	units := failure_UNIT_NAMES
 	if !support.task_test(&g, "async", units[:], 3) {
 		support.fail(&g, "units")
 	}
@@ -35,7 +37,7 @@ main :: proc() {
 	}
 	calls: int
 	reason: string
-	calls, reason = cell(&g, peer_bin, fixture_bin, 0, 0)
+	calls, reason = failure_cell(&g, peer_bin, fixture_bin, 0, 0)
 	if reason != "" {
 		support.fail(&g, reason)
 	}
@@ -45,7 +47,7 @@ main :: proc() {
 	cells := 1
 	for point in 1 ..= calls {
 		for mode in 1 ..= 6 {
-			_, step := cell(&g, peer_bin, fixture_bin, point, mode)
+			_, step := failure_cell(&g, peer_bin, fixture_bin, point, mode)
 			if step != "" {
 				support.fail(&g, step)
 			}
@@ -53,7 +55,7 @@ main :: proc() {
 		}
 	}
 	for mode in 7 ..= 9 {
-		_, step := cell(&g, peer_bin, fixture_bin, 4, mode)
+		_, step := failure_cell(&g, peer_bin, fixture_bin, 4, mode)
 		if step != "" {
 			support.fail(&g, step)
 		}
@@ -65,7 +67,7 @@ main :: proc() {
 	fmt.println(cells, "failure cells passed")
 }
 
-cell :: proc(g: ^support.Gate, peer_bin, fixture_bin: string, point, mode: int) -> (calls: int, reason: string) {
+failure_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin: string, point, mode: int) -> (calls: int, reason: string) {
 	support.note(g, fmt.tprintf("p%d m%d", point, mode))
 	dir := support.path(g, fmt.tprintf("p%d-m%d", point, mode))
 	defer delete(dir)
@@ -113,10 +115,10 @@ cell :: proc(g: ^support.Gate, peer_bin, fixture_bin: string, point, mode: int) 
 		return 0, "peer json"
 	}
 	defer json.destroy_value(oracle)
-	return verify(mode, native, oracle)
+	return failure_verify(mode, native, oracle)
 }
 
-verify :: proc(mode: int, native, peer: json.Value) -> (calls: int, reason: string) {
+failure_verify :: proc(mode: int, native, peer: json.Value) -> (calls: int, reason: string) {
 	if !support.is_true(native, "header_freed") || !support.is_true(native, "heap_zero") || !support.is_true(native, "scope_zero") || !support.is_true(native, "fd_zero") {
 		return 0, "cleanup"
 	}

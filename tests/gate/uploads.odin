@@ -1,10 +1,10 @@
 // Owned HTTP/1 peer for the upload matrix. TLS 1.3 is tests/support/loopback.
 // Bodies are hashed as they arrive. A stall records the declared length
 // and then stops reading.
+
 package main
 
-import loopback "../../support/loopback"
-
+import "../support/loopback"
 import "core:crypto/hash"
 import "core:fmt"
 import "core:net"
@@ -16,10 +16,7 @@ import "core:sys/posix"
 import "core:thread"
 import "core:time"
 
-DIR_PERM :: os.Permissions{.Read_User, .Write_User, .Execute_User}
-FILE_PERM :: os.Permissions{.Read_User, .Write_User}
-
-Record :: struct {
+uploads_Record :: struct {
 	method:    string,
 	path:      string,
 	declared:  int,
@@ -28,15 +25,15 @@ Record :: struct {
 	stalled:   bool,
 }
 
-Peer :: struct {
+uploads_Peer :: struct {
 	listener:  net.TCP_Socket,
 	encrypted: bool,
 	mu:        sync.Mutex,
-	records:   [dynamic]Record,
+	records:   [dynamic]uploads_Record,
 }
 
-Job :: struct {
-	peer: ^Peer,
+uploads_Job :: struct {
+	peer: ^uploads_Peer,
 	fd:   net.TCP_Socket,
 }
 
@@ -46,9 +43,11 @@ Expect :: struct {
 	declared: int,
 }
 
-main :: proc() {
+run_uploads :: proc() {
+	gate_label = "uploads"
+
 	_ = posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
-	compiler, shared, report_path, sanitizer := parse_args()
+	compiler, shared, report_path, sanitizer := uploads_parse_args()
 	root := fmt.aprintf("/tmp/okami-uploads-%d", posix.getpid())
 	defer delete(root)
 	if err := os.make_directory_all(root, DIR_PERM); err != nil && err != .Exist {
@@ -67,18 +66,18 @@ main :: proc() {
 	short_path := join(root, "short.bin")
 	defer delete(file_path)
 	defer delete(short_path)
-	write_payload(file_path, 65 * 16, true)
+	uploads_write_payload(file_path, 65 * 16, true)
 	if os.write_entire_file(short_path, []u8{'Z', 'Z'}, FILE_PERM) != nil {
 		fail("short")
 	}
-	plain := start_peer(false)
-	secure := start_peer(true)
+	plain := uploads_start_peer(false)
+	secure := uploads_start_peer(true)
 	binary := join(root, "uploads")
 	defer delete(binary)
-	if !build(compiler, shared, binary, sanitizer) {
+	if !uploads_build(compiler, shared, binary, sanitizer) {
 		fail("build")
 	}
-	env := child_env(plain, secure, file_path, short_path, cert)
+	env := uploads_child_env(plain, secure, file_path, short_path, cert)
 	defer {
 		for item in env {
 			delete(item)
@@ -88,9 +87,9 @@ main :: proc() {
 	if !run_fixture(binary, env) {
 		fail("fixture")
 	}
-	check(plain, secure)
-	stop_peer(plain)
-	stop_peer(secure)
+	uploads_check(plain, secure)
+	uploads_stop_peer(plain)
+	uploads_stop_peer(secure)
 	text := "{{\"passed\":true,\"scenarios\":10}}\n"
 	if os.write_entire_file(report_path, transmute([]u8)text, FILE_PERM) != nil {
 		fail("report")
@@ -98,15 +97,15 @@ main :: proc() {
 	fmt.println("Methods, declared lengths, SHA-256 bodies, prefix cursor and no redirect replay verified.")
 }
 
-start_peer :: proc(encrypted: bool) -> ^Peer {
+uploads_start_peer :: proc(encrypted: bool) -> ^uploads_Peer {
 	socket, err := net.listen_tcp({address = net.IP4_Loopback, port = 0})
 	if err != nil {
 		fail("listen")
 	}
-	peer := new(Peer)
+	peer := new(uploads_Peer)
 	peer.listener = socket
 	peer.encrypted = encrypted
-	worker := thread.create_and_start_with_poly_data(peer, serve)
+	worker := thread.create_and_start_with_poly_data(peer, uploads_serve)
 	if worker == nil {
 		fail("thread")
 	}
@@ -118,19 +117,16 @@ start_peer :: proc(encrypted: bool) -> ^Peer {
 	return peer
 }
 
-plain_thread: ^thread.Thread
-secure_thread: ^thread.Thread
-
-serve :: proc(peer: ^Peer) {
+uploads_serve :: proc(peer: ^uploads_Peer) {
 	for {
 		fd, _, err := net.accept_tcp(peer.listener)
 		if err != nil {
 			return
 		}
-		job := new(Job)
+		job := new(uploads_Job)
 		job.peer = peer
 		job.fd = fd
-		worker := thread.create_and_start_with_poly_data(job, handle, self_cleanup = true)
+		worker := thread.create_and_start_with_poly_data(job, uploads_handle, self_cleanup = true)
 		if worker == nil {
 			net.close(fd)
 			free(job)
@@ -138,7 +134,7 @@ serve :: proc(peer: ^Peer) {
 	}
 }
 
-handle :: proc(job: ^Job) {
+uploads_handle :: proc(job: ^uploads_Job) {
 	peer := job.peer
 	fd := job.fd
 	free(job)
@@ -178,7 +174,7 @@ handle :: proc(job: ^Job) {
 	body_at := split + 4
 	if path == "/stall" {
 		_ = net.set_option(fd, .Receive_Buffer_Size, 4096)
-		note(peer, method, path, length, body_at, n, {}, true)
+		uploads_note(peer, method, path, length, body_at, n, {}, true)
 		time.sleep(800 * time.Millisecond)
 		return
 	}
@@ -206,7 +202,7 @@ handle :: proc(job: ^Job) {
 	}
 	sum: [32]u8
 	hash.final(&digest, sum[:])
-	note(peer, method, path, length, consumed, consumed, sum, false)
+	uploads_note(peer, method, path, length, consumed, consumed, sum, false)
 	if consumed != length {
 		return
 	}
@@ -221,9 +217,9 @@ handle :: proc(job: ^Job) {
 	_ = write_all(fd, &conn, peer.encrypted, text)
 }
 
-note :: proc(peer: ^Peer, method, path: string, declared, consumed, _: int, digest: [32]u8, stalled: bool) {
+uploads_note :: proc(peer: ^uploads_Peer, method, path: string, declared, consumed, _: int, digest: [32]u8, stalled: bool) {
 	sync.lock(&peer.mu)
-	append(&peer.records, Record{
+	append(&peer.records, uploads_Record{
 		method = strings.clone(method),
 		path = strings.clone(path),
 		declared = declared,
@@ -283,7 +279,7 @@ request_of :: proc(head: string) -> (method, path: string, length: int, ok: bool
 	return method, path, length, true
 }
 
-check :: proc(plain, secure: ^Peer) {
+uploads_check :: proc(plain, secure: ^uploads_Peer) {
 	expected := [?]Expect{
 		{"/put", "PUT", 65 * 1024 * 1024},
 		{"/post", "POST", 17},
@@ -296,7 +292,7 @@ check :: proc(plain, secure: ^Peer) {
 		{"/tls-post", "POST", 17},
 		{"/tls-delete", "DELETE", 9},
 	}
-	all := make([dynamic]Record)
+	all := make([dynamic]uploads_Record)
 	defer delete(all)
 	sync.lock(&plain.mu)
 	append(&all, ..plain.records[:])
@@ -349,7 +345,7 @@ digest_of :: proc(n: int) -> [32]u8 {
 	return out
 }
 
-write_payload :: proc(path: string, chunks: int, extra: bool) {
+uploads_write_payload :: proc(path: string, chunks: int, extra: bool) {
 	file, err := os.open(path, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, FILE_PERM)
 	if err != nil {
 		fail("payload")
@@ -373,7 +369,7 @@ write_payload :: proc(path: string, chunks: int, extra: bool) {
 	}
 }
 
-child_env :: proc(plain, secure: ^Peer, file_path, short_path, cert: string) -> [dynamic]string {
+uploads_child_env :: proc(plain, secure: ^uploads_Peer, file_path, short_path, cert: string) -> [dynamic]string {
 	base, err := os.environ(context.allocator)
 	if err != nil {
 		fail("environ")
@@ -403,7 +399,7 @@ run_fixture :: proc(binary: string, env: [dynamic]string) -> bool {
 	return wait_error == nil && state.exit_code == 0
 }
 
-build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
+uploads_build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 	out_flag := fmt.aprintf("-out:%s", binary)
 	defer delete(out_flag)
 	collection := fmt.aprintf("-collection:shared=%s", shared)
@@ -422,7 +418,7 @@ build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 	return wait_error == nil && state.exit_code == 0
 }
 
-stop_peer :: proc(peer: ^Peer) {
+uploads_stop_peer :: proc(peer: ^uploads_Peer) {
 	net.close(peer.listener)
 	worker := secure_thread if peer.encrypted else plain_thread
 	if worker != nil {
@@ -440,27 +436,6 @@ stop_peer :: proc(peer: ^Peer) {
 	}
 	delete(peer.records)
 	free(peer)
-}
-
-read_some :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, dst: []u8) -> (int, net.TCP_Recv_Error) {
-	if encrypted {
-		n, status := loopback.tls_read(conn, dst)
-		if status == .Ok {
-			return n, nil
-		}
-		if status == .Timeout {
-			return 0, .Timeout
-		}
-		return 0, .Connection_Closed
-	}
-	return net.recv_tcp(fd, dst)
-}
-
-write_all :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, text: string) -> bool {
-	if encrypted {
-		return loopback.tls_write(conn, transmute([]u8)text)
-	}
-	return loopback.write_full(fd, transmute([]u8)text)
 }
 
 index_of :: proc(buf: []u8, needle: string) -> int {
@@ -482,19 +457,7 @@ index_of :: proc(buf: []u8, needle: string) -> int {
 	return -1
 }
 
-port_of :: proc(socket: net.TCP_Socket) -> int {
-	endpoint, err := net.bound_endpoint(socket)
-	if err != nil {
-		fail("bound")
-	}
-	return int(endpoint.port)
-}
-
-join :: proc(dir, name: string) -> string {
-	return fmt.aprintf("%s/%s", dir, name)
-}
-
-parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
+uploads_parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 	for i in 1 ..< len(os.args) {
 		arg := os.args[i]
 		if i + 1 >= len(os.args) {
@@ -517,8 +480,3 @@ parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 	return
 }
 
-fail :: proc(reason: string) {
-	fmt.eprintf("uploads: %s\n", reason)
-	_ = os.flush(os.stderr)
-	os.exit(1)
-}

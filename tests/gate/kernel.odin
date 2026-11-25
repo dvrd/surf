@@ -1,13 +1,15 @@
 // Kernel and memory codec fixture. One JSON line, no socket and no unit census.
+
 package main
 
-import support "../support"
-
+import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:time"
 
-main :: proc() {
+run_kernel :: proc() {
+	gate_label = "kernel"
+
 	g := support.begin("kernel101")
 	defer support.end(&g)
 	binary := support.path(&g, "fixture")

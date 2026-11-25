@@ -1,10 +1,10 @@
 // Buffered adapter against an in-process HTTP/1 peer. TLS is 1.3 only;
 // tests/support/loopback does not serve TLS 1.2, so that legacy cell is omitted.
+
 package main
 
-import loopback "../../support/loopback"
-import support "../support"
-
+import "../support/loopback"
+import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:net"
@@ -15,7 +15,7 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
-Wire :: enum {
+compatibility_Wire :: enum {
 	Required,
 	Forbidden,
 	Optional,
@@ -40,10 +40,10 @@ Request :: struct {
 	ca:        string,
 	custom_ca: bool,
 	headers:   []string,
-	wire:      Wire,
+	wire:      compatibility_Wire,
 }
 
-Record :: struct {
+compatibility_Record :: struct {
 	method:  string,
 	target:  string,
 	secure:  bool,
@@ -60,24 +60,12 @@ Hit :: struct {
 	body:    [dynamic]u8,
 }
 
-Job :: struct {
-	listener:  net.TCP_Socket,
-	encrypted: bool,
-}
-
-Conn :: struct {
-	fd:        net.TCP_Socket,
-	encrypted: bool,
-}
-
 PROXY_KEYS :: [?]string{
 	"http_proxy", "https_proxy", "ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "no_proxy",
 }
 
 plain_job: Job
 secure_job: Job
-plain_thread: ^thread.Thread
-secure_thread: ^thread.Thread
 listeners_open: bool
 plain_port: int
 secure_port: int
@@ -87,9 +75,11 @@ handlers: int
 cells: int
 server_error: string
 state_mu: sync.Mutex
-records: [dynamic]Record
+records: [dynamic]compatibility_Record
 
-main :: proc() {
+run_compatibility :: proc() {
+	gate_label = "compatibility"
+
 	g := support.begin("compatibility")
 	defer support.end(&g)
 	defer free_records()
@@ -515,14 +505,14 @@ start_servers :: proc() -> bool {
 	plain_job = Job{listener = plain}
 	secure_job = Job{listener = secure, encrypted = true}
 	listeners_open = true
-	plain_port = port_of(plain)
-	secure_port = port_of(secure)
+	plain_port = compatibility_port_of(plain)
+	secure_port = compatibility_port_of(secure)
 	if plain_port <= 0 || secure_port <= 0 {
 		stop_servers()
 		return false
 	}
-	plain_thread = thread.create_and_start_with_poly_data(&plain_job, serve)
-	secure_thread = thread.create_and_start_with_poly_data(&secure_job, serve)
+	plain_thread = thread.create_and_start_with_poly_data(&plain_job, compatibility_serve)
+	secure_thread = thread.create_and_start_with_poly_data(&secure_job, compatibility_serve)
 	if plain_thread == nil || secure_thread == nil {
 		stop_servers()
 		return false
@@ -558,7 +548,7 @@ stop_servers :: proc() {
 	}
 }
 
-serve :: proc(job: ^Job) {
+compatibility_serve :: proc(job: ^Job) {
 	for {
 		fd, _, err := net.accept_tcp(job.listener)
 		if err != nil {
@@ -570,7 +560,7 @@ serve :: proc(job: ^Job) {
 		sync.lock(&state_mu)
 		handlers += 1
 		sync.unlock(&state_mu)
-		if thread.create_and_start_with_poly_data(box, handle_conn, self_cleanup = true) == nil {
+		if thread.create_and_start_with_poly_data(box, compatibility_handle_conn, self_cleanup = true) == nil {
 			free(box)
 			net.close(fd)
 			finish_handler()
@@ -578,11 +568,11 @@ serve :: proc(job: ^Job) {
 	}
 }
 
-handle_conn :: proc(box: ^Conn) {
+compatibility_handle_conn :: proc(box: ^Conn) {
 	fd := box.fd
 	encrypted := box.encrypted
 	free(box)
-	handle(fd, encrypted)
+	compatibility_handle(fd, encrypted)
 	finish_handler()
 }
 
@@ -592,7 +582,7 @@ finish_handler :: proc() {
 	sync.unlock(&state_mu)
 }
 
-handle :: proc(fd: net.TCP_Socket, encrypted: bool) {
+compatibility_handle :: proc(fd: net.TCP_Socket, encrypted: bool) {
 	defer net.close(fd)
 	_ = net.set_option(fd, .TCP_Nodelay, true)
 	_ = net.set_option(fd, .Receive_Timeout, 3 * time.Second)
@@ -607,7 +597,7 @@ handle :: proc(fd: net.TCP_Socket, encrypted: bool) {
 	buf := make([]u8, 131072)
 	defer delete(buf)
 	n := 0
-	for !bytes_contains(buf[:n], "\r\n\r\n") {
+	for !compatibility_bytes_contains(buf[:n], "\r\n\r\n") {
 		if n == len(buf) {
 			note_error("request cap")
 			return
@@ -618,7 +608,7 @@ handle :: proc(fd: net.TCP_Socket, encrypted: bool) {
 		}
 		n += got
 	}
-	head_at := bytes_index(buf[:n], "\r\n\r\n")
+	head_at := compatibility_bytes_index(buf[:n], "\r\n\r\n")
 	head := string(buf[:head_at])
 	body := buf[head_at + 4:n]
 	lines := make([dynamic]string)
@@ -633,7 +623,7 @@ handle :: proc(fd: net.TCP_Socket, encrypted: bool) {
 		note_error("request line")
 		return
 	}
-	length, found, valid := content_length(head)
+	length, found, valid := compatibility_content_length(head)
 	if found && !valid {
 		note_error("content-length")
 		return
@@ -660,7 +650,7 @@ handle :: proc(fd: net.TCP_Socket, encrypted: bool) {
 }
 
 record_request :: proc(method, target: string, headers: []string, body: []u8, secure: bool) {
-	rec: Record
+	rec: compatibility_Record
 	rec.method = strings.clone(method)
 	rec.target = strings.clone(target)
 	rec.secure = secure
@@ -718,10 +708,10 @@ respond :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, targe
 	} else if strings.has_prefix(target, "/oversize") {
 		kind = .Oversize
 	}
-	write_payload(fd, conn, encrypted, status, extra, kind)
+	compatibility_write_payload(fd, conn, encrypted, status, extra, kind)
 }
 
-write_payload :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, status, extra: string, kind: Payload) {
+compatibility_write_payload :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, status, extra: string, kind: Payload) {
 	n := 4
 	if kind == .Empty {
 		n = 0
@@ -780,21 +770,7 @@ read_more :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, dst
 	}
 }
 
-read_some :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, dst: []u8) -> (int, net.TCP_Recv_Error) {
-	if encrypted {
-		n, status := loopback.tls_read(conn, dst)
-		if status == .Ok {
-			return n, nil
-		}
-		if status == .Timeout {
-			return 0, .Timeout
-		}
-		return 0, .Connection_Closed
-	}
-	return net.recv_tcp(fd, dst)
-}
-
-content_length :: proc(head: string) -> (length: int, found, valid: bool) {
+compatibility_content_length :: proc(head: string) -> (length: int, found, valid: bool) {
 	rest := head
 	for len(rest) > 0 {
 		cut := strings.index(rest, "\r\n")
@@ -925,7 +901,7 @@ headers_match :: proc(got: [dynamic]string, want: []string) -> bool {
 	return true
 }
 
-port_of :: proc(socket: net.TCP_Socket) -> int {
+compatibility_port_of :: proc(socket: net.TCP_Socket) -> int {
 	endpoint, err := net.bound_endpoint(socket)
 	if err != nil {
 		return 0
@@ -933,11 +909,11 @@ port_of :: proc(socket: net.TCP_Socket) -> int {
 	return int(endpoint.port)
 }
 
-bytes_contains :: proc(buf: []u8, needle: string) -> bool {
-	return bytes_index(buf, needle) >= 0
+compatibility_bytes_contains :: proc(buf: []u8, needle: string) -> bool {
+	return compatibility_bytes_index(buf, needle) >= 0
 }
 
-bytes_index :: proc(buf: []u8, needle: string) -> int {
+compatibility_bytes_index :: proc(buf: []u8, needle: string) -> int {
 	if len(needle) == 0 || len(buf) < len(needle) {
 		return -1
 	}

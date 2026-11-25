@@ -1,21 +1,21 @@
 // Streaming, upload, gzip, and redirect wire matrix.
 // The peer is tests/support/stream/peer. Vet flags apply to the fixture only.
+
 package main
 
-import support "../support"
-
+import "support"
 import "core:crypto/hash"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:time"
 
-Case :: struct {
+stream_Case :: struct {
 	mode: string,
 	size: int,
 }
 
-CASES :: [?]Case{
+CASES :: [?]stream_Case{
 	{"known", 32 << 20}, {"chunked", 32 << 20}, {"eof", 32 << 20},
 	{"fragmented", 4096}, {"short-length", 65536},
 	{"buffered-gzip", 65536}, {"buffered-short", 65536},
@@ -53,7 +53,9 @@ HEX :: "0123456789abcdef"
 
 #assert(len(CASES) == 69)
 
-main :: proc() {
+run_stream :: proc() {
+	gate_label = "stream"
+
 	g := support.begin("stream104")
 	defer support.end(&g)
 	peer_bin := support.path(&g, "peer")
@@ -75,7 +77,7 @@ main :: proc() {
 			if strings.has_prefix(item.mode, "allocation-") && transport == "tls" {
 				continue
 			}
-			if reason := cell(&g, peer_bin, fixture_bin, transport, item.mode, item.size); reason != "" {
+			if reason := stream_cell(&g, peer_bin, fixture_bin, transport, item.mode, item.size); reason != "" {
 				support.fail(&g, reason)
 			}
 			cells += 1
@@ -90,7 +92,7 @@ main :: proc() {
 	fmt.println(cells, "stream cells passed")
 }
 
-cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string, size: int) -> string {
+stream_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string, size: int) -> string {
 	support.note(g, fmt.tprintf("%s %s", transport, mode))
 	dir := support.path(g, fmt.tprintf("%s-%s", transport, mode))
 	defer delete(dir)

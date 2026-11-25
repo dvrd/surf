@@ -1,10 +1,10 @@
 // Owned HTTP/1 peer for the budget fixture. TLS 1.3 is tests/support/loopback.
 // tls-deny is a client budget rejection during the handshake: the warm
 // GET still completes, and the denied attempt must not become a request.
+
 package main
 
-import loopback "../../support/loopback"
-
+import "../support/loopback"
 import "core:encoding/json"
 import "core:fmt"
 import "core:net"
@@ -15,10 +15,7 @@ import "core:sys/posix"
 import "core:thread"
 import "core:time"
 
-DIR_PERM :: os.Permissions{.Read_User, .Write_User, .Execute_User}
-FILE_PERM :: os.Permissions{.Read_User, .Write_User}
-
-Peer :: struct {
+budgets_Peer :: struct {
 	listener:           net.TCP_Socket,
 	encrypted:          bool,
 	allow_handshake_fail: bool,
@@ -50,9 +47,11 @@ Report :: struct {
 	checks:    [dynamic]Check `json:"checks"`,
 }
 
-main :: proc() {
+run_budgets :: proc() {
+	gate_label = "budgets"
+
 	_ = posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
-	compiler, shared, report_path, sanitizer := parse_args()
+	compiler, shared, report_path, sanitizer := budgets_parse_args()
 	root := fmt.aprintf("/tmp/okami-budgets-%d", posix.getpid())
 	defer delete(root)
 	if err := os.make_directory_all(root, DIR_PERM); err != nil && err != .Exist {
@@ -69,7 +68,7 @@ main :: proc() {
 	defer loopback.identity_clear()
 	binary := join(root, "fixture")
 	defer delete(binary)
-	if !build(compiler, shared, binary, sanitizer) {
+	if !budgets_build(compiler, shared, binary, sanitizer) {
 		fail("build")
 	}
 	report := Report{sanitizer = sanitizer if sanitizer != "" else "none"}
@@ -84,7 +83,7 @@ main :: proc() {
 		{"tls", "tls-deny", 1024},
 	}
 	for item in cases {
-		peer := start_peer(item.size, item.mode == "tls", item.scenario == "tls-deny")
+		peer := budgets_start_peer(item.size, item.mode == "tls", item.scenario == "tls-deny")
 		url := fmt.aprintf("%s://127.0.0.1:%d/budget", "https" if item.mode == "tls" else "http", port_of(peer.listener))
 		defer delete(url)
 		command := make([dynamic]string)
@@ -94,7 +93,7 @@ main :: proc() {
 		}
 		text := run_text(command[:])
 		delete(command)
-		stop_peer(peer)
+		budgets_stop_peer(peer)
 		if text == "" {
 			fail(item.scenario)
 		}
@@ -125,17 +124,17 @@ main :: proc() {
 	fmt.printf(`{{"passed":%t,"checks":%d}}` + "\n", report.passed, len(report.checks))
 }
 
-start_peer :: proc(size: int, encrypted, allow_fail: bool) -> ^Peer {
+budgets_start_peer :: proc(size: int, encrypted, allow_fail: bool) -> ^budgets_Peer {
 	socket, err := net.listen_tcp({address = net.IP4_Loopback, port = 0})
 	if err != nil {
 		fail("listen")
 	}
-	peer := new(Peer)
+	peer := new(budgets_Peer)
 	peer.listener = socket
 	peer.encrypted = encrypted
 	peer.allow_handshake_fail = allow_fail
 	peer.size = size
-	worker := thread.create_and_start_with_poly_data(peer, serve)
+	worker := thread.create_and_start_with_poly_data(peer, budgets_serve)
 	if worker == nil {
 		fail("thread")
 	}
@@ -145,17 +144,17 @@ start_peer :: proc(size: int, encrypted, allow_fail: bool) -> ^Peer {
 
 peer_thread: ^thread.Thread
 
-serve :: proc(peer: ^Peer) {
+budgets_serve :: proc(peer: ^budgets_Peer) {
 	for {
 		fd, _, err := net.accept_tcp(peer.listener)
 		if err != nil {
 			return
 		}
-		handle(peer, fd)
+		budgets_handle(peer, fd)
 	}
 }
 
-handle :: proc(peer: ^Peer, fd: net.TCP_Socket) {
+budgets_handle :: proc(peer: ^budgets_Peer, fd: net.TCP_Socket) {
 	defer net.close(fd)
 	_ = net.set_option(fd, .TCP_Nodelay, true)
 	_ = net.set_option(fd, .Receive_Timeout, 4 * time.Second)
@@ -168,7 +167,7 @@ handle :: proc(peer: ^Peer, fd: net.TCP_Socket) {
 		ok := loopback.handshake(&conn, .HTTP1)
 		if !ok {
 			if !peer.allow_handshake_fail {
-				note(peer, "handshake")
+				budgets_note(peer, "handshake")
 			}
 			sync.lock(&peer.mu)
 			peer.handshake_failures += 1
@@ -180,7 +179,7 @@ handle :: proc(peer: ^Peer, fd: net.TCP_Socket) {
 	n := 0
 	for !contains(buf[:n], "\r\n\r\n") {
 		if n == len(buf) {
-			note(peer, "head")
+			budgets_note(peer, "head")
 			return
 		}
 		got, read_err := read_some(fd, &conn, peer.encrypted, buf[n:])
@@ -191,12 +190,12 @@ handle :: proc(peer: ^Peer, fd: net.TCP_Socket) {
 		if read_err == .Interrupted {
 			continue
 		}
-		note(peer, "read")
+		budgets_note(peer, "read")
 		return
 	}
 	head := string(buf[:index(buf[:n], "\r\n\r\n")])
 	if !strings.has_prefix(head, "GET /budget HTTP/1.1\r\n") {
-		note(peer, "request")
+		budgets_note(peer, "request")
 		return
 	}
 	sync.lock(&peer.mu)
@@ -204,7 +203,7 @@ handle :: proc(peer: ^Peer, fd: net.TCP_Socket) {
 	count := peer.requests
 	sync.unlock(&peer.mu)
 	if count > 32 {
-		note(peer, "bound")
+		budgets_note(peer, "bound")
 		return
 	}
 	// The accept thread shares the process temp allocator. Keep this header on the stack.
@@ -227,13 +226,13 @@ handle :: proc(peer: ^Peer, fd: net.TCP_Socket) {
 	}
 }
 
-note :: proc(peer: ^Peer, text: string) {
+budgets_note :: proc(peer: ^budgets_Peer, text: string) {
 	sync.lock(&peer.mu)
 	append(&peer.errors, strings.clone(text))
 	sync.unlock(&peer.mu)
 }
 
-stop_peer :: proc(peer: ^Peer) {
+budgets_stop_peer :: proc(peer: ^budgets_Peer) {
 	net.close(peer.listener)
 	if peer_thread != nil {
 		thread.destroy(peer_thread)
@@ -241,7 +240,7 @@ stop_peer :: proc(peer: ^Peer) {
 	}
 }
 
-build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
+budgets_build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 	out_flag := fmt.aprintf("-out:%s", binary)
 	defer delete(out_flag)
 	collection := fmt.aprintf("-collection:shared=%s", shared)
@@ -252,10 +251,10 @@ build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 	if sanitizer != "" {
 		append(&command, fmt.aprintf("-sanitize:%s", sanitizer))
 	}
-	return run(command[:], false)
+	return budgets_run(command[:], false)
 }
 
-run :: proc(command: []string, capture: bool) -> bool {
+budgets_run :: proc(command: []string, capture: bool) -> bool {
 	process, start_error := os.process_start({command = command, stdout = os.stdout, stderr = os.stderr})
 	if start_error != nil {
 		return false
@@ -296,27 +295,6 @@ run_text :: proc(command: []string) -> string {
 	return strings.clone(string(buf[:n]))
 }
 
-read_some :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, dst: []u8) -> (int, net.TCP_Recv_Error) {
-	if encrypted {
-		n, status := loopback.tls_read(conn, dst)
-		if status == .Ok {
-			return n, nil
-		}
-		if status == .Timeout {
-			return 0, .Timeout
-		}
-		return 0, .Connection_Closed
-	}
-	return net.recv_tcp(fd, dst)
-}
-
-write_all :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, text: string) -> bool {
-	if encrypted {
-		return loopback.tls_write(conn, transmute([]u8)text)
-	}
-	return loopback.write_full(fd, transmute([]u8)text)
-}
-
 contains :: proc(buf: []u8, needle: string) -> bool {
 	return index(buf, needle) >= 0
 }
@@ -340,19 +318,7 @@ index :: proc(buf: []u8, needle: string) -> int {
 	return -1
 }
 
-port_of :: proc(socket: net.TCP_Socket) -> int {
-	endpoint, err := net.bound_endpoint(socket)
-	if err != nil {
-		fail("bound")
-	}
-	return int(endpoint.port)
-}
-
-join :: proc(dir, name: string) -> string {
-	return fmt.aprintf("%s/%s", dir, name)
-}
-
-parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
+budgets_parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 	for i in 1 ..< len(os.args) {
 		arg := os.args[i]
 		if i + 1 >= len(os.args) {
@@ -378,7 +344,3 @@ parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 	return
 }
 
-fail :: proc(reason: string) {
-	fmt.eprintf("budgets: %s\n", reason)
-	os.exit(1)
-}

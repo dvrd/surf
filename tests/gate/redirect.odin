@@ -1,16 +1,16 @@
 // Public Client redirect matrix. Units run once, then one cell per mode.
 // The peer is tests/support/redirect/peer.
+
 package main
 
-import support "../support"
-
+import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:time"
 
 // downgrade is TLS-only. The peer mode is "downgrade", not "tls-downgrade".
-TCP_MODES :: [?]string{
+redirect_TCP_MODES :: [?]string{
 	"get301", "get302", "get303", "get307", "get308",
 	"head301", "head302", "head303", "head307", "head308",
 	"post301", "post302", "post303", "post307", "post308",
@@ -18,15 +18,17 @@ TCP_MODES :: [?]string{
 	"loop", "hopcap", "bodycap", "cutoff", "dns32", "cancel", "close", "handoff-cancel", "handoff-close",
 }
 
-UNIT_NAMES :: [?]string{
+redirect_UNIT_NAMES :: [?]string{
 	"redirect28_public_config_and_prestart_handle_lifecycle",
 	"network_schema_rejects_forged_normalization_and_invalid_redirect_policy",
 }
 
-main :: proc() {
+run_redirect :: proc() {
+	gate_label = "redirect"
+
 	g := support.begin("redirect101")
 	defer support.end(&g)
-	units := UNIT_NAMES
+	units := redirect_UNIT_NAMES
 	if !support.task_test(&g, "async", units[:], 2) {
 		support.fail(&g, "units")
 	}
@@ -42,8 +44,8 @@ main :: proc() {
 	}
 	cells := 0
 	for transport in ([?]string{"tcp", "tls"}) {
-		for mode in TCP_MODES {
-			if reason := cell(&g, peer_bin, fixture_bin, transport, mode); reason != "" {
+		for mode in redirect_TCP_MODES {
+			if reason := redirect_cell(&g, peer_bin, fixture_bin, transport, mode); reason != "" {
 				support.fail(&g, reason)
 			}
 			cells += 1
@@ -51,7 +53,7 @@ main :: proc() {
 		if transport != "tls" {
 			continue
 		}
-		if reason := cell(&g, peer_bin, fixture_bin, transport, "downgrade"); reason != "" {
+		if reason := redirect_cell(&g, peer_bin, fixture_bin, transport, "downgrade"); reason != "" {
 			support.fail(&g, reason)
 		}
 		cells += 1
@@ -65,7 +67,7 @@ main :: proc() {
 	fmt.println(cells, "redirect cells passed")
 }
 
-cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string) -> string {
+redirect_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string) -> string {
 	support.note(g, fmt.tprintf("%s %s", transport, mode))
 	dir := support.path(g, fmt.tprintf("%s-%s", transport, mode))
 	defer delete(dir)
@@ -112,10 +114,10 @@ cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string) -
 		return "peer json"
 	}
 	defer json.destroy_value(oracle)
-	return verify(mode, transport == "tls", native, oracle)
+	return redirect_verify(mode, transport == "tls", native, oracle)
 }
 
-verify :: proc(mode: string, encrypted: bool, native, peer: json.Value) -> string {
+redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value) -> string {
 	if !support.eq_int(native, "completed", 1) || !support.eq_int(native, "workers", 1) {
 		return "terminal"
 	}
@@ -303,24 +305,3 @@ single_wire :: proc(mode: string) -> bool {
 	return false
 }
 
-rows_or_empty :: proc(value: json.Value, key: string) -> (items: json.Array, ok: bool) {
-	field, exists := support.get(value, key)
-	if !exists {
-		return nil, true
-	}
-	if _, is_null := field.(json.Null); is_null {
-		return nil, true
-	}
-	array, is_array := field.(json.Array)
-	if !is_array {
-		return nil, false
-	}
-	return array, true
-}
-
-hostname :: proc(host: string) -> string {
-	if cut := strings.index(host, ":"); cut >= 0 {
-		return host[:cut]
-	}
-	return host
-}
