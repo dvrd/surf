@@ -5,7 +5,9 @@ import "core:crypto/x509"
 import "core:fmt"
 import "core:mem"
 import "core:net"
+import "core:os"
 import scopes "shared:async/sync/budget"
+import "core:sys/posix"
 import "core:testing"
 import "core:time"
 
@@ -309,4 +311,35 @@ network_schema_borrows_policy_and_scope_without_retaining_or_admitting :: proc(t
 
 	input.http.allocator_scope = scope
 	network_schema_reject(t, input)
+}
+
+@(test)
+network_snapshot_error_keeps_each_dns_code :: proc(t: ^testing.T) {
+	hostname := network_snapshot_error(net.Resolver_Snapshot_General_Error.Invalid_Hostname)
+	testing.expect_value(t, hostname.kind, .Invalid_Config)
+	testing.expect_value(t, hostname.http.kind, .Dial_Failed)
+	host_code, host_ok := hostname.http.network.(net.DNS_Error)
+	testing.expect(t, host_ok && host_code == .Invalid_Hostname_Error)
+
+	servers := network_snapshot_error(net.Resolver_Snapshot_General_Error.No_Servers)
+	testing.expect_value(t, servers.kind, .Invalid_Config)
+	server_code, server_ok := servers.http.network.(net.DNS_Error)
+	testing.expect(t, server_ok && server_code == .Invalid_Resolv_Config_Error)
+
+	parsed := network_snapshot_error(net.Resolver_Snapshot_General_Error.Parse_Failed)
+	testing.expect_value(t, parsed.http.kind, .Dial_Failed)
+	parsed_code, parsed_ok := parsed.http.network.(net.DNS_Error)
+	testing.expect(t, parsed_ok && parsed_code == .Invalid_Hosts_Config_Error)
+
+	undersized := network_snapshot_error(net.Resolver_Snapshot_General_Error.Destination_Undersized)
+	testing.expect_value(t, undersized.kind, .Capacity)
+	testing.expect_value(t, undersized.http.kind, .Dial_Failed)
+	testing.expect(t, undersized.http.network == nil)
+
+	platform := network_snapshot_error(os.Error(os.Platform_Error(posix.Errno.EIO)))
+	testing.expect_value(t, platform.kind, .Error)
+	testing.expect_value(t, platform.runtime.kind, .System_Error)
+	testing.expect_value(t, platform.runtime.system_code, i32(posix.Errno.EIO))
+	platform_code, platform_ok := platform.http.network.(net.DNS_Error)
+	testing.expect(t, platform_ok && platform_code == .System_Error)
 }

@@ -1120,11 +1120,55 @@ network_snapshot_error :: proc(error: net.Resolver_Snapshot_Error) -> Client_Err
 		}
 	}
 
-	if general, ok := error.(net.Resolver_Snapshot_General_Error); ok && general == .Unsupported {
-		return {
-			kind = .Error,
-			runtime = {kind = .Unsupported},
-			http = {kind = .Dial_Failed, network = net.DNS_Error.Unsupported},
+	if general, ok := error.(net.Resolver_Snapshot_General_Error); ok {
+		switch general {
+		case .Unsupported:
+			return {
+				kind = .Error,
+				runtime = {kind = .Unsupported},
+				http = {kind = .Dial_Failed, network = net.DNS_Error.Unsupported},
+			}
+		case .Invalid_Hostname:
+			return {
+				kind = .Invalid_Config,
+				http = {
+					kind = .Dial_Failed,
+					phase = .DNS,
+					network = net.DNS_Error.Invalid_Hostname_Error,
+					write_effect = .Not_Sent,
+				},
+			}
+		case .No_Servers, .Invalid_Config:
+			return {
+				kind = .Invalid_Config,
+				http = {
+					kind = .Dial_Failed,
+					phase = .DNS,
+					network = net.DNS_Error.Invalid_Resolv_Config_Error,
+					write_effect = .Not_Sent,
+				},
+			}
+		case .Parse_Failed:
+			// Parse_Failed is a bad resolv endpoint and a bad hosts file.
+			return {
+				kind = .Invalid_Config,
+				http = {
+					kind = .Dial_Failed,
+					phase = .DNS,
+					network = net.DNS_Error.Invalid_Hosts_Config_Error,
+					write_effect = .Not_Sent,
+				},
+			}
+		case .Destination_Undersized, .Limit_Exceeded:
+			return {
+				kind = .Capacity,
+				http = {kind = .Dial_Failed, phase = .DNS, write_effect = .Not_Sent},
+			}
+		case .Invalid_State, .Overlapping_Buffers, .None:
+			return {
+				kind = .Invalid_State,
+				http = {kind = .Invalid_Config, write_effect = .Not_Sent},
+			}
 		}
 	}
 
@@ -1133,7 +1177,12 @@ network_snapshot_error :: proc(error: net.Resolver_Snapshot_Error) -> Client_Err
 		return {
 			kind = .Error,
 			runtime = {kind = .System_Error, system_code = code},
-			http = {kind = .Dial_Failed, network = net.DNS_Error.Invalid_Resolv_Config_Error},
+			http = {
+				kind = .Dial_Failed,
+				phase = .DNS,
+				network = net.DNS_Error.System_Error,
+				write_effect = .Not_Sent,
+			},
 		}
 	}
 
