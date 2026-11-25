@@ -242,7 +242,23 @@ network_coordinator_dns_step :: proc(s: ^Client_State) -> bool {
 
 	block, error := network_dns_reserve(s, maximum)
 
-	if error.kind != .None {
+	if error.kind == .Pending && len(s.dns_ids) > 0 {
+		fresh := network_dns_refill_fresh(s)
+
+		if fresh.kind == .None {
+			block, error = network_dns_reserve(s, maximum)
+		}
+
+		if fresh.kind != .None || error.kind == .Pending {
+			failed := network_dns_bank_exhausted()
+			assert(network_coordinator_complete(s, handle, failed.http).kind == .None)
+			return true
+		}
+
+		if error.kind != .None {
+			return false
+		}
+	} else if error.kind != .None {
 		return false
 	}
 

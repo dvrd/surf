@@ -1137,7 +1137,7 @@ session_dns_error :: proc(error: runtime_async.DNS_Error) -> surf.HTTP_Error {
 
 	return result
 }
-session_dns_block :: proc(a: ^Session_Actor) -> bool {
+session_dns_block :: proc(a: ^Session_Actor) -> (bool, Client_Error) {
 	s := a.owner
 	sync.lock(&s.mu)
 	metadata := &s.requests[int(a.request.slot) - 1]
@@ -1150,13 +1150,13 @@ session_dns_block :: proc(a: ^Session_Actor) -> bool {
 	sync.unlock(&s.mu)
 
 	if remaining <= 0 {
-		return false
+		return false, {}
 	}
 
 	block, error := network_dns_reserve(s, min(DNS_IDS_PER_QUERY, remaining))
 
 	if error.kind != .None {
-		return false
+		return false, error
 	}
 
 	sync.lock(&s.mu)
@@ -1171,12 +1171,12 @@ session_dns_block :: proc(a: ^Session_Actor) -> bool {
 
 	if !valid {
 		network_dns_burn(s, &block)
-		return false
+		return false, {}
 	}
 
 	a.ids = block
 
-	return true
+	return true, {}
 }
 session_query_begin :: proc(
 	a: ^Session_Actor,
@@ -1349,26 +1349,38 @@ session_dial_unresolved :: proc(a: ^Session_Actor, error: runtime_async.DNS_Erro
 	if a.phase == .Resolving_A &&
 	   cause.status != .Timeout &&
 	   cause.status != .Cancelled &&
-	   cause.status != .Limit &&
-	   session_dns_block(a) {
-		_, origin, borrow := session_borrow(a)
-		if borrow.kind == .None {
-			a.query = {}
-			a.dial = {}
-			next := session_query_begin(
-				a,
-				origin.host,
-				int(origin.port),
-				.AAAA_Only,
-				a.owner.profile.config.http.address_policy == nil,
-			)
-			if next.status == .Success {
-				a.phase = .Resolving_AAAA
-				return .Yield
+	   cause.status != .Limit {
+		drew, draw_error := session_dns_block(a)
+
+		if draw_error.kind != .None {
+			session_error(a, network_dns_bank_exhausted().http)
+			return .Yield
+		}
+
+		if drew {
+			_, origin, borrow := session_borrow(a)
+
+			if borrow.kind == .None {
+				a.query = {}
+				a.dial = {}
+				next := session_query_begin(
+					a,
+					origin.host,
+					int(origin.port),
+					.AAAA_Only,
+					a.owner.profile.config.http.address_policy == nil,
+				)
+
+				if next.status == .Success {
+					a.phase = .Resolving_AAAA
+					return .Yield
+				}
+
+				cause = next
 			}
-			cause = next
 		}
 	}
+
 	session_error(a, session_dns_error(cause))
 	return .Yield
 }
@@ -1417,26 +1429,35 @@ session_dial_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> run
 		} else if a.phase == .Resolving_A &&
 		   error.status != .Timeout &&
 		   error.status != .Cancelled &&
-		   error.status != .Limit &&
-		   session_dns_block(a) {
-			_, origin, borrow := session_borrow(a)
-			if borrow.kind == .None {
-				a.query = {}
-				a.dial = {}
-				next := session_query_begin(
-					a,
-					origin.host,
-					int(origin.port),
-					.AAAA_Only,
-					a.owner.profile.config.http.address_policy == nil,
-				)
+		   error.status != .Limit {
+			drew, draw_error := session_dns_block(a)
 
-				if next.status == .Success {
-					a.phase = .Resolving_AAAA
-					return .Yield
+			if draw_error.kind != .None {
+				session_error(a, network_dns_bank_exhausted().http)
+				return .Yield
+			}
+
+			if drew {
+				_, origin, borrow := session_borrow(a)
+
+				if borrow.kind == .None {
+					a.query = {}
+					a.dial = {}
+					next := session_query_begin(
+						a,
+						origin.host,
+						int(origin.port),
+						.AAAA_Only,
+						a.owner.profile.config.http.address_policy == nil,
+					)
+
+					if next.status == .Success {
+						a.phase = .Resolving_AAAA
+						return .Yield
+					}
+
+					error = next
 				}
-
-				error = next
 			}
 		}
 

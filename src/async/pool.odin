@@ -503,6 +503,29 @@ network_saturate :: proc(counter: ^u64, amount: u64) {
 	counter^ += min(amount, max(u64) - counter^)
 }
 
+network_dns_bank_exhausted :: proc() -> Client_Error {
+	return {
+		kind = .Capacity,
+		http = {
+			kind = .Dial_Failed,
+			phase = .DNS,
+			network = net.Resolve_Error.Unable_To_Resolve,
+			write_effect = .Not_Sent,
+		},
+	}
+}
+
+network_dns_refill_fresh :: proc(s: ^Client_State) -> Client_Error {
+	ids: [DNS_IDS_PER_QUERY]u16
+	prepared := async.prepare_dns_ids(ids[:])
+
+	if prepared.kind != .None {
+		return {kind = .Error, runtime = prepared}
+	}
+
+	return network_dns_refill(s, ids[:])
+}
+
 network_dns_refill :: proc(s: ^Client_State, ids: []u16) -> Client_Error {
 	if !network_valid(s) ||
 	   len(ids) < 0 ||
@@ -1052,7 +1075,24 @@ network_queue_claim_budget :: proc(
 		sync.unlock(&s.mu)
 		reserved, error := network_dns_reserve(s, min(DNS_IDS_PER_QUERY, total_queries_remaining))
 
-		if error.kind != .None && error.kind != .Pending {
+		if error.kind == .Pending && len(s.dns_ids) > 0 {
+			fresh := network_dns_refill_fresh(s)
+
+			if fresh.kind == .None {
+				reserved, error = network_dns_reserve(
+					s,
+					min(DNS_IDS_PER_QUERY, total_queries_remaining),
+				)
+			}
+
+			if fresh.kind != .None || error.kind == .Pending {
+				return {}, network_dns_bank_exhausted()
+			}
+
+			if error.kind != .None {
+				return {}, error
+			}
+		} else if error.kind != .None && error.kind != .Pending {
 			return {}, error
 		}
 

@@ -12,14 +12,14 @@ Run 009 and 010 first. They do not share files. After 009, plans that name diffe
 
 | Plan | Title | Pri | Effort | Depends on | Executor | Status |
 |------|-------|-----|--------|------------|----------|--------|
-| 009 | `task test` compiles against `shared:async/compress/step` | P1 | S | — | `claude:haiku` (`grok:fast`) | TODO |
+| 009 | `task test` compiles against `shared:async/compress/step` | P1 | S | — | `claude:haiku` (`grok:fast`) | DONE |
 | 010 | Plans 001 and 008 no longer contradict `a552088` | P1 | S | — | `claude:haiku` (`grok:fast`) | TODO |
-| 011 | Blocking WebSocket dial honors `handshake_timeout` and rejects `h2` | P1 | S | 009 | `claude:sonnet` (`codex`) | TODO |
-| 012 | `websocket_dial` returns the DNS or TCP error it stored | P1 | S | 011 | `claude:sonnet` (`codex`) | TODO |
-| 013 | A failed HTTP/2 WebSocket open releases the lane | P1 | S | 009 | `claude:sonnet` (`codex`) | TODO |
-| 014 | An HTTP/3 budget expiry stays a deadline | P1 | S | 009 | `claude:sonnet` (`codex`) | TODO |
-| 015 | The buffered HTTP/1 encoder rejects caller framing | P1 | S | 009 | `claude:opus` (`codex`) | TODO |
-| 016 | An empty async DNS ID bank is a DNS failure | P1 | M | 009 | `claude:opus` (`codex`) | TODO |
+| 011 | Blocking WebSocket dial honors `handshake_timeout` and rejects `h2` | P1 | S | 009 | `claude:sonnet` (`codex`) | DONE |
+| 012 | `websocket_dial` returns the DNS or TCP error it stored | P1 | S | 011 | `claude:sonnet` (`codex`) | DONE |
+| 013 | A failed HTTP/2 WebSocket open releases the lane | P1 | S | 009 | `claude:sonnet` (`codex`) | DONE |
+| 014 | An HTTP/3 budget expiry stays a deadline | P1 | S | 009 | `claude:sonnet` (`codex`) | DONE |
+| 015 | The buffered HTTP/1 encoder rejects caller framing | P1 | S | 009 | `claude:opus` (`codex`) | DONE |
+| 016 | An empty async DNS ID bank is a DNS failure | P1 | M | 009 | `claude:opus` (`codex`) | DONE |
 | 018 | `address_policy` sees every resolved address | P1 | M | 016 | `claude:opus` (`codex`) | TODO |
 | 017 | Resolver-snapshot failures keep their own DNS errors | P2 | S | 016 | `claude:sonnet` (`codex`) | TODO |
 | 020 | HTTP/2 does not index authorization or cookie | P2 | S | 009 | `claude:sonnet` (`codex`) | TODO |

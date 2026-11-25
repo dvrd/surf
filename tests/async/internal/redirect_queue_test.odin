@@ -414,8 +414,14 @@ redirect_queue_refill_only_unparks_remaining_allowance_and_deducts_once :: proc(
 		network_dns_burn(f.s, &block)
 	}
 
+	// Admission refills a non-zero bank. Detach that storage so this head is
+	// queued awaiting IDs, then restore it for the explicit refill below.
+	bank := f.s.dns_ids
+	f.s.dns_ids = nil
 	p := rq_reserve(&f)
-	assert(rq_claim(&f, p, "http://refill.example/A", 1).kind == .None)
+	cause := rq_claim(&f, p, "http://refill.example/A", 1)
+	f.s.dns_ids = bank
+	assert(cause.kind == .None)
 	rq_commit(&f, p, "http://refill.example/A")
 	testing.expect(t, f.s.requests[int(p.request.slot) - 1].awaiting_ids)
 	draws := [2]u16{0x101, 0x202}
