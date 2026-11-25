@@ -72,7 +72,7 @@ redirect_client_error :: proc(error: Client_Error) -> surf.HTTP_Error {
 		return {kind = .Dial_Failed, phase = .Connect, write_effect = .Not_Sent}
 	}
 
-	if error.kind == .Runtime_Error {
+	if error.kind == .Error {
 		return session_runtime_error(error.runtime, .Connect)
 	}
 

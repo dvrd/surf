@@ -2,7 +2,7 @@ package surf_exchange
 
 import channel "../stream"
 import h1 "shared:async/http/v1"
-import deflate "core:compress/step"
+import deflate "shared:async/compress/step"
 import "shared:async/mem/owned"
 import "core:net"
 import "core:testing"

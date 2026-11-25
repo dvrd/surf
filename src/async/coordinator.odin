@@ -1,20 +1,20 @@
 package surf_async
 
 import surf ".."
-import runtime_async "shared:async"
-import signal "shared:async/signal"
-import "core:sync"
-import http "shared:async/http"
-import h1 "shared:async/http/v1"
 import "core:bytes"
 import "core:mem"
-import charged "shared:async/mem/budget"
-import scopes "shared:async/sync/budget"
-import "core:strings"
-import stream_api "stream"
-import exchange_api "exchange"
 import "core:net"
 import "core:os"
+import "core:strings"
+import "core:sync"
+import exchange_api "exchange"
+import "shared:async"
+import http "shared:async/http"
+import http1 "shared:async/http/v1"
+import charged "shared:async/mem/budget"
+import "shared:async/signal"
+import scopes "shared:async/sync/budget"
+import stream_api "stream"
 
 network_coordinator_wake :: proc(notification: signal.Signal) {
 	owner, valid := signal.retain(notification)
@@ -125,7 +125,7 @@ network_coordinator_complete :: proc(
 
 // One request-capacity inspection. Active request completion belongs solely to
 // its actor; the coordinator only delivers a cancellation mailbox notification.
-network_coordinator_request_step :: proc(s: ^Client_State, now: runtime_async.Deadline) -> bool {
+network_coordinator_request_step :: proc(s: ^Client_State, now: async.Deadline) -> bool {
 	sync.lock(&s.mu)
 
 	if s.coordinator.scan_remaining == 0 {
@@ -181,9 +181,9 @@ network_coordinator_request_step :: proc(s: ^Client_State, now: runtime_async.De
 
 		if cancellation {
 			error = {
-				kind = .IO_Failed,
-				transport = net.Connection_Error.Cancelled,
-				phase = .Cancellation,
+				kind         = .IO_Failed,
+				transport    = net.Connection_Error.Cancelled,
+				phase        = .Cancellation,
 				write_effect = .Not_Sent,
 			}
 		}
@@ -335,7 +335,7 @@ network_coordinator_idle_step :: proc(s: ^Client_State, now: i64) -> bool {
 	return error.kind != .Pending && candidate.slot == 0 && stable
 }
 
-network_coordinator_resume :: proc(data: rawptr) -> runtime_async.Resume_Result {
+network_coordinator_resume :: proc(data: rawptr) -> async.Resume_Result {
 	coordinator := cast(^Coordinator_State)data
 
 	if coordinator == nil || !network_valid(coordinator.owner) {
@@ -398,7 +398,7 @@ network_coordinator_resume :: proc(data: rawptr) -> runtime_async.Resume_Result 
 
 	if s.kernel.idle_deadline > 0 && (deadline.at == 0 || s.kernel.idle_deadline < deadline.at) {
 		deadline = {
-			epoch = s.runtime_epoch,
+			epoch = s.epoch,
 			at    = s.kernel.idle_deadline,
 		}
 	}
@@ -419,7 +419,7 @@ network_coordinator_resume :: proc(data: rawptr) -> runtime_async.Resume_Result 
 	}
 
 	if deadline.at > 0 {
-		failure := runtime_async.sleep_until(runtime, deadline)
+		failure := async.sleep_until(runtime, deadline)
 
 		if failure.kind != .Pending {
 			return .Yield
@@ -429,7 +429,7 @@ network_coordinator_resume :: proc(data: rawptr) -> runtime_async.Resume_Result 
 	return .Waiting
 }
 
-network_coordinator_cancel :: proc(data: rawptr) -> runtime_async.Resume_Result {
+network_coordinator_cancel :: proc(data: rawptr) -> async.Resume_Result {
 	coordinator := cast(^Coordinator_State)data
 
 	if coordinator == nil || !network_valid(coordinator.owner) {
@@ -456,7 +456,10 @@ network_coordinator_done :: proc(data: rawptr) {
 }
 
 admission_request_locked :: proc(k: ^Kernel, h: Request_Handle) -> ^Request_Slot {
-	if h.owner_id != k.owner_id || h.slot == 0 || u64(h.slot) > u64(len(k.requests)) || h.generation == 0 {
+	if h.owner_id != k.owner_id ||
+	   h.slot == 0 ||
+	   u64(h.slot) > u64(len(k.requests)) ||
+	   h.generation == 0 {
 		return nil
 	}
 
@@ -514,7 +517,11 @@ admission_region :: proc(storage: []u8, p: rawptr, size: int) -> bool {
 
 	start, at := uintptr(raw_data(storage)), uintptr(p)
 
-	return at >= start && at - start <= uintptr(len(storage)) && uintptr(size) <= uintptr(len(storage)) - (at - start)
+	return(
+		at >= start &&
+		at - start <= uintptr(len(storage)) &&
+		uintptr(size) <= uintptr(len(storage)) - (at - start) \
+	)
 }
 admission_input :: proc(k: ^Kernel, input: ^Request_Owner) -> (http.URL, Client_Error) {
 	if input == nil ||
@@ -533,7 +540,11 @@ admission_input :: proc(k: ^Kernel, input: ^Request_Owner) -> (http.URL, Client_
 
 	r := input.request
 	if len(r.headers) > http.MAX_HEADERS ||
-	   !admission_region(input.storage, raw_data(r.headers), len(r.headers) * size_of(http.Header)) ||
+	   !admission_region(
+			   input.storage,
+			   raw_data(r.headers),
+			   len(r.headers) * size_of(http.Header),
+		   ) ||
 	   len(r.headers) > 0 && uintptr(raw_data(r.headers)) % align_of(http.Header) != 0 ||
 	   !admission_region(input.storage, raw_data(r.url), len(r.url)) ||
 	   !admission_region(input.storage, raw_data(r.body), len(r.body)) {
@@ -548,7 +559,7 @@ admission_input :: proc(k: ^Kernel, input: ^Request_Owner) -> (http.URL, Client_
 	}
 
 	wire: [http.MAX_HEADER_SIZE]u8
-	_, validation := h1.request_encode_content(wire[:], r, .Keep_Alive, .Identity)
+	_, validation := http1.request_encode_content(wire[:], r, .Keep_Alive, .Identity)
 
 	if validation.kind != .None {
 		return {}, {kind = .Request_Error, http = {kind = validation.kind}}
@@ -561,14 +572,19 @@ admission_input :: proc(k: ^Kernel, input: ^Request_Owner) -> (http.URL, Client_
 		for allocator in ([2]mem.Allocator{input.allocator, k.resources.allocator}) {
 			info, valid := charged.allocation_info(allocator, raw_data(input.storage))
 
-			if valid && info.size == len(input.storage) && scopes.covers(info.scope, k.resources.scope) {
+			if valid &&
+			   info.size == len(input.storage) &&
+			   scopes.covers(info.scope, k.resources.scope) {
 				covered = true
 				break
 			}
 		}
 
 		if !covered {
-			return {}, {kind = .Invalid_Config, http = {kind = .Invalid_Config, budget = .Foreign_Root}}
+			return {}, {
+				kind = .Invalid_Config,
+				http = {kind = .Invalid_Config, budget = .Foreign_Root},
+			}
 		}
 	}
 
@@ -583,7 +599,7 @@ admission_input :: proc(k: ^Kernel, input: ^Request_Owner) -> (http.URL, Client_
 
 kernel_reserve :: proc(
 	k: ^Kernel,
-	deadline: runtime_async.Deadline,
+	deadline: async.Deadline,
 	lease: ^scopes.Lease,
 ) -> (
 	Preparing_Request,
@@ -592,7 +608,10 @@ kernel_reserve :: proc(
 	if k == nil || k.self != k {
 		return {}, {kind = .Invalid_State}
 	}
-	if lease == nil || admission_alias(k, lease, size_of(scopes.Lease)) || deadline.epoch == 0 || deadline.at <= 0 {
+	if lease == nil ||
+	   admission_alias(k, lease, size_of(scopes.Lease)) ||
+	   deadline.epoch == 0 ||
+	   deadline.at <= 0 {
 		return {}, {kind = .Invalid_Config}
 	}
 	selected := deadline
@@ -621,7 +640,8 @@ kernel_reserve :: proc(
 			return {}, {kind = .Invalid_Config, http = {kind = .Invalid_Config, budget = cause}}
 		}
 
-		if scopes.cost_of(lease^) != (scopes.Cost{streams = 1}) || scopes.phase_of(lease^) != .None {
+		if scopes.cost_of(lease^) != (scopes.Cost{streams = 1}) ||
+		   scopes.phase_of(lease^) != .None {
 			return {}, {kind = .Invalid_Config}
 		}
 	}
@@ -671,7 +691,7 @@ kernel_commit :: proc(
 	k: ^Kernel,
 	p: Preparing_Request,
 	input: ^Request_Owner,
-	now: runtime_async.Deadline,
+	now: async.Deadline,
 ) -> Client_Error {
 	if k == nil || k.self != k {
 		return {kind = .Invalid_State}
@@ -707,7 +727,10 @@ kernel_commit :: proc(
 		}
 	}
 	if now.at >= r.deadline.at {
-		return {kind = .Request_Error, http = {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent}}
+		return {
+			kind = .Request_Error,
+			http = {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent},
+		}
 	}
 	o := admission_origin_locked(k, r.origin)
 	if o == nil || o.requests < 1 || o.preparing < 1 || k.preparing < 1 || k.references <= 1 {
@@ -744,7 +767,10 @@ kernel_commit :: proc(
 
 			tail := &k.requests[int(o.queue_tail) - 1]
 
-			if tail.state != .Queued || tail.origin != r.origin || tail.session.slot != 0 || tail.queue_next != 0 {
+			if tail.state != .Queued ||
+			   tail.origin != r.origin ||
+			   tail.session.slot != 0 ||
+			   tail.queue_next != 0 {
 				return {kind = .Invalid_State}
 			}
 		}
@@ -774,7 +800,12 @@ kernel_commit :: proc(
 	return {}
 }
 
-admission_unlink_waiter_locked :: proc(k: ^Kernel, index: u32, r: ^Request_Slot, o: ^Origin_Slot) -> Client_Error {
+admission_unlink_waiter_locked :: proc(
+	k: ^Kernel,
+	index: u32,
+	r: ^Request_Slot,
+	o: ^Origin_Slot,
+) -> Client_Error {
 	previous, next := r.queue_previous, r.queue_next
 
 	if previous == 0 {
@@ -820,7 +851,11 @@ admission_unlink_waiter_locked :: proc(k: ^Kernel, index: u32, r: ^Request_Slot,
 
 // Detach a Preparing/accepted session claim using only verified07 origin
 // bookkeeping. The caller preflights all fields before this mutation phase.
-admission_detach_claim_locked :: proc(k: ^Kernel, h: Request_Handle, r: ^Request_Slot) -> Client_Error {
+admission_detach_claim_locked :: proc(
+	k: ^Kernel,
+	h: Request_Handle,
+	r: ^Request_Slot,
+) -> Client_Error {
 	if r.origin.slot == 0 {
 		if r.session.slot != 0 {
 			return {kind = .Invalid_State}
@@ -831,7 +866,12 @@ admission_detach_claim_locked :: proc(k: ^Kernel, h: Request_Handle, r: ^Request
 
 	o := admission_origin_locked(k, r.origin)
 
-	if o == nil || o.requests < 1 || o.sessions < 0 || o.preparing < 0 || o.waiters < 0 || k.counters.origins < 1 {
+	if o == nil ||
+	   o.requests < 1 ||
+	   o.sessions < 0 ||
+	   o.preparing < 0 ||
+	   o.waiters < 0 ||
+	   k.counters.origins < 1 {
 		return {kind = .Invalid_State}
 	}
 
@@ -871,7 +911,8 @@ admission_detach_claim_locked :: proc(k: ^Kernel, h: Request_Handle, r: ^Request
 			}
 
 			if s.reserved_from == .Free &&
-			   (o.sessions < 1 || s.generation != max(u64) && k.session_free_count >= len(k.session_free)) {
+			   (o.sessions < 1 ||
+					   s.generation != max(u64) && k.session_free_count >= len(k.session_free)) {
 				return {kind = .Invalid_State}
 			}
 
@@ -900,7 +941,8 @@ admission_detach_claim_locked :: proc(k: ^Kernel, h: Request_Handle, r: ^Request
 				disposal, error := kernel_origin_release_locked(k, r.origin, .Session)
 				assert(error.kind == .None && disposal.origin.slot == 0)
 			}
-		} else if r.state == .Active && (s.state == .Connecting || s.state == .Busy || s.state == .Retiring) {
+		} else if r.state == .Active &&
+		   (s.state == .Connecting || s.state == .Busy || s.state == .Retiring) {
 			s.request = {}
 		} else {
 			return {kind = .Invalid_State}
@@ -1056,12 +1098,15 @@ network_valid :: proc(s: ^Client_State) -> bool {
 }
 network_snapshot_error :: proc(error: net.Resolver_Snapshot_Error) -> Client_Error {
 	if allocation, ok := error.(mem.Allocator_Error); ok {
-		return {kind = .Allocation_Failed, http = {kind = .Allocation_Failed, allocation = allocation}}
+		return {
+			kind = .Allocation_Failed,
+			http = {kind = .Allocation_Failed, allocation = allocation},
+		}
 	}
 
 	if general, ok := error.(net.Resolver_Snapshot_General_Error); ok && general == .Unsupported {
 		return {
-			kind = .Runtime_Error,
+			kind = .Error,
 			runtime = {kind = .Unsupported},
 			http = {kind = .Dial_Failed, network = net.DNS_Error.Unsupported},
 		}
@@ -1070,7 +1115,7 @@ network_snapshot_error :: proc(error: net.Resolver_Snapshot_Error) -> Client_Err
 	if os_error, ok := error.(os.Error); ok {
 		code, _ := os.is_platform_error(os_error)
 		return {
-			kind = .Runtime_Error,
+			kind = .Error,
 			runtime = {kind = .System_Error, system_code = code},
 			http = {kind = .Dial_Failed, network = net.DNS_Error.Invalid_Resolv_Config_Error},
 		}
@@ -1096,7 +1141,13 @@ network_scope_probe :: proc(scope: scopes.Scope) -> Client_Error {
 
 	return {}
 }
-network_backing :: proc(scope: scopes.Scope, allocator: mem.Allocator) -> (State_Backing, Client_Error) {
+network_backing :: proc(
+	scope: scopes.Scope,
+	allocator: mem.Allocator,
+) -> (
+	State_Backing,
+	Client_Error,
+) {
 	if allocator.procedure == nil || .Free not_in mem.query_features(allocator) {
 		return {}, {kind = .Invalid_Config}
 	}
@@ -1152,7 +1203,7 @@ network_backing :: proc(scope: scopes.Scope, allocator: mem.Allocator) -> (State
 // No Task registration or protocol I/O. Runtime/controller and certificate
 // objects remain caller-owned through this preparation and every later close.
 network_prepare :: proc(
-	runtime: ^runtime_async.Runtime,
+	runtime: ^async.Runtime,
 	config: Normalized_Config,
 	allocator: mem.Allocator,
 ) -> (
@@ -1166,18 +1217,18 @@ network_prepare :: proc(
 	if error.kind != .None {
 		return nil, error
 	}
-	if options.dns_preparation != .Numeric_Only && runtime_async.worker_thread_active() {
-		return nil, {kind = .Runtime_Error, runtime = {kind = .Current_Worker_Active}}
+	if options.dns_preparation != .Numeric_Only && async.worker_thread_active() {
+		return nil, {kind = .Error, runtime = {kind = .Current_Worker_Active}}
 	}
-	now := runtime_async.deadline_after(runtime, 0)
+	now := async.deadline_after(runtime, 0)
 	if now.epoch == 0 || now.at <= 0 {
-		return nil, {kind = .Runtime_Error, runtime = {kind = .Not_Initialized}}
+		return nil, {kind = .Error, runtime = {kind = .Not_Initialized}}
 	}
 	if config.lifetime.epoch != 0 && config.lifetime.epoch != now.epoch {
 		return nil, {kind = .Invalid_Config}
 	}
 	if config.lifetime.epoch != 0 && config.lifetime.at <= now.at {
-		return nil, {kind = .Runtime_Error, runtime = {kind = .Timeout}}
+		return nil, {kind = .Error, runtime = {kind = .Timeout}}
 	}
 	backing, allocation := network_backing(config.http.scope, allocator)
 	if allocation.kind != .None {
@@ -1191,7 +1242,7 @@ network_prepare :: proc(
 		references     = 1,
 		base_owned     = true,
 		runtime        = runtime,
-		runtime_epoch  = now.epoch,
+		epoch          = now.epoch,
 		last_clock     = now,
 		producer_calls = 1,
 	}
@@ -1226,14 +1277,22 @@ network_prepare :: proc(
 	if error.kind != .None {
 		return nil, error
 	}
-	s.actors, error = kernel_array(Session_Actor, config.capacities.connections, s.resources.allocator)
+	s.actors, error = kernel_array(
+		Session_Actor,
+		config.capacities.connections,
+		s.resources.allocator,
+	)
 	if error.kind != .None {
 		return nil, error
 	}
 	for &actor in s.actors {
 		actor = {}
 	}
-	s.requests, error = kernel_array(Request_Network, config.capacities.requests, s.resources.allocator)
+	s.requests, error = kernel_array(
+		Request_Network,
+		config.capacities.requests,
+		s.resources.allocator,
+	)
 	if error.kind != .None {
 		return nil, error
 	}
@@ -1243,7 +1302,7 @@ network_prepare :: proc(
 			query_budget_left = DNS_TOTAL_QUERY_LIMIT,
 		}
 	}
-	s.task_index, error = kernel_array(^runtime_async.Task, options.task_count, s.resources.allocator)
+	s.task_index, error = kernel_array(^async.Task, options.task_count, s.resources.allocator)
 	if error.kind != .None {
 		return nil, error
 	}
@@ -1254,7 +1313,10 @@ network_prepare :: proc(
 	if options.dns_preparation != .Numeric_Only {
 		prepared := net.resolver_snapshot_prepare(
 			&s.resolver,
-			{name_servers = s.profile.config.http.resolver.name_servers, limits = options.resolver_limits},
+			{
+				name_servers = s.profile.config.http.resolver.name_servers,
+				limits = options.resolver_limits,
+			},
 			s.resources.allocator,
 		)
 
@@ -1262,8 +1324,8 @@ network_prepare :: proc(
 			return nil, network_snapshot_error(prepared)
 		}
 
-		if entropy := runtime_async.prepare_dns_ids(s.dns_ids); entropy.kind != .None {
-			return nil, {kind = .Runtime_Error, runtime = entropy}
+		if entropy := async.prepare_dns_ids(s.dns_ids); entropy.kind != .None {
+			return nil, {kind = .Error, runtime = entropy}
 		}
 
 		s.dns_count = len(s.dns_ids)
@@ -1273,7 +1335,10 @@ network_prepare :: proc(
 	s.task_index[0] = &s.coordinator.task
 	wake, ready := signal.create(runtime, &s.coordinator.task)
 	if !ready {
-		return nil, {kind = .Allocation_Failed, http = {kind = .Allocation_Failed, allocation = .Out_Of_Memory}}
+		return nil, {
+			kind = .Allocation_Failed,
+			http = {kind = .Allocation_Failed, allocation = .Out_Of_Memory},
+		}
 	}
 	s.coordinator.wake = wake
 	s.signal_cells += 1
@@ -1293,7 +1358,10 @@ network_prepare :: proc(
 		notification, created := signal.create(runtime, &actor.task)
 
 		if !created {
-			return nil, {kind = .Allocation_Failed, http = {kind = .Allocation_Failed, allocation = .Out_Of_Memory}}
+			return nil, {
+				kind = .Allocation_Failed,
+				http = {kind = .Allocation_Failed, allocation = .Out_Of_Memory},
+			}
 		}
 
 		actor.wake = notification
@@ -1301,9 +1369,9 @@ network_prepare :: proc(
 	}
 	// Synchronous preparation may have taken time or raced Scope.close. No
 	// expired/closed constructor is published merely because its first check won.
-	now = runtime_async.deadline_after(runtime, 0)
+	now = async.deadline_after(runtime, 0)
 	if config.lifetime.epoch != 0 && now.at >= config.lifetime.at {
-		return nil, {kind = .Runtime_Error, runtime = {kind = .Timeout}}
+		return nil, {kind = .Error, runtime = {kind = .Timeout}}
 	}
 	if probe := network_scope_probe(s.resources.scope); probe.kind != .None {
 		return nil, probe
@@ -1515,7 +1583,11 @@ kernel_begin_complete :: proc(
 	return result, {}
 }
 
-completion_late_failure :: proc(k: ^Kernel, r: ^Request_Slot, now: runtime_async.Deadline) -> surf.HTTP_Error {
+completion_late_failure :: proc(
+	k: ^Kernel,
+	r: ^Request_Slot,
+	now: async.Deadline,
+) -> surf.HTTP_Error {
 	effect := surf.HTTP_Write_Effect.Unknown
 
 	if r.response.status != 0 {
@@ -1523,7 +1595,12 @@ completion_late_failure :: proc(k: ^Kernel, r: ^Request_Slot, now: runtime_async
 	}
 
 	if now.epoch != r.deadline.epoch || now.at <= 0 {
-		return {kind = .Invalid_Config, phase = .Configuration, status = r.response.status, write_effect = effect}
+		return {
+			kind = .Invalid_Config,
+			phase = .Configuration,
+			status = r.response.status,
+			write_effect = effect,
+		}
 	}
 
 	if r.cancel_requested || k.closed {
@@ -1537,7 +1614,12 @@ completion_late_failure :: proc(k: ^Kernel, r: ^Request_Slot, now: runtime_async
 	}
 
 	if now.at >= r.deadline.at {
-		return {kind = .Deadline_Failed, phase = .Deadline, status = r.response.status, write_effect = effect}
+		return {
+			kind = .Deadline_Failed,
+			phase = .Deadline,
+			status = r.response.status,
+			write_effect = effect,
+		}
 	}
 
 	return {}
@@ -1546,7 +1628,7 @@ completion_late_failure :: proc(k: ^Kernel, r: ^Request_Slot, now: runtime_async
 kernel_cleanup_finish :: proc(
 	k: ^Kernel,
 	h: Request_Handle,
-	now: runtime_async.Deadline,
+	now: async.Deadline,
 ) -> (
 	Request_Disposal,
 	bool,
@@ -1600,7 +1682,8 @@ kernel_cleanup_finish :: proc(
 		k.counters.returning_requests -= 1
 		k.counters.completed_requests += 1
 
-		if (r.error.kind == .Deadline_Failed || r.error.phase == .Deadline) && k.counters.deadline_count != max(u64) {
+		if (r.error.kind == .Deadline_Failed || r.error.phase == .Deadline) &&
+		   k.counters.deadline_count != max(u64) {
 			k.counters.deadline_count += 1
 		}
 
@@ -1614,7 +1697,8 @@ kernel_cleanup_finish :: proc(
 	   r.lease != (scopes.Lease{}) {
 		return {}, false, {kind = .Invalid_State}
 	}
-	if r.generation != max(u64) && (k.request_free_count < 0 || k.request_free_count >= len(k.request_free)) {
+	if r.generation != max(u64) &&
+	   (k.request_free_count < 0 || k.request_free_count >= len(k.request_free)) {
 		return {}, false, {kind = .Invalid_State}
 	}
 	generation := r.generation
@@ -1656,12 +1740,23 @@ kernel_poll :: proc(k: ^Kernel) -> (Completion, bool) {
 
 	completion_queue_unlink_locked(k, index, r)
 
-	return {request = {owner_id = k.owner_id, slot = index, generation = r.generation}, error = r.error}, true
+	return {
+			request = {owner_id = k.owner_id, slot = index, generation = r.generation},
+			error = r.error,
+		},
+		true
 }
 
 // Both synchronous consumers use the same Returning machinery as asynchronous
 // cleanup. No generation is recycled until Response/origin callbacks finish.
-completion_detach_locked :: proc(k: ^Kernel, h: Request_Handle, r: ^Request_Slot) -> (Request_Disposal, Client_Error) {
+completion_detach_locked :: proc(
+	k: ^Kernel,
+	h: Request_Handle,
+	r: ^Request_Slot,
+) -> (
+	Request_Disposal,
+	Client_Error,
+) {
 	if r.state != .Completed {
 		return {}, {kind = .Pending}
 	}
@@ -1719,7 +1814,11 @@ completion_detach_locked :: proc(k: ^Kernel, h: Request_Handle, r: ^Request_Slot
 
 	return result, {}
 }
-completion_dispose_and_finish :: proc(k: ^Kernel, h: Request_Handle, disposal: ^Request_Disposal) -> Client_Error {
+completion_dispose_and_finish :: proc(
+	k: ^Kernel,
+	h: Request_Handle,
+	disposal: ^Request_Disposal,
+) -> Client_Error {
 	origin := disposal.origin.origin
 	request_disposal_destroy(disposal)
 
@@ -1858,14 +1957,14 @@ client_close :: proc(c: ^Client) -> Client_Error {
 	// Runtime start/join/destroy and this prestart ownership return are controller
 	// serialized. shutdown remains allowed to race ordinary operational methods.
 	if registered > 0 && runtime != nil {
-		retirement := runtime_async.retire_group_unstarted(runtime, s.task_index)
+		retirement := async.retire_group_unstarted(runtime, s.task_index)
 
 		if retirement.kind == .None {
 			for index in 0 ..< len(s.task_index) {
 				network_task_done(s, index, false)
 			}
 		} else if retirement.kind != .Already_Started && retirement.kind != .Not_Registered {
-			return {kind = .Runtime_Error, runtime = retirement}
+			return {kind = .Error, runtime = retirement}
 		}
 	}
 
@@ -1962,7 +2061,7 @@ client_rollback :: proc(s: ^Client_State, preparing: Preparing_Request) {
 client_submit :: proc(
 	c: ^Client,
 	request: http.Request,
-	deadline: runtime_async.Deadline = {},
+	deadline: async.Deadline = {},
 ) -> (
 	Request_Handle,
 	Client_Error,
@@ -2041,7 +2140,8 @@ client_submit_state :: proc(
 	}
 	// Pure descriptor/wire validation precedes any source traversal or allocation.
 	header: [http.MAX_HEADER_SIZE]u8
-	if _, validation := h1.request_encode_content(header[:], request, .Keep_Alive, .Identity); validation.kind != .None {
+	if _, validation := http1.request_encode_content(header[:], request, .Keep_Alive, .Identity);
+	   validation.kind != .None {
 		return {}, {kind = .Request_Error, http = {kind = validation.kind}}
 	}
 	lease, admission := resources_request_lease(&s.resources)
@@ -2101,11 +2201,17 @@ client_submit_state :: proc(
 }
 
 Submission_Budget :: struct {
-	now, cutoff: runtime_async.Deadline,
+	now, cutoff: async.Deadline,
 }
 
 // Select the immutable total cutoff before validation or any owned allocation.
-submission_budget :: proc(s: ^Client_State, deadline: runtime_async.Deadline) -> (Submission_Budget, Client_Error) {
+submission_budget :: proc(
+	s: ^Client_State,
+	deadline: async.Deadline,
+) -> (
+	Submission_Budget,
+	Client_Error,
+) {
 	sync.lock(&s.mu)
 	published := s.phase == .Published
 	sync.unlock(&s.mu)
@@ -2125,7 +2231,7 @@ submission_budget :: proc(s: ^Client_State, deadline: runtime_async.Deadline) ->
 		return {}, {kind = .Invalid_Config}
 	}
 
-	cutoff := runtime_async.Deadline {
+	cutoff := async.Deadline {
 		epoch = now.epoch,
 		at    = now.at + min(i64(s.config.config.request_timeout), max(i64) - now.at),
 	}

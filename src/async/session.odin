@@ -1936,7 +1936,7 @@ network_clock :: proc(s: ^Client_State) -> (runtime_async.Deadline, Client_Error
 
 	now := runtime_async.deadline_after(s.runtime, 0)
 
-	if now.epoch != s.runtime_epoch || now.at <= 0 {
+	if now.epoch != s.epoch || now.at <= 0 {
 		return {}, {kind = .Invalid_State}
 	}
 

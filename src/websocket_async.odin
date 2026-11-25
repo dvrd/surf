@@ -1,16 +1,16 @@
 package surf
 
-import websocket "shared:websocket"
-import runtime_async "shared:async"
-import adapter "shared:async/connection"
 import "base:intrinsics"
 import rt "base:runtime"
-import "shared:async/tls"
-import x509 "core:crypto/x509"
+import "core:crypto"
+import "core:crypto/x509"
 import "core:mem"
 import "core:net"
 import "core:time"
-import "core:crypto"
+import "shared:async"
+import adapter "shared:async/connection"
+import "shared:async/tls"
+import "shared:websocket"
 
 // Asynchronous RFC 6455 client over the task-owned TCP bridge and, when roots
 // are set, the existing async TLS client. This is not HTTP/2 or QUIC.
@@ -115,16 +115,16 @@ WebSocket_Async_Config :: struct {
 // available to the on_done procedure. Free the session only after on_done.
 WebSocket_Async :: struct {
 	user:                                                                   rawptr,
-	runtime:                                                                ^runtime_async.Runtime,
-	task:                                                                   runtime_async.Task,
+	runtime:                                                                ^async.Runtime,
+	task:                                                                   async.Task,
 	config:                                                                 WebSocket_Async_Config,
 	loop:                                                                   adapter.Executor,
 	transport:                                                              adapter.Transport,
 	secure_conn:                                                            tls.Async_Conn,
 	hs:                                                                     tls.Async_Handshake_Operation,
 	net_read, net_write, net_close:                                         net.Async_Operation,
-	connecting:                                                             runtime_async.Connecting_Socket,
-	connect_deadline:                                                       runtime_async.Deadline,
+	connecting:                                                             async.Connecting_Socket,
+	connect_deadline:                                                       async.Deadline,
 	allocator:                                                              mem.Allocator,
 	failure:                                                                WebSocket_Async_Error,
 	handshake_error:                                                        tls.Error,
@@ -186,7 +186,12 @@ WebSocket_Async_Writer :: enum {
 	Control,
 }
 
-websocket_async_limits :: proc(config: WebSocket_Async_Config) -> (WebSocket_Async_Config, WebSocket_Async_Error) {
+websocket_async_limits :: proc(
+	config: WebSocket_Async_Config,
+) -> (
+	WebSocket_Async_Config,
+	WebSocket_Async_Error,
+) {
 	settings := config
 	if settings.target == "" {
 		settings.target = "/"
@@ -232,7 +237,9 @@ websocket_async_limits :: proc(config: WebSocket_Async_Config) -> (WebSocket_Asy
 	   settings.handshake_timeout < 0 ||
 	   settings.io_timeout < 0 ||
 	   settings.close_timeout < 0 ||
-	   len(settings.roots) > 0 && settings.server_name == "" && websocket_async_name(settings.host) == "" {
+	   len(settings.roots) > 0 &&
+		   settings.server_name == "" &&
+		   websocket_async_name(settings.host) == "" {
 		return {}, {kind = .Invalid_Config}
 	}
 
@@ -274,7 +281,7 @@ websocket_async_name :: proc(host: string) -> string {
 // on_done may be nil. A rejected bind leaves the session unchanged.
 websocket_async_bind :: proc(
 	session: ^WebSocket_Async,
-	runtime: ^runtime_async.Runtime,
+	runtime: ^async.Runtime,
 	config: WebSocket_Async_Config,
 	on_done: proc(_: rawptr) = nil,
 ) -> WebSocket_Async_Error {
@@ -315,10 +322,13 @@ websocket_async_owner_ok :: proc(session: ^WebSocket_Async) -> bool {
 		return true
 	}
 
-	return runtime_async.is_current_task(&session.task)
+	return async.is_current_task(&session.task)
 }
 
-websocket_async_upgrade :: proc(session: ^WebSocket_Async, op: ^WebSocket_Async_Op) -> WebSocket_Async_Error {
+websocket_async_upgrade :: proc(
+	session: ^WebSocket_Async,
+	op: ^WebSocket_Async_Op,
+) -> WebSocket_Async_Error {
 	if !websocket_async_owner_ok(session) || op == nil || op.callback == nil || op.pending {
 		return {kind = .Invalid_State}
 	}
@@ -344,7 +354,11 @@ websocket_async_upgrade :: proc(session: ^WebSocket_Async, op: ^WebSocket_Async_
 	return {}
 }
 
-websocket_async_read :: proc(session: ^WebSocket_Async, op: ^WebSocket_Async_Op, dst: []u8) -> WebSocket_Async_Error {
+websocket_async_read :: proc(
+	session: ^WebSocket_Async,
+	op: ^WebSocket_Async_Op,
+	dst: []u8,
+) -> WebSocket_Async_Error {
 	if !websocket_async_owner_ok(session) || op == nil || op.callback == nil || op.pending {
 		return {kind = .Invalid_State}
 	}
@@ -379,7 +393,8 @@ websocket_async_write :: proc(
 	if session.phase != .Open || session.local_close {
 		return {kind = .Invalid_State}
 	}
-	if error := websocket.message_validate(opcode, src, session.config.max_message_size); error.kind != .None {
+	if error := websocket.message_validate(opcode, src, session.config.max_message_size);
+	   error.kind != .None {
 		return websocket_async_message_error(error)
 	}
 	if len(src) > session.config.max_queued_bytes ||
@@ -443,7 +458,10 @@ websocket_async_close :: proc(
 
 // Safe from another thread. The operation stays borrowed until its callback.
 // Close cannot be cancelled. A repeated request while pending is harmless.
-websocket_async_cancel :: proc(session: ^WebSocket_Async, op: ^WebSocket_Async_Op) -> WebSocket_Async_Error {
+websocket_async_cancel :: proc(
+	session: ^WebSocket_Async,
+	op: ^WebSocket_Async_Op,
+) -> WebSocket_Async_Error {
 	if session == nil || !session.bound || op == nil || !op.pending {
 		return {kind = .Invalid_State}
 	}
@@ -455,7 +473,7 @@ websocket_async_cancel :: proc(session: ^WebSocket_Async, op: ^WebSocket_Async_O
 	intrinsics.atomic_store(&op.cancel_flag, 1)
 
 	if session.runtime != nil {
-		runtime_async.wake(session.runtime, &session.task)
+		async.wake(session.runtime, &session.task)
 	}
 
 	return {}
@@ -507,7 +525,7 @@ websocket_async_complete :: proc(op: ^WebSocket_Async_Op, error: WebSocket_Async
 	}
 }
 
-websocket_async_resume :: proc(data: rawptr) -> runtime_async.Resume_Result {
+websocket_async_resume :: proc(data: rawptr) -> async.Resume_Result {
 	session := cast(^WebSocket_Async)data
 	session.running = true
 	if session.phase == .Terminal {
@@ -522,7 +540,7 @@ websocket_async_resume :: proc(data: rawptr) -> runtime_async.Resume_Result {
 		return .Yield
 	}
 
-	drive_result := runtime_async.Resume_Result.Waiting
+	drive_result := async.Resume_Result.Waiting
 
 	if session.executor_ready {
 		drive_result = adapter.drive(&session.loop)
@@ -538,7 +556,7 @@ websocket_async_resume :: proc(data: rawptr) -> runtime_async.Resume_Result {
 	return drive_result
 }
 
-websocket_async_on_cancel :: proc(data: rawptr) -> runtime_async.Resume_Result {
+websocket_async_on_cancel :: proc(data: rawptr) -> async.Resume_Result {
 	session := cast(^WebSocket_Async)data
 	session.running = true
 	session.task_cancelled = true
@@ -573,7 +591,7 @@ websocket_async_on_cancel :: proc(data: rawptr) -> runtime_async.Resume_Result {
 	return result
 }
 
-websocket_async_connect :: proc(session: ^WebSocket_Async) -> runtime_async.Resume_Result {
+websocket_async_connect :: proc(session: ^WebSocket_Async) -> async.Resume_Result {
 	if websocket_async_cancelled(session.upgrade_op) || session.task_cancelled {
 		websocket_async_finish_early(session, {kind = .Cancelled})
 		return .Done
@@ -593,8 +611,11 @@ websocket_async_connect :: proc(session: ^WebSocket_Async) -> runtime_async.Resu
 			}
 		}
 
-		session.connect_deadline = runtime_async.deadline_after(session.runtime, session.config.handshake_timeout)
-		pending, error := runtime_async.begin_connect(
+		session.connect_deadline = async.deadline_after(
+			session.runtime,
+			session.config.handshake_timeout,
+		)
+		pending, error := async.begin_connect(
 			session.runtime,
 			&session.task,
 			session.config.endpoint,
@@ -611,7 +632,7 @@ websocket_async_connect :: proc(session: ^WebSocket_Async) -> runtime_async.Resu
 		session.phase = .Connecting
 	}
 
-	socket, error := runtime_async.finish_connect(session.connecting, session.connect_deadline)
+	socket, error := async.finish_connect(session.connecting, session.connect_deadline)
 	if error.kind == .Pending {
 		return .Waiting
 	}
@@ -633,14 +654,19 @@ websocket_async_connect :: proc(session: ^WebSocket_Async) -> runtime_async.Resu
 	return .Yield
 }
 
-websocket_async_wrap :: proc(session: ^WebSocket_Async, socket: runtime_async.Socket) -> WebSocket_Async_Error {
-	if error := adapter.init_executor(&session.loop, session.runtime, &session.task, {}); error.kind != .None {
+websocket_async_wrap :: proc(
+	session: ^WebSocket_Async,
+	socket: async.Socket,
+) -> WebSocket_Async_Error {
+	if error := adapter.init_executor(&session.loop, session.runtime, &session.task, {});
+	   error.kind != .None {
 		return websocket_async_runtime_error(error)
 	}
 
 	session.executor_ready = true
 
-	if error := adapter.init_transport(&session.transport, &session.loop, socket); error.kind != .None {
+	if error := adapter.init_transport(&session.transport, &session.loop, socket);
+	   error.kind != .None {
 		return websocket_async_runtime_error(error)
 	}
 
@@ -672,14 +698,18 @@ websocket_async_wrap :: proc(session: ^WebSocket_Async, socket: runtime_async.So
 		&session.secure_conn,
 		adapter.stream(&session.transport),
 		adapter.executor(&session.loop),
-		{server_name = name, root_cas = session.config.roots, handshake_timeout = session.config.handshake_timeout},
+		{
+			server_name = name,
+			root_cas = session.config.roots,
+			handshake_timeout = session.config.handshake_timeout,
+		},
 		session.allocator,
 	); error != nil {
 		return {kind = .TLS_Failed, tls_error = error}
 	}
 
 	session.tls_ready = true
-	deadline := runtime_async.deadline_after(session.runtime, session.config.handshake_timeout)
+	deadline := async.deadline_after(session.runtime, session.config.handshake_timeout)
 
 	if error := adapter.set_request_budget(&session.loop, deadline); error.kind != .None {
 		return websocket_async_runtime_error(error)
@@ -752,7 +782,9 @@ websocket_async_step :: proc(session: ^WebSocket_Async) -> bool {
 
 	if session.close_state == .Done && session.phase != .Terminal {
 		if !session.ops_finished {
-			if session.phase != .Failed && session.failure.kind == .None && session.close_op != nil {
+			if session.phase != .Failed &&
+			   session.failure.kind == .None &&
+			   session.close_op != nil {
 				session.clean = session.close_sent && session.peer_closed
 				op := session.close_op
 				session.close_op = nil
@@ -820,11 +852,7 @@ websocket_async_secure_step :: proc(session: ^WebSocket_Async) -> bool {
 		}
 		websocket_async_fail(
 			session,
-			{
-				kind = .TLS_Failed,
-				transport = transport,
-				tls_error = session.handshake_error,
-			},
+			{kind = .TLS_Failed, transport = transport, tls_error = session.handshake_error},
 		)
 		return true
 	}
@@ -835,7 +863,10 @@ websocket_async_secure_step :: proc(session: ^WebSocket_Async) -> bool {
 	}
 
 	if !tls.async_connection_state(&session.secure_conn).handshake_complete {
-		websocket_async_fail(session, {kind = .TLS_Failed, tls_error = tls.General_Error.Invalid_State})
+		websocket_async_fail(
+			session,
+			{kind = .TLS_Failed, tls_error = tls.General_Error.Invalid_State},
+		)
 		return true
 	}
 
@@ -906,7 +937,9 @@ websocket_async_upgrade_step :: proc(session: ^WebSocket_Async) -> bool {
 		return true
 	}
 
-	if session.upgrade_len > 0 || session.inbox_at < session.inbox_len || session.read_state == .Done {
+	if session.upgrade_len > 0 ||
+	   session.inbox_at < session.inbox_len ||
+	   session.read_state == .Done {
 		if !websocket_async_take_upgrade(session) {
 			return session.phase == .Failed
 		}
@@ -918,7 +951,10 @@ websocket_async_upgrade_step :: proc(session: ^WebSocket_Async) -> bool {
 
 		if validate_error == .Header_Incomplete {
 			if session.upgrade_len == len(session.upgrade_buf) {
-				websocket_async_fail(session, {kind = .Upgrade_Failed, upgrade = .Header_Oversized})
+				websocket_async_fail(
+					session,
+					{kind = .Upgrade_Failed, upgrade = .Header_Oversized},
+				)
 				return true
 			}
 
@@ -971,7 +1007,10 @@ websocket_async_take_upgrade :: proc(session: ^WebSocket_Async) -> bool {
 	if available <= 0 {
 		return session.upgrade_len > 0
 	}
-	n := copy(session.upgrade_buf[session.upgrade_len:], session.inbox[session.inbox_at:session.inbox_len])
+	n := copy(
+		session.upgrade_buf[session.upgrade_len:],
+		session.inbox[session.inbox_at:session.inbox_len],
+	)
 	session.upgrade_len += n
 	session.inbox_at += n
 
@@ -1023,12 +1062,16 @@ websocket_async_open_step :: proc(session: ^WebSocket_Async) -> bool {
 	if session.read_state == .Done {
 		session.read_cancel_sent = false
 
-		if session.read_error == net.Connection_Error.Cancelled || (session.read_error == nil && session.inbox_len == 0) {
+		if session.read_error == net.Connection_Error.Cancelled ||
+		   (session.read_error == nil && session.inbox_len == 0) {
 			empty := session.read_error == nil && session.inbox_len == 0
 			session.read_state = .Idle
 
 			if empty {
-				websocket_async_fail(session, {kind = .IO_Failed, transport = net.Connection_Error.No_Progress})
+				websocket_async_fail(
+					session,
+					{kind = .IO_Failed, transport = net.Connection_Error.No_Progress},
+				)
 				return true
 			}
 
@@ -1089,7 +1132,8 @@ websocket_async_open_step :: proc(session: ^WebSocket_Async) -> bool {
 	   session.inbox_at >= session.inbox_len &&
 	   !session.message.message_ready {
 		if closing_read && session.close_deadline != (time.Time{}) {
-			if session.read_op == nil || time.diff(session.read_deadline, session.close_deadline) < 0 {
+			if session.read_op == nil ||
+			   time.diff(session.read_deadline, session.close_deadline) < 0 {
 				session.read_deadline = session.close_deadline
 			}
 		}
@@ -1139,7 +1183,10 @@ websocket_async_parse :: proc(session: ^WebSocket_Async) -> bool {
 			progressed = true
 		}
 
-		header, _, frame_error := websocket.frame_header_decode(session.header_raw[:session.header_have], false)
+		header, _, frame_error := websocket.frame_header_decode(
+			session.header_raw[:session.header_have],
+			false,
+		)
 
 		if frame_error != .None {
 			websocket_async_fail(session, {kind = .Invalid_Frame, frame = frame_error})
@@ -1174,7 +1221,8 @@ websocket_async_parse :: proc(session: ^WebSocket_Async) -> bool {
 			session.payload_have = 0
 
 			if session.payload_need == 0 {
-				if finish_error := websocket.message_finish(&session.message, header.fin); finish_error.kind != .None {
+				if finish_error := websocket.message_finish(&session.message, header.fin);
+				   finish_error.kind != .None {
 					websocket_async_fail(session, websocket_async_message_error(finish_error))
 					return true
 				}
@@ -1236,7 +1284,8 @@ websocket_async_fill_payload :: proc(session: ^WebSocket_Async) -> bool {
 	}
 	session.payload_need = 0
 
-	if finish_error := websocket.message_finish(&session.message, session.header.fin); finish_error.kind != .None {
+	if finish_error := websocket.message_finish(&session.message, session.header.fin);
+	   finish_error.kind != .None {
 		websocket_async_fail(session, websocket_async_message_error(finish_error))
 		return false
 	}
@@ -1260,7 +1309,10 @@ websocket_async_finish_control :: proc(session: ^WebSocket_Async, body: []u8) ->
 	case .Close:
 		if frame_error := websocket.close_payload_validate(body); frame_error != .None {
 			code := websocket_close_validation_code(frame_error)
-			websocket_async_fail(session, {kind = .Invalid_Frame, frame = frame_error, close_code = code})
+			websocket_async_fail(
+				session,
+				{kind = .Invalid_Frame, frame = frame_error, close_code = code},
+			)
 			return false
 		}
 		copy(session.peer_close_body[:], body)
@@ -1363,7 +1415,13 @@ websocket_async_send_next :: proc(session: ^WebSocket_Async) -> bool {
 	}
 
 	if (session.local_close || session.echo_close) && !session.close_sent {
-		return websocket_async_arm_frame(session, .Close, session.close_body[:session.close_len], true, .Control)
+		return websocket_async_arm_frame(
+			session,
+			.Close,
+			session.close_body[:session.close_len],
+			true,
+			.Control,
+		)
 	}
 
 	if session.phase != .Open || session.queue_count == 0 {
@@ -1524,11 +1582,20 @@ websocket_async_arm_read :: proc(session: ^WebSocket_Async) -> bool {
 	return true
 }
 
-websocket_async_arm_write :: proc(session: ^WebSocket_Async, src: []u8, writer: WebSocket_Async_Writer) -> bool {
+websocket_async_arm_write :: proc(
+	session: ^WebSocket_Async,
+	src: []u8,
+	writer: WebSocket_Async_Writer,
+) -> bool {
 	if session.write_state != .Idle {
 		return false
 	}
-	error := net.async_write(websocket_async_stream(session), &session.net_write, src, websocket_async_deadline_tick(session.write_deadline))
+	error := net.async_write(
+		websocket_async_stream(session),
+		&session.net_write,
+		src,
+		websocket_async_deadline_tick(session.write_deadline),
+	)
 
 	if error != nil {
 		websocket_async_fail(session, websocket_async_net_error(error))
@@ -1622,7 +1689,7 @@ websocket_async_release :: proc(session: ^WebSocket_Async) {
 	websocket.message_release(&session.message)
 }
 
-websocket_async_runtime_error :: proc(error: runtime_async.Error) -> WebSocket_Async_Error {
+websocket_async_runtime_error :: proc(error: async.Error) -> WebSocket_Async_Error {
 	kind := WebSocket_Async_Error_Kind.IO_Failed
 	if error.kind == .Timeout {
 		kind = .Timeout

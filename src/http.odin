@@ -1,23 +1,23 @@
 package surf
 
-import step "core:compress/step"
-import "shared:async/tls"
 import "core:io"
 import "core:mem"
-import charged "shared:async/mem/budget"
-import owned "shared:async/mem/owned"
-import trans "core:net"
+import "core:net"
 import "core:strings"
-import resources "shared:async/sync/budget"
 import "core:time"
-import http "shared:async/http"
+import "shared:async/compress/step"
+import "shared:async/http"
 import http1 "shared:async/http/v1"
 import h3 "shared:async/http/v3"
+import charged "shared:async/mem/budget"
+import "shared:async/mem/owned"
+import resources "shared:async/sync/budget"
+import "shared:async/tls"
 
 HTTP_Error :: struct {
 	kind:          http.Error_Kind,
-	transport:     trans.Network_Error,
-	network:       trans.Network_Error,
+	transport:     net.Network_Error,
+	network:       net.Network_Error,
 	tls_error:     tls.Error,
 	allocation:    mem.Allocator_Error,
 	phase:         HTTP_Phase,
@@ -35,7 +35,7 @@ HTTP_Error :: struct {
 }
 
 // Return false to refuse every address. user is Config.address_policy_data.
-Address_Policy :: proc(host: string, addresses: []trans.Endpoint, user: rawptr) -> bool
+Address_Policy :: proc(host: string, addresses: []net.Endpoint, user: rawptr) -> bool
 
 Config :: struct {
 	_http3_cancel:       proc(_: rawptr) -> bool,
@@ -51,7 +51,7 @@ Config :: struct {
 	// Zero uses the remaining total budget. A positive value bounds DNS+TCP+TLS
 	// together for each new connection, always capped by the total deadline.
 	setup_timeout:       time.Duration,
-	resolver:            trans.Resolver_Options,
+	resolver:            net.Resolver_Options,
 	// Nil allows every resolved address. Called with the URL host, the exact
 	// endpoints about to be dialed, and address_policy_data, after DNS or an IP
 	// literal is known and before any socket is opened. Each redirect hop is
@@ -199,7 +199,7 @@ execute_internal :: proc(
 			kind = .IO_Failed,
 			phase = .Cancellation,
 			write_effect = .Not_Sent,
-			transport = trans.Connection_Error.Cancelled,
+			transport = net.Connection_Error.Cancelled,
 		}
 	}
 	current := request
@@ -273,7 +273,7 @@ execute_internal :: proc(
 						kind = .IO_Failed,
 						phase = .Cancellation,
 						write_effect = err.write_effect,
-						transport = trans.Connection_Error.Cancelled,
+						transport = net.Connection_Error.Cancelled,
 					}
 				}
 
@@ -422,7 +422,7 @@ exchange_tls :: proc(
 	adapter := TLS_Adapter {
 		connection = connection,
 	}
-	stream := trans.Connection {
+	stream := net.Connection {
 		data  = &adapter,
 		read  = tls_read,
 		write = tls_write,
@@ -465,11 +465,11 @@ execute_tcp :: proc(
 		return {}, setup_error
 	}
 
-	connection := trans.TCP_Connection {
+	connection := net.TCP_Connection {
 		socket = socket,
 	}
-	stream := trans.tcp_connection(&connection)
-	deadline_err := trans.set_deadline(stream, total_deadline)
+	stream := net.tcp_connection(&connection)
+	deadline_err := net.set_deadline(stream, total_deadline)
 	if deadline_err == nil {
 		response, err = exchange_run(
 			stream,
@@ -556,16 +556,13 @@ execute_redirect :: proc(
 	// A name is checked after the next hop resolves. An IP literal is already
 	// the address that would be dialed, so refuse it before following the hop.
 	if config.address_policy != nil {
-		if literal := trans.parse_address(new_parsed.host); literal != nil {
-			endpoint := trans.Endpoint {
+		if literal := net.parse_address(new_parsed.host); literal != nil {
+			endpoint := net.Endpoint {
 				address = literal,
 				port    = new_parsed.port,
 			}
-			if rejected := address_policy_check(
-				config,
-				new_parsed.host,
-				[]trans.Endpoint{endpoint},
-			); rejected.kind != .None {
+			if rejected := address_policy_check(config, new_parsed.host, []net.Endpoint{endpoint});
+			   rejected.kind != .None {
 				delete(new_url, allocator)
 				return "", rejected
 			}
@@ -610,7 +607,7 @@ redirect_origin_safe :: proc(request: http.Request, previous, next: http.URL) ->
 // policy, does not close it, and consumes exactly one response. The caller must
 // set deadlines. Any unconsumed bytes are discarded: do not reuse the stream.
 exchange :: proc(
-	stream: trans.Connection,
+	stream: net.Connection,
 	request: http.Request,
 	max_body_size: int = 0,
 	allocator := context.allocator,
@@ -626,7 +623,7 @@ exchange :: proc(
 // One exchange on a connected stream. A nil upload sends request.body; deadline
 // only bounds upload source reads.
 exchange_run :: proc(
-	stream: trans.Connection,
+	stream: net.Connection,
 	request: http.Request,
 	upload: ^Upload_Source,
 	max_body_size: int,
@@ -697,7 +694,7 @@ HTTP_Exchange_Outcome :: struct {
 }
 
 exchange_internal :: proc(
-	stream: trans.Connection,
+	stream: net.Connection,
 	request: http.Request,
 	max_body_size: int,
 	allocator: mem.Allocator,
@@ -706,7 +703,7 @@ exchange_internal :: proc(
 	Response,
 	HTTP_Error,
 ) {
-	if !trans.connection_valid(stream) {
+	if !net.connection_valid(stream) {
 		return {}, {kind = .Invalid_Config}
 	}
 
@@ -733,11 +730,11 @@ exchange_internal :: proc(
 	}
 
 	outcome.write_started = true
-	if _, write_err := trans.write_all(stream, encoded[:n]); write_err != nil {
+	if _, write_err := net.write_all(stream, encoded[:n]); write_err != nil {
 		return {}, {kind = .IO_Failed, transport = write_err, phase = .Write}
 	}
 
-	if _, write_err := trans.write_all(stream, request.body); write_err != nil {
+	if _, write_err := net.write_all(stream, request.body); write_err != nil {
 		return {}, {kind = .IO_Failed, transport = write_err, phase = .Write}
 	}
 
@@ -745,7 +742,7 @@ exchange_internal :: proc(
 }
 
 exchange_read_response :: proc(
-	stream: trans.Connection,
+	stream: net.Connection,
 	request: http.Request,
 	limit: int,
 	allocator: mem.Allocator,
@@ -919,7 +916,7 @@ response_read_eof :: proc(reader: ^Reader, body: ^[dynamic]u8, limit: int) -> HT
 		operation_error_2 := reader_fill(reader)
 
 		if operation_error_2.kind != .None {
-			if reader.pending == trans.Connection_Error.Peer_Closed {
+			if reader.pending == net.Connection_Error.Peer_Closed {
 				break
 			}
 
@@ -996,10 +993,10 @@ response_read_chunked :: proc(reader: ^Reader, body: ^[dynamic]u8, limit: int) -
 }
 
 Reader :: struct {
-	stream:   trans.Connection,
+	stream:   net.Connection,
 	buffer:   [8192]u8,
 	at, used: int,
-	pending:  trans.Network_Error,
+	pending:  net.Network_Error,
 }
 HTTP_MAX_CHUNK_METADATA_SIZE :: 65536
 
@@ -1009,7 +1006,7 @@ reader_fill :: proc(r: ^Reader) -> HTTP_Error {
 	}
 
 	if r.pending != nil {
-		if r.pending == trans.Connection_Error.Peer_Closed {
+		if r.pending == net.Connection_Error.Peer_Closed {
 			return {kind = .Unexpected_EOF, transport = r.pending}
 		}
 
@@ -1019,7 +1016,7 @@ reader_fill :: proc(r: ^Reader) -> HTTP_Error {
 	n, e := r.stream.read(r.stream.data, r.buffer[:])
 
 	if n < 0 || n > len(r.buffer) {
-		return {kind = .IO_Failed, transport = trans.Connection_Error.Invalid_Count}
+		return {kind = .IO_Failed, transport = net.Connection_Error.Invalid_Count}
 	}
 
 	r.at, r.used, r.pending = 0, n, e
@@ -1031,7 +1028,7 @@ reader_fill :: proc(r: ^Reader) -> HTTP_Error {
 		return {kind = .No_Progress}
 	}
 
-	if e == trans.Connection_Error.Peer_Closed {
+	if e == net.Connection_Error.Peer_Closed {
 		return {kind = .Unexpected_EOF, transport = e}
 	}
 
@@ -1155,19 +1152,19 @@ TLS_Adapter :: struct {
 	connection: ^tls.Conn,
 	last_error: tls.Error,
 }
-tls_network :: proc(error: tls.Error) -> trans.Network_Error {
+tls_network :: proc(error: tls.Error) -> net.Network_Error {
 	#partial switch cause in error {
-	case trans.TCP_Recv_Error:
+	case net.TCP_Recv_Error:
 		return cause
-	case trans.TCP_Send_Error:
+	case net.TCP_Send_Error:
 		return cause
-	case trans.Dial_Error:
+	case net.Dial_Error:
 		return cause
 	}
 
 	return nil
 }
-tls_read :: proc(data: rawptr, dst: []u8) -> (int, trans.Network_Error) {
+tls_read :: proc(data: rawptr, dst: []u8) -> (int, net.Network_Error) {
 	a := cast(^TLS_Adapter)data
 	n, e := tls.read(a.connection, dst)
 	a.last_error = e
@@ -1177,16 +1174,16 @@ tls_read :: proc(data: rawptr, dst: []u8) -> (int, trans.Network_Error) {
 	}
 
 	if protocol, ok := e.(tls.Protocol_Error); ok && protocol == .Close_Notify {
-		return n, trans.Connection_Error.Peer_Closed
+		return n, net.Connection_Error.Peer_Closed
 	}
 
 	if network := tls_network(e); network != nil {
 		return n, network
 	}
 
-	return n, trans.Connection_Error.Protocol_Failed
+	return n, net.Connection_Error.Protocol_Failed
 }
-tls_write :: proc(data: rawptr, src: []u8) -> (int, trans.Network_Error) {
+tls_write :: proc(data: rawptr, src: []u8) -> (int, net.Network_Error) {
 	a := cast(^TLS_Adapter)data
 	n, e := tls.write(a.connection, src)
 	a.last_error = e
@@ -1199,13 +1196,13 @@ tls_write :: proc(data: rawptr, src: []u8) -> (int, trans.Network_Error) {
 		return n, network
 	}
 
-	return n, trans.Connection_Error.Protocol_Failed
+	return n, net.Connection_Error.Protocol_Failed
 }
-tls_close :: proc(data: rawptr) -> trans.Network_Error {
+tls_close :: proc(data: rawptr) -> net.Network_Error {
 	a := cast(^TLS_Adapter)data
 	e := tls.abort(a.connection)
 	if e != nil {
-		return trans.Connection_Error.Closed
+		return net.Connection_Error.Closed
 	}
 
 	return {}
@@ -1427,7 +1424,7 @@ response_take_body :: proc(response: ^Response) -> (chunk: owned.Chunk, error: o
 address_policy_check :: proc(
 	config: Config,
 	host: string,
-	addresses: []trans.Endpoint,
+	addresses: []net.Endpoint,
 ) -> HTTP_Error {
 	if config.address_policy == nil {
 		return {}
@@ -1444,8 +1441,8 @@ address_policy_check :: proc(
 // 240.0.0.0/4. IPv6: ::1, fe80::/10, fc00::/7, ::, ff00::/8, and the NAT64
 // well-known prefix 64:ff9b::/96. An IPv4-mapped address is refused when its
 // IPv4 form is. One refused address refuses the whole set.
-address_policy_public_only :: proc(_: string, addresses: []trans.Endpoint, _: rawptr) -> bool {
-	ip4_refused :: proc(ip: trans.IP4_Address) -> bool {
+address_policy_public_only :: proc(_: string, addresses: []net.Endpoint, _: rawptr) -> bool {
+	ip4_refused :: proc(ip: net.IP4_Address) -> bool {
 		if ip[0] == 0 || ip[0] == 10 || ip[0] == 127 {
 			return true
 		}
@@ -1473,8 +1470,8 @@ address_policy_public_only :: proc(_: string, addresses: []trans.Endpoint, _: ra
 		return false
 	}
 
-	ip6_refused :: proc(ip: trans.IP6_Address) -> bool {
-		if ip == {} || ip == trans.IP6_Loopback {
+	ip6_refused :: proc(ip: net.IP6_Address) -> bool {
+		if ip == {} || ip == net.IP6_Loopback {
 			return true
 		}
 
@@ -1519,9 +1516,9 @@ address_policy_public_only :: proc(_: string, addresses: []trans.Endpoint, _: ra
 		refused := false
 
 		switch ip in address.address {
-		case trans.IP4_Address:
+		case net.IP4_Address:
 			refused = ip4_refused(ip)
-		case trans.IP6_Address:
+		case net.IP6_Address:
 			refused = ip6_refused(ip)
 		}
 
@@ -1556,10 +1553,10 @@ bounded_socket :: proc(
 	config: Config,
 	deadline: time.Time,
 ) -> (
-	trans.TCP_Socket,
+	net.TCP_Socket,
 	HTTP_Error,
 ) {
-	endpoints, resolve_error := trans.resolve_endpoints_until(
+	endpoints, resolve_error := net.resolve_endpoints_until(
 		url.host,
 		url.port,
 		deadline,
@@ -1580,7 +1577,7 @@ bounded_socket :: proc(
 		return 0, rejected
 	}
 
-	socket, connect_error := trans.dial_tcp_candidates_until(endpoints, deadline)
+	socket, connect_error := net.dial_tcp_candidates_until(endpoints, deadline)
 
 	if connect_error != nil {
 		return 0, http_error_classify(
@@ -1803,7 +1800,8 @@ http_error_classify :: proc(
 	}
 	// Record failures stay TLS. A transport cause keeps the read or write phase
 	// until a timeout or cancellation is known.
-	if protocol, ok := result.tls_error.(tls.Protocol_Error); ok && protocol != .None && protocol != .Close_Notify {
+	if protocol, ok := result.tls_error.(tls.Protocol_Error);
+	   ok && protocol != .None && protocol != .Close_Notify {
 		result.phase = .TLS
 	}
 	if general, ok := result.tls_error.(tls.General_Error); ok {
@@ -1831,41 +1829,41 @@ http_error_classify :: proc(
 	return result
 }
 
-http_network_phase :: proc(error: trans.Network_Error) -> HTTP_Phase {
+http_network_phase :: proc(error: net.Network_Error) -> HTTP_Phase {
 	if error == nil {
 		return .Unknown
 	}
 
 	#partial switch cause in error {
-	case trans.Resolve_Error:
+	case net.Resolve_Error:
 		return .DNS
-	case trans.DNS_Error:
+	case net.DNS_Error:
 		if cause == .Timeout {
 			return .Deadline
 		}
 		return .DNS
-	case trans.Dial_Error:
+	case net.Dial_Error:
 		if cause == .Timeout {
 			return .Deadline
 		}
 		return .Connect
-	case trans.TCP_Recv_Error:
+	case net.TCP_Recv_Error:
 		if cause == .Timeout {
 			return .Deadline
 		}
 		return .Read
-	case trans.TCP_Send_Error:
+	case net.TCP_Send_Error:
 		if cause == .Timeout {
 			return .Deadline
 		}
 		return .Write
-	case trans.Connection_Error:
+	case net.Connection_Error:
 		if cause == .Cancelled {
 			return .Cancellation
 		}
-	case trans.Create_Socket_Error:
+	case net.Create_Socket_Error:
 		return .Connect
-	case trans.Parse_Endpoint_Error:
+	case net.Parse_Endpoint_Error:
 		return .Configuration
 	}
 

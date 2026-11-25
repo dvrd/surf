@@ -1,19 +1,20 @@
 package surf
 
-import http "shared:async/http"
-import http3 "shared:async/http/v3"
-import "core:mem"
+import "base:intrinsics"
 import "core:io"
+import "core:mem"
 import "core:net"
 import "core:strings"
 import "core:time"
-import "base:intrinsics"
+import "shared:async/http"
+import http3 "shared:async/http/v3"
 
 Http3_Body :: struct {
 	body:       [dynamic]u8,
 	limit:      int,
 	allocation: mem.Allocator_Error,
 }
+
 http3_body_write :: proc(data: rawptr, chunk: []u8, final: bool) -> (int, http3.Body_Status) {
 	b := cast(^Http3_Body)data
 
@@ -30,6 +31,7 @@ http3_body_write :: proc(data: rawptr, chunk: []u8, final: bool) -> (int, http3.
 
 	return n, .Ready
 }
+
 http3_body_init :: proc(b: ^Http3_Body, config: Config, allocator: mem.Allocator) -> HTTP_Error {
 	b.limit = config.max_body_size
 
@@ -44,7 +46,12 @@ http3_body_init :: proc(b: ^Http3_Body, config: Config, allocator: mem.Allocator
 	body, e := make([dynamic]u8, 0, allocator)
 
 	if e != nil {
-		return {kind = .Allocation_Failed, phase = .Configuration, allocation = e, write_effect = .Not_Sent}
+		return {
+			kind = .Allocation_Failed,
+			phase = .Configuration,
+			allocation = e,
+			write_effect = .Not_Sent,
+		}
 	}
 
 	b.body = body
@@ -105,7 +112,8 @@ execute_http3 :: proc(
 	if resolve_error.kind != .None {
 		return {}, resolve_error
 	}
-	if rejected := address_policy_check(config, url.host, []net.Endpoint{endpoint}); rejected.kind != .None {
+	if rejected := address_policy_check(config, url.host, []net.Endpoint{endpoint});
+	   rejected.kind != .None {
 		return {}, rejected
 	}
 	path := url.target
@@ -150,7 +158,11 @@ execute_http3 :: proc(
 	}
 	trailer_fields: [32]http3.Field
 	trailer_names: [4096]u8
-	trailers, trailers_fit := http3_trailer_fields(&trailer_fields, &trailer_names, request.trailers)
+	trailers, trailers_fit := http3_trailer_fields(
+		&trailer_fields,
+		&trailer_names,
+		request.trailers,
+	)
 	if !trailers_fit {
 		return {}, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
 	}
@@ -191,7 +203,13 @@ execute_http3 :: proc(
 			deadline,
 		)
 	} else {
-		result = http3.client_exchange_request(endpoint, url.host, wire, config.tls.root_cas, deadline)
+		result = http3.client_exchange_request(
+			endpoint,
+			url.host,
+			wire,
+			config.tls.root_cas,
+			deadline,
+		)
 	}
 	if result.error != .None {
 		if aggregate.allocation != nil {
@@ -207,14 +225,17 @@ execute_http3 :: proc(
 		error.source_io = source.error
 		return {}, error
 	}
+
 	response, e := http3_response(&result, allocator)
 	if e.kind != .None {
 		return {}, e
 	}
 	delete(response.body_storage)
+
 	response.body_storage = aggregate.body
 	aggregate.body = {}
 	response.body = response.body_storage[:]
+
 	return response, {}
 }
 
@@ -241,7 +262,12 @@ http3_upload_read :: proc(data: rawptr, destination: []u8) -> (int, bool) {
 }
 
 // Alt-Svc wins only while the lookup is valid. Otherwise the URL port, or 443.
-http3_dial_port :: proc(cache: ^Alt_Svc_Cache, host: string, url_port: int, now: time.Time) -> int {
+http3_dial_port :: proc(
+	cache: ^Alt_Svc_Cache,
+	host: string,
+	url_port: int,
+	now: time.Time,
+) -> int {
 	if port, ok := alt_svc_lookup(cache, host, now, url_port); ok && port > 0 {
 		return port
 	}
@@ -270,7 +296,11 @@ http3_resolve :: proc(
 			resolve_error = net.Resolve_Error.Unable_To_Resolve
 		}
 
-		return {}, http_error_classify({kind = .Dial_Failed, network = resolve_error}, .DNS, .Not_Sent)
+		return {}, http_error_classify(
+			{kind = .Dial_Failed, network = resolve_error},
+			.DNS,
+			.Not_Sent,
+		)
 	}
 	return endpoints.items[0], {}
 }
@@ -306,7 +336,12 @@ http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) 
 	}
 
 	if result.error == .Cancelled {
-		return {kind = .IO_Failed, phase = .Cancellation, write_effect = effect, transport = net.Connection_Error.Cancelled}
+		return {
+			kind = .IO_Failed,
+			phase = .Cancellation,
+			write_effect = effect,
+			transport = net.Connection_Error.Cancelled,
+		}
 	}
 
 	if result.error == .Certificate {
@@ -316,7 +351,13 @@ http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) 
 	return {kind = .IO_Failed, phase = .Protocol, write_effect = effect}
 }
 
-http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -> (Response, HTTP_Error) {
+http3_response :: proc(
+	result: ^http3.Client_Result,
+	allocator: mem.Allocator,
+) -> (
+	Response,
+	HTTP_Error,
+) {
 	if result == nil {
 		return {}, {kind = .IO_Failed, phase = .Protocol, write_effect = .Response_Received}
 	}
@@ -400,7 +441,8 @@ http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -
 		at += copied
 	}
 
-	if trailer_error := http3_response_trailers(&response, result, allocator); trailer_error.kind != .None {
+	if trailer_error := http3_response_trailers(&response, result, allocator);
+	   trailer_error.kind != .None {
 		response_destroy(&response)
 		return {}, trailer_error
 	}
@@ -473,7 +515,9 @@ alt_svc_lookup :: proc(
 	}
 	for i in 0 ..< ALT_SVC_SLOTS {
 		slot := &cache.slots[i]
-		if !slot.used || slot.origin_port != effective_port || string(slot.host[:slot.host_len]) != host {
+		if !slot.used ||
+		   slot.origin_port != effective_port ||
+		   string(slot.host[:slot.host_len]) != host {
 			continue
 		}
 
@@ -771,7 +815,8 @@ websocket_http3_open :: proc(
 	if re.kind != .None {
 		return re
 	}
-	if rejected := address_policy_check(client.config, parsed.host, []net.Endpoint{endpoint}); rejected.kind != .None {
+	if rejected := address_policy_check(client.config, parsed.host, []net.Endpoint{endpoint});
+	   rejected.kind != .None {
 		return rejected
 	}
 
@@ -859,10 +904,7 @@ h3_tunnel_progress :: proc(t: ^HTTP3_Tunnel, write: bool) -> WebSocket_Stream_Er
 	} else if e == .Cancelled {
 		transport = net.Connection_Error.Cancelled
 	}
-	return {
-		kind = .TCP_Failed,
-		transport = transport,
-	}
+	return {kind = .TCP_Failed, transport = transport}
 }
 h3_tunnel_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_Stream_Error) {
 	t := cast(^HTTP3_Tunnel)data

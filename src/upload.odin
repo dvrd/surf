@@ -1,11 +1,11 @@
 package surf
 
-import http "shared:async/http"
-import http1 "shared:async/http/v1"
 import "core:io"
 import "core:mem"
 import "core:net"
 import "core:time"
+import "shared:async/http"
+import http1 "shared:async/http/v1"
 
 UPLOAD_BUFFER_SIZE :: 32 * 1024
 
@@ -98,7 +98,11 @@ exchange_upload_internal :: proc(
 	header: [http.MAX_HEADER_SIZE]u8
 	size, validation := http1.request_encode(header[:], request, source.content_length)
 	if validation.kind != .None {
-		return {}, {kind = validation.kind, phase = .Configuration, allocation = validation.allocation}
+		return {}, {
+			kind = validation.kind,
+			phase = .Configuration,
+			allocation = validation.allocation,
+		}
 	}
 	if upload_deadline_expired(deadline) {
 		return {}, {kind = .Deadline_Failed, phase = .Deadline}
@@ -115,10 +119,21 @@ exchange_upload_internal :: proc(
 		}
 
 		wanted := int(min(remaining, i64(len(buffer))))
-		count, read_error := source.stream.procedure(source.stream.data, .Read, buffer[:wanted], 0, nil)
+		count, read_error := source.stream.procedure(
+			source.stream.data,
+			.Read,
+			buffer[:wanted],
+			0,
+			nil,
+		)
 
 		if count < 0 || count > i64(wanted) {
-			return {}, {kind = .IO_Failed, phase = .Write, transport = net.Connection_Error.Invalid_Count, source_io = read_error}
+			return {}, {
+				kind = .IO_Failed,
+				phase = .Write,
+				transport = net.Connection_Error.Invalid_Count,
+				source_io = read_error,
+			}
 		}
 
 		if upload_deadline_expired(deadline) {
