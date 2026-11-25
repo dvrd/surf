@@ -330,6 +330,7 @@ WebSocket_Dial_Error_Kind :: enum {
 	TLS_Failed,
 	Upgrade_Failed,
 	Address_Rejected,
+	Network_Failed,
 }
 
 WebSocket_Dial_Error :: struct {
@@ -337,6 +338,7 @@ WebSocket_Dial_Error :: struct {
 	client:    WebSocket_Client_Error,
 	tls:       tls.Error,
 	websocket: WebSocket_Error,
+	transport: net.Network_Error,
 }
 
 // Borrowed for the dial call. A nil address_policy allows every resolved address.
@@ -364,6 +366,12 @@ websocket_dial :: proc(
 	}
 
 	settings := config
+
+	if settings.handshake_timeout <= 0 {
+		settings.handshake_timeout = 10 * time.Second
+	}
+
+	deadline := time.time_add(time.now(), settings.handshake_timeout)
 	host_storage: [512]u8
 	if settings.host == "" {
 		settings.host = websocket_dial_host(host_storage[:], host, port)
@@ -375,7 +383,7 @@ websocket_dial :: proc(
 
 	// Resolve before the connection is initialized so a refusal performs no I/O
 	// and leaves the phase Uninitialized. Dial this set only.
-	endpoints, resolve_error := net.resolve_endpoints_until(host, port, {}, options.resolver)
+	endpoints, resolve_error := net.resolve_endpoints_until(host, port, deadline, options.resolver)
 
 	if resolve_error == nil && options.address_policy != nil {
 		if endpoints.count == 0 ||
@@ -418,7 +426,7 @@ websocket_dial :: proc(
 		}
 	}
 
-	socket, connect_error := net.dial_tcp_candidates_until(endpoints, {})
+	socket, connect_error := net.dial_tcp_candidates_until(endpoints, deadline)
 
 	if connect_error != nil {
 		return websocket_dial_network(conn, connect_error)
@@ -434,7 +442,7 @@ websocket_dial :: proc(
 		socket = socket,
 	}
 
-	if err := tls.handshake(&conn.tls_client); err != nil {
+	if err := tls.handshake_until(&conn.tls_client, deadline); err != nil {
 		_ = tls.conn_close(&conn.tls_client)
 		conn.phase = .Failed
 		conn.transport_closed = true
@@ -444,6 +452,13 @@ websocket_dial :: proc(
 		}
 
 		return {kind = .TLS_Failed, tls = err}
+	}
+
+	selected := tls.connection_state(&conn.tls_client).negotiated_protocol
+
+	if selected != "" && selected != "http/1.1" {
+		_ = tls.conn_close(&conn.tls_client)
+		return websocket_dial_fail(conn, tls.General_Error.Invalid_Config)
 	}
 
 	if err := websocket_upgrade(conn); err.kind != .None {
@@ -474,7 +489,7 @@ websocket_dial_network :: proc(
 		stream = {kind = .TCP_Failed, transport = err},
 	}
 
-	return {kind = .TLS_Failed, tls = tls.General_Error.Name_Resolution_Failed}
+	return {kind = .Network_Failed, transport = err}
 }
 
 websocket_dial_host :: proc(host_storage: []u8, host: string, port: int) -> string {
