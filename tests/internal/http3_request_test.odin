@@ -221,6 +221,132 @@ surf_http3_preserves_request_upload_origin_and_response_headers :: proc(t: ^test
 	testing.expect(t, fixture.valid)
 }
 
+Surf_H3_Pool_DNS :: struct {
+	listener: http3.Listener,
+	stop:     bool,
+}
+
+surf_h3_pool_dns_handler :: proc(
+	_: rawptr,
+	_: ^http3.Server_Request,
+	response: ^http3.Server_Response,
+) -> http3.Response_Status {
+	response^ = {
+		status = 200,
+		body   = transmute([]u8)string("ok"),
+	}
+	return .Ready
+}
+
+@(test)
+surf_http3_live_lane_does_not_resolve_again :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 20 * time.Second)
+	credential, ce := credentials.create(
+		#load("../tests/http3/localhost.pem"),
+		#load("../tests/http3/rsa2048.pem"),
+		{},
+		context.allocator,
+	)
+
+	if !testing.expect_value(t, ce, .None) {
+		return
+	}
+
+	owner, se := store.create({}, context.allocator)
+
+	if !testing.expect_value(t, se.kind, .None) {
+		credentials.destroy(&credential)
+		return
+	}
+
+	defer store.destroy(&owner)
+	assert(store.replace(owner, &credential).kind == .None)
+	dns := Http3_Policy_DNS {
+		v4  = {{127, 0, 0, 1}, {0, 0, 0, 0}},
+		v4n = 1,
+	}
+	dns_endpoint, dns_worker, dns_started := http3_policy_dns_start(&dns)
+	testing.expect(t, dns_started)
+
+	if !dns_started {
+		return
+	}
+
+	defer http3_policy_dns_stop(&dns, dns_worker)
+	fixture := Surf_H3_Pool_DNS {}
+	fixture.listener.config = {
+		endpoint    = {net.IP4_Loopback, 0},
+		credentials = owner,
+		on_request  = surf_h3_pool_dns_handler,
+		on_request_user = &fixture,
+	}
+	port, listened := http3.listener_listen(&fixture.listener)
+
+	if !testing.expect(t, listened) {
+		return
+	}
+
+	worker := thread.create_and_start_with_poly_data(&fixture, proc(f: ^Surf_H3_Pool_DNS) {
+		for !sync.atomic_load(&f.stop) {
+			if !http3.listener_step(&f.listener) {
+				break
+			}
+		}
+	})
+
+	if !testing.expect(t, worker != nil) {
+		http3.listener_close(&fixture.listener)
+		return
+	}
+
+	defer thread.destroy(worker)
+	defer {
+		sync.atomic_store(&fixture.stop, true)
+		thread.join(worker)
+		http3.listener_close(&fixture.listener)
+	}
+	roots: tls.Root_Pool
+	assert(tls.root_pool_parse(&roots, #load("../tests/http3/localhost.pem")) == nil)
+	defer tls.root_pool_destroy(&roots)
+	pool: http3.Pool
+	defer http3.pool_close(&pool)
+	servers := [1]net.Endpoint{dns_endpoint}
+	url_buf: [80]u8
+	url := fmt.bprintf(url_buf[:], "https://localhost:%d/reuse", port)
+	config := Config {
+		http3      = true,
+		http3_pool = &pool,
+		timeout    = 8 * time.Second,
+		resolver   = {name_servers = servers[:]},
+		tls        = {root_cas = roots.roots[:roots.count]},
+	}
+	first, first_error := execute({method = .GET, url = url}, config)
+	defer response_destroy(&first)
+
+	if !testing.expect_value(t, first_error.kind, .None) {
+		return
+	}
+
+	testing.expect_value(t, first.status, 200)
+	testing.expect(t, string(first.body) == "ok")
+	sync.lock(&dns.mu)
+	after_first := dns.queries
+	sync.unlock(&dns.mu)
+	testing.expect(t, after_first >= 1)
+	second, second_error := execute({method = .GET, url = url}, config)
+	defer response_destroy(&second)
+
+	if !testing.expect_value(t, second_error.kind, .None) {
+		return
+	}
+
+	testing.expect_value(t, second.status, 200)
+	sync.lock(&dns.mu)
+	after_second := dns.queries
+	sync.unlock(&dns.mu)
+	testing.expect_value(t, after_second, after_first)
+}
+
 surf_h3_slow_source :: proc(
 	data: rawptr,
 	mode: io.Stream_Mode,

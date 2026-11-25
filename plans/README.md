@@ -24,7 +24,7 @@ Run 009 and 010 first. They do not share files. After 009, plans that name diffe
 | 017 | Resolver-snapshot failures keep their own DNS errors | P2 | S | 016 | `claude:sonnet` (`codex`) | DONE |
 | 020 | HTTP/2 does not index authorization or cookie | P2 | S | 009 | `claude:sonnet` (`codex`) | TODO |
 | 021 | HTTP/2 TLS alerts and tunnel timeouts use the shared phase rules | P2 | S | 013 | `claude:sonnet` (`codex`) | TODO |
-| 019 | A live HTTP/3 lane does not resolve again | P2 | S | 014, 018 | `claude:sonnet` (`codex`) | TODO |
+| 019 | A live HTTP/3 lane does not resolve again | P2 | S | 014, 018 | `claude:sonnet` (`codex`) | DONE |
 | 022 | An HTTP/2 upload rejects a count outside the buffer | P2 | S | 020, 021 | `claude:sonnet` (`codex`) | TODO |
 | 023 | Tests cover certificate-name rejection and HTTP/3 cancel | P2 | M | 009, 014 | `claude:sonnet` (`codex`) | TODO |
 | 024 | A redirect hop does not copy the request body | P2 | M | 018 | `claude:opus` (`codex`) | TODO |

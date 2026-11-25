@@ -1,6 +1,7 @@
 package surf
 
 import http "shared:async/http"
+import http3 "shared:async/http/v3"
 import "shared:async/tls"
 import "core:fmt"
 import "core:net"
@@ -145,11 +146,12 @@ surf_http3_hostname_resolves :: proc(t: ^testing.T) {
 }
 
 Http3_Policy_DNS :: struct {
-	socket: net.UDP_Socket,
-	mu:     sync.Mutex,
-	stop:   bool,
-	v4:     [2][4]u8,
-	v4n:    int,
+	socket:  net.UDP_Socket,
+	mu:      sync.Mutex,
+	stop:    bool,
+	v4:      [2][4]u8,
+	v4n:     int,
+	queries: int,
 }
 
 http3_policy_qtype :: proc(query: []u8) -> (qtype: int, question_end: int, ok: bool) {
@@ -210,6 +212,7 @@ http3_policy_dns_loop :: proc(dns: ^Http3_Policy_DNS) {
 		}
 
 		sync.lock(&dns.mu)
+		dns.queries += 1
 		v4 := dns.v4
 		v4n := dns.v4n
 		sync.unlock(&dns.mu)
@@ -333,6 +336,52 @@ surf_http3_refuses_a_mixed_resolved_set_before_dial :: proc(t: ^testing.T) {
 		only.items[:only.count],
 	)
 	testing.expect_value(t, allowed.kind, .None)
+}
+
+@(test)
+surf_http3_empty_pool_resolves_before_refusing_a_mixed_set :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 10 * time.Second)
+	dns := Http3_Policy_DNS {
+		v4  = {{203, 0, 113, 1}, {127, 0, 0, 1}},
+		v4n = 2,
+	}
+	endpoint, worker, started := http3_policy_dns_start(&dns)
+	testing.expect(t, started)
+
+	if !started {
+		return
+	}
+
+	defer http3_policy_dns_stop(&dns, worker)
+	pool: http3.Pool
+	defer http3.pool_close(&pool)
+	servers := [1]net.Endpoint{endpoint}
+	url := http.URL {
+		host      = "mixed.invalid",
+		authority = "mixed.invalid",
+		port      = 443,
+		target    = "/",
+		secure    = true,
+	}
+	began := time.tick_now()
+	_, error := execute_http3(
+		url,
+		{method = .GET},
+		{
+			address_policy = address_policy_public_only,
+			resolver = {name_servers = servers[:]},
+			http3_pool = &pool,
+		},
+		time.time_add(time.now(), 8 * time.Second),
+		context.allocator,
+	)
+	testing.expect(t, time.tick_since(began) < 3 * time.Second)
+	testing.expect_value(t, error.kind, .Address_Rejected)
+	testing.expect_value(t, error.write_effect, .Not_Sent)
+	sync.lock(&dns.mu)
+	queries := dns.queries
+	sync.unlock(&dns.mu)
+	testing.expect(t, queries >= 1)
 }
 
 @(test)

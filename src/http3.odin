@@ -8,6 +8,8 @@ import "core:strings"
 import "core:time"
 import "shared:async/http"
 import http3 "shared:async/http/v3"
+import "shared:async/tls"
+import "shared:async/tls/credentials/store"
 
 Http3_Body :: struct {
 	body:       [dynamic]u8,
@@ -108,15 +110,6 @@ execute_http3 :: proc(
 	}
 	deadline := time.time_add(time.now(), budget)
 	port := http3_dial_port(config.alt_svc, url.host, url.port, time.now())
-	endpoints, resolve_error := http3_resolve(url.host, port, deadline, config.resolver)
-	if resolve_error.kind != .None {
-		return {}, resolve_error
-	}
-	if rejected := address_policy_check(config, url.host, endpoints.items[:endpoints.count]);
-	   rejected.kind != .None {
-		return {}, rejected
-	}
-	endpoint := endpoints.items[0]
 	path := url.target
 	if len(path) == 0 {
 		path = "/"
@@ -192,26 +185,74 @@ execute_http3 :: proc(
 	wire.body_sink = &sink
 	wire.max_response_bytes = aggregate.limit
 	result: http3.Client_Result
-	// endpoint is the address just checked. A new QUIC client dials it. A pooled
-	// lane already open for this origin is reused and is not checked again.
+
 	if config.http3_pool != nil {
-		result = http3.pool_exchange_request(
-			config.http3_pool,
-			endpoint,
-			url.host,
-			wire,
-			config.tls.root_cas,
-			deadline,
-		)
+		reuse := http3_pool_reuse(config.http3_pool, url.host, port, wire, config)
+
+		if reuse {
+			// The zero address is used only because the reuse branch does not dial it.
+			// A pooled lane already open for this origin is reused and is not checked again.
+			endpoint := net.Endpoint {
+				address = net.IP4_Address{0, 0, 0, 0},
+				port    = port,
+			}
+			result = http3.pool_exchange_request(
+				config.http3_pool,
+				endpoint,
+				url.host,
+				wire,
+				config.tls.root_cas,
+				deadline,
+			)
+
+			if result.error != .None && !result.sent {
+				dialed, dial_error := http3_policy_endpoint(url.host, port, deadline, config)
+
+				if dial_error.kind != .None {
+					return {}, dial_error
+				}
+
+				result = http3.pool_exchange_request(
+					config.http3_pool,
+					dialed,
+					url.host,
+					wire,
+					config.tls.root_cas,
+					deadline,
+				)
+			}
+		} else {
+			dialed, dial_error := http3_policy_endpoint(url.host, port, deadline, config)
+
+			if dial_error.kind != .None {
+				return {}, dial_error
+			}
+
+			result = http3.pool_exchange_request(
+				config.http3_pool,
+				dialed,
+				url.host,
+				wire,
+				config.tls.root_cas,
+				deadline,
+			)
+		}
 	} else {
+		dialed, dial_error := http3_policy_endpoint(url.host, port, deadline, config)
+
+		if dial_error.kind != .None {
+			return {}, dial_error
+		}
+
 		result = http3.client_exchange_request(
-			endpoint,
+			dialed,
 			url.host,
 			wire,
 			config.tls.root_cas,
 			deadline,
 		)
 	}
+
 	if result.error != .None {
 		if aggregate.allocation != nil {
 			return {}, {
@@ -304,6 +345,84 @@ http3_resolve :: proc(
 		)
 	}
 	return endpoints, {}
+}
+
+// A new dial sees every resolved address before the socket exists.
+http3_policy_endpoint :: proc(
+	host: string,
+	port: int,
+	deadline: time.Time,
+	config: Config,
+) -> (
+	net.Endpoint,
+	HTTP_Error,
+) {
+	endpoints, resolve_error := http3_resolve(host, port, deadline, config.resolver)
+
+	if resolve_error.kind != .None {
+		return {}, resolve_error
+	}
+
+	if rejected := address_policy_check(config, host, endpoints.items[:endpoints.count]);
+	   rejected.kind != .None {
+		return {}, rejected
+	}
+
+	return endpoints.items[0], {}
+}
+
+// The generation is the one pool_admit compares. A pin that fails is not a reuse hit.
+http3_pool_reuse :: proc(
+	pool: ^http3.Pool,
+	host: string,
+	port: int,
+	request: http3.Client_Request,
+	config: Config,
+) -> bool {
+	generation: u64
+	ok := true
+
+	if request.client_credentials != nil {
+		pin: store.Lease
+		pin_error: store.Error
+
+		if request.client_credential_lease != nil {
+			generation, pin_error = store.lease_generation(
+				request.client_credentials,
+				request.client_credential_lease^,
+			)
+		} else {
+			pin, pin_error = store.acquire(request.client_credentials)
+
+			if pin_error.kind == .None {
+				generation, pin_error = store.lease_generation(request.client_credentials, pin)
+				_ = store.release(request.client_credentials, &pin)
+			}
+		}
+
+		if pin_error.kind != .None {
+			ok = false
+		}
+	} else if request.client_credential_lease != nil {
+		ok = false
+	}
+
+	if !ok {
+		return false
+	}
+
+	_, reuse := http3.pool_pick(
+		pool,
+		host,
+		port,
+		request.qpack,
+		request.client_credentials,
+		generation,
+		request.ecn,
+		tls.quic_roots_identity(config.tls.root_cas),
+	)
+
+	return reuse
 }
 
 http3_map_error :: proc(result: http3.Client_Result, _: time.Time) -> HTTP_Error {
