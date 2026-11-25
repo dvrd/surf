@@ -1,5 +1,7 @@
 # Plan 008: Surf imports HTTP from shared:async/http
 
+> **STALE at `a552088`.** The import landed in that commit. Do not execute this plan. `Config.tls` is `shared:async/tls.Config`, and `src/http3.odin:136` forwards the session cache and client credentials. The done criteria and STOP conditions below say the opposite. `plans/010-stale-plan-text.md` rewrites this prose. Do not revert `src/`.
+
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
 > next step. If anything in the "STOP conditions" section occurs, stop and

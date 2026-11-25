@@ -1,5 +1,7 @@
 # Plan 001: The library type-checks against public tls.Error and net.Network_Error
 
+> **STALE at `a552088`.** Do not execute this plan until `plans/010-stale-plan-text.md` rewrites the STOP conditions and done criteria below. The library already uses `shared:async/tls`. HTTP/3 forwards `session_cache`, `client_credentials`, and `client_credential_lease` (`src/http3.odin:136`). Following the STOP text would undo that. What remains is the gate and testdata port, and it waits on `plans/009-step-import.md` because `core:compress/step` no longer exists.
+
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
 > next step. If anything in the "STOP conditions" section occurs, stop and
