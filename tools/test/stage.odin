@@ -41,8 +41,8 @@ stage :: proc(library: string) -> Staged {
 		finish(1)
 	}
 	force_symlink(join(repository, "src"), join(shared, library))
-	// Internal tests copied into src #load ../tests/... . The compiler resolves
-	// that path from the shared/<library> symlink, so ../tests is shared/tests.
+	// Unit tests copied into src #load ../tests/... . The compiler resolves that
+	// path from the shared/<library> symlink, so ../tests is shared/tests.
 	force_symlink(join(repository, "tests"), join(shared, "tests"))
 
 	escapes := escaping_imports(join(repository, "src"), join(repository, "src"))
@@ -350,17 +350,13 @@ discover_suites :: proc(tree: string) -> [dynamic]Suite {
 }
 
 classify :: proc(relative: string) -> (owner: string, private, ok: bool) {
-	if relative == "tests/internal" {
+	if relative == "tests/unit" {
 		return ".", true, true
 	}
 
-	internal := "/internal"
-	if strings.has_prefix(relative, "tests/") && strings.has_suffix(relative, internal) {
-		start := len("tests/")
-		end := len(relative) - len(internal)
-		if end > start {
-			return relative[start:end], true, true
-		}
+	unit := "tests/unit/"
+	if strings.has_prefix(relative, unit) {
+		return relative[len(unit):], true, true
 	}
 
 	if relative == "tests" {
@@ -426,21 +422,12 @@ private_directories :: proc(tests: string) -> [dynamic]string {
 			continue
 		}
 		path := info.fullpath
-		if path == concat(tests, "/internal") || nested_internal(tests, path) {
+		unit := concat(tests, "/unit")
+		if path == unit || strings.has_prefix(path, concat(unit, "/")) {
 			append(&dirs, copy_string(path))
 		}
 	}
 	return dirs
-}
-
-// macOS find -path treats * as matching slashes, so tests/*/internal is every
-// nested internal directory, not only a single path component.
-nested_internal :: proc(tests, path: string) -> bool {
-	prefix := concat(tests, "/")
-	if !strings.has_prefix(path, prefix) || !strings.has_suffix(path, "/internal") {
-		return false
-	}
-	return len(path) > len(prefix) + len("internal")
 }
 
 package_under_tests :: proc(path, tests_prefix: string) -> string {
@@ -452,11 +439,16 @@ package_under_tests :: proc(path, tests_prefix: string) -> string {
 		rest = path[len(tests_prefix):]
 	}
 
-	if strings.has_suffix(rest, "internal") {
-		rest = rest[:len(rest) - len("internal")]
-	}
 	rest = strings.trim_left(rest, "/")
 	rest = strings.trim_right(rest, "/")
+	if rest == "unit" {
+		return ""
+	}
+
+	unit := "unit/"
+	if strings.has_prefix(rest, unit) {
+		return rest[len(unit):]
+	}
 	return rest
 }
 

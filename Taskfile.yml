@@ -1,8 +1,9 @@
 version: '3'
 
 # ODIN and WEBTOOLS_SHARED still select the compiler and the dependency
-# collection. PACKAGE limits one suite owner (`.` or `async`). INTERNAL=1 runs
-# only private suites. Flags after -- are odin test flags.
+# collection. PACKAGE limits one suite owner (`.` , `async`, `async/exchange`,
+# `async/stream`, or an `integration/...` path). INTERNAL=1 runs only the unit
+# suites. Flags after -- are odin test flags.
 vars:
   ODIN:
     sh: printf '%s' "${ODIN:-odin}"
