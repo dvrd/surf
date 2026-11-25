@@ -4,10 +4,10 @@ import surf "../.."
 import "base:runtime"
 import "core:bytes"
 import "core:mem"
-import charged "core:mem/budget"
-import "core:mem/owned"
+import charged "shared:async/mem/budget"
+import "shared:async/mem/owned"
 import "core:sync"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:testing"
 
 bank_test_same :: proc(a, b: $T) -> bool {

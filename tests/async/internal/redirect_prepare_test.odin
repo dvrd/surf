@@ -1,14 +1,14 @@
 package surf_async
 
 import surf ".."
-import http "shared:http"
+import http "shared:async/http"
 import rt "base:runtime"
 import "core:bytes"
 import "core:fmt"
 import "core:mem"
-import charged "core:mem/budget"
+import charged "shared:async/mem/budget"
 import "core:net"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:testing"
 
 Prepare_Fault :: struct {
@@ -93,23 +93,23 @@ Prepare_Wire :: struct {
 	wire: string,
 	at:   int,
 }
-prepare_read :: proc(data: rawptr, dst: []u8) -> (int, net.Connection_Error) {
+prepare_read :: proc(data: rawptr, dst: []u8) -> (int, net.Network_Error) {
 	f := cast(^Prepare_Wire)data
 
 	if f.at == len(f.wire) {
-		return 0, {kind = .Peer_Closed}
+		return 0, net.Connection_Error.Peer_Closed
 	}
 
 	n := copy(dst, f.wire[f.at:])
 	f.at += n
 
-	return n, {}
+	return n, nil
 }
-prepare_write :: proc(_: rawptr, src: []u8) -> (int, net.Connection_Error) {
-	return len(src), {}
+prepare_write :: proc(_: rawptr, src: []u8) -> (int, net.Network_Error) {
+	return len(src), nil
 }
-prepare_close :: proc(_: rawptr) -> net.Connection_Error {
-	return {}
+prepare_close :: proc(_: rawptr) -> net.Network_Error {
+	return nil
 }
 prepare_response :: proc(
 	status: int,

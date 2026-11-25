@@ -1,13 +1,14 @@
 package surf
 
-import http "shared:http"
-import h2 "shared:http/v2"
-import hpack "shared:http/v2/hpack"
-import tls "core:crypto/tls"
 import "base:intrinsics"
-import owned "core:mem/owned"
+import "core:net"
 import "core:strings"
 import "core:time"
+import "shared:async/http"
+import http2 "shared:async/http/v2"
+import hpack "shared:async/http/v2/hpack"
+import owned "shared:async/mem/owned"
+import tls "shared:async/tls"
 
 // A caller-owned, stable HTTP2 stream. All operations on its HTTP_Client,
 // including ordinary HTTP requests, are serialized by the caller. Closing one
@@ -17,7 +18,7 @@ import "core:time"
 HTTP2_Tunnel :: struct {
 	_client:                         ^HTTP_Client,
 	_lane:                           ^HTTP_Lane,
-	_handle:                         h2.Stream_Handle,
+	_handle:                         http2.Stream_Handle,
 	_response:                       Response,
 	_status:                         int,
 	_ended, _closed, _reset:         bool,
@@ -26,8 +27,8 @@ HTTP2_Tunnel :: struct {
 	_head, _count:                   int,
 }
 HTTP2_Tunnel_Input :: struct {
-	owner:  h2.Incoming_Data,
-	credit: h2.Data_Token,
+	owner:  http2.Incoming_Data,
+	credit: http2.Data_Token,
 	offset: int,
 }
 
@@ -113,10 +114,15 @@ websocket_http2_open :: proc(
 			return {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
 		}
 
-		fields[count] = {name, header.value, name == "authorization" || name == "cookie"}
+		sensitive := name == "authorization" ||
+			name == "proxy-authorization" ||
+			name == "cookie" ||
+			name == "set-cookie"
+		fields[count] = {name, header.value, sensitive}
 		count += 1
 	}
-	if _, e := h2.headers_validate(
+
+	if _, e := http2.headers_validate(
 		fields[:count],
 		.Request,
 		{max_fields = 64, max_list_bytes = 8192, extended_connect_enabled = true},
@@ -132,16 +138,25 @@ websocket_http2_open :: proc(
 		http_lane_close(client, lane)
 		return {kind = .Invalid_Config, phase = .Protocol, write_effect = .Not_Sent}
 	}
-	if de := tls.set_deadline(lane.tls, deadline); de.kind != .None {
-		return {kind = .IO_Failed, phase = .Deadline, write_effect = .Not_Sent, transport = de}
+	if de := tls.set_deadline(lane.tls, deadline); de != nil {
+		http_lane_close(client, lane)
+		return {
+			kind = .IO_Failed,
+			phase = .Deadline,
+			write_effect = .Not_Sent,
+			tls_error = de,
+			transport = tls_network(de),
+		}
 	}
 	if !reused {
 		if e = h2_boot(lane, deadline, &client.cancel); e.kind != .None {
+			http_lane_close(client, lane)
 			return e
 		}
 	}
-	allowed, _, valid := h2.connection_connect_protocol(&lane.engine)
+	allowed, _, valid := http2.connection_connect_protocol(&lane.engine)
 	if !valid || !allowed {
+		http_lane_close(client, lane)
 		return {kind = .Invalid_Config, phase = .Protocol, write_effect = .Not_Sent}
 	}
 	index := -1
@@ -153,10 +168,12 @@ websocket_http2_open :: proc(
 		}
 	}
 	if index < 0 {
+		http_lane_close(client, lane)
 		return {kind = .Invalid_Config, phase = .Admission, write_effect = .Not_Sent}
 	}
-	handle, opened := h2.connection_open(&lane.engine, fields[:count], false)
+	handle, opened := http2.connection_open(&lane.engine, fields[:count], false)
 	if opened.kind != .None {
+		http_lane_close(client, lane)
 		return h2_map_error(opened, .Not_Sent, 0)
 	}
 	tunnel^ = {
@@ -169,6 +186,7 @@ websocket_http2_open :: proc(
 	lane.tunnels[index] = tunnel
 	defer if !success {
 		_ = h2_tunnel_abort(tunnel)
+		http_lane_close(client, lane)
 	}
 	for tunnel._status == 0 && !tunnel._closed {
 		if e = h2_tunnel_progress(tunnel, true); e.kind != .None {
@@ -176,7 +194,12 @@ websocket_http2_open :: proc(
 		}
 	}
 	if tunnel._status < 200 || tunnel._status >= 300 {
-		return {kind = .Invalid_Status, phase = .Protocol, status = tunnel._status, write_effect = .Response_Received}
+		return {
+			kind = .Invalid_Status,
+			phase = .Protocol,
+			status = tunnel._status,
+			write_effect = .Response_Received,
+		}
 	}
 	selected, present := response_header(&tunnel._response, "sec-websocket-protocol")
 	protocols_received := 0
@@ -191,7 +214,8 @@ websocket_http2_open :: proc(
 	if present && !websocket_subprotocol_accept(conn, options.subprotocols, selected) {
 		return {kind = .Invalid_Header, phase = .Protocol, write_effect = .Response_Received}
 	}
-	if extension, _ := response_header(&tunnel._response, "sec-websocket-extensions"); extension != "" {
+	if extension, _ := response_header(&tunnel._response, "sec-websocket-extensions");
+	   extension != "" {
 		return {kind = .Invalid_Header, phase = .Protocol, write_effect = .Response_Received}
 	}
 	response_destroy(&tunnel._response)
@@ -202,7 +226,7 @@ websocket_http2_open :: proc(
 	return {}
 }
 
-h2_tunnel_find :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) -> ^HTTP2_Tunnel {
+h2_tunnel_find :: proc(lane: ^HTTP_Lane, handle: http2.Stream_Handle) -> ^HTTP2_Tunnel {
 	for stream in lane.tunnels {
 		if stream != nil && stream._handle == handle {
 			return stream
@@ -211,9 +235,15 @@ h2_tunnel_find :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) -> ^HTTP2_Tun
 
 	return nil
 }
-h2_tunnel_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> (handled, taken: bool, error: HTTP_Error) {
+h2_tunnel_event :: proc(
+	lane: ^HTTP_Lane,
+	event: http2.Event_View,
+) -> (
+	handled, taken: bool,
+	error: HTTP_Error,
+) {
 	#partial switch value in event.payload {
-	case h2.Headers_Event:
+	case http2.Headers_Event:
 		stream := h2_tunnel_find(lane, value.stream)
 
 		if stream == nil {
@@ -235,7 +265,7 @@ h2_tunnel_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> (handled, tak
 		stream._response = job.response
 		stream._ended = value.end_stream
 		return true, false, e
-	case h2.Data_Event:
+	case http2.Data_Event:
 		stream := h2_tunnel_find(lane, value.stream)
 		if stream == nil {
 			if h2_tunnel_retired(lane, value.stream) {
@@ -243,14 +273,14 @@ h2_tunnel_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> (handled, tak
 			}; return false, false, {}
 		}
 		if stream._count == len(stream._inputs) {
-			_ = h2.connection_reset(&lane.engine, value.stream, .Cancel)
+			_ = http2.connection_reset(&lane.engine, value.stream, .Cancel)
 			stream._closed = true
 			stream._reset = true
 			return true, false, {}
 		}
 		at := (stream._head + stream._count) % len(stream._inputs)
 		entry := &stream._inputs[at]
-		e := h2.connection_data_take(&lane.engine, event.token, &entry.owner)
+		e := http2.connection_data_take(&lane.engine, event.token, &entry.owner)
 		if e.kind != .None {
 			return true, false, h2_map_error(e, .Response_Received, stream._status)
 		}
@@ -258,7 +288,7 @@ h2_tunnel_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> (handled, tak
 		stream._count += 1
 		stream._ended = stream._ended || value.end_stream
 		return true, true, {}
-	case h2.Stream_End_Event:
+	case http2.Stream_End_Event:
 		if h2_tunnel_retired(lane, value.stream) {
 			return true, false, {}
 		}
@@ -266,7 +296,7 @@ h2_tunnel_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> (handled, tak
 			stream._ended = true
 			return true, false, {}
 		}
-	case h2.Reset_Event:
+	case http2.Reset_Event:
 		if h2_tunnel_retired(lane, value.stream) {
 			return true, false, {}
 		}
@@ -275,14 +305,14 @@ h2_tunnel_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> (handled, tak
 			stream._reset = true
 			return true, false, {}
 		}
-	case h2.Goaway_Event:
+	case http2.Goaway_Event:
 		for stream in lane.tunnels {
 			if stream != nil && stream._handle.stream_id > value.last_stream_id {
 				stream._closed = true
 				stream._reset = true
 			}
 		}
-	case h2.Terminal_Event:
+	case http2.Terminal_Event:
 		for stream in lane.tunnels {
 			if stream != nil {
 				stream._closed = true
@@ -293,7 +323,11 @@ h2_tunnel_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> (handled, tak
 
 	return false, false, {}
 }
-h2_tunnel_progress :: proc(stream: ^HTTP2_Tunnel, read: bool, force_read: bool = false) -> HTTP_Error {
+h2_tunnel_progress :: proc(
+	stream: ^HTTP2_Tunnel,
+	read: bool,
+	force_read: bool = false,
+) -> HTTP_Error {
 	lane := stream._lane
 
 	if lane == nil || stream._closed {
@@ -313,8 +347,14 @@ h2_tunnel_progress :: proc(stream: ^HTTP2_Tunnel, read: bool, force_read: bool =
 
 	http_arm_socket(stream._client, lane.tls.tcp.socket)
 
-	if de := tls.set_deadline(lane.tls, deadline); de.kind != .None {
-		return {kind = .IO_Failed, phase = .Deadline, write_effect = .Response_Received, transport = de}
+	if de := tls.set_deadline(lane.tls, deadline); de != nil {
+		return {
+			kind = .IO_Failed,
+			phase = .Deadline,
+			write_effect = .Response_Received,
+			tls_error = de,
+			transport = tls_network(de),
+		}
 	}
 
 	if h2_cancelled(&stream._client.cancel) {
@@ -373,7 +413,7 @@ h2_tunnel_read :: proc(data: rawptr, destination: []u8) -> (int, WebSocket_Strea
 		}
 
 		entry := &stream._inputs[stream._head]
-		bytes, ok := h2.incoming_data_bytes(&entry.owner)
+		bytes, ok := http2.incoming_data_bytes(&entry.owner)
 
 		if !ok {
 			return 0, {kind = .Invalid_Stream}
@@ -383,15 +423,15 @@ h2_tunnel_read :: proc(data: rawptr, destination: []u8) -> (int, WebSocket_Strea
 		entry.offset += n
 
 		if n > 0 {
-			_ = h2.connection_consume(&stream._lane.engine, entry.credit, u32(n))
+			_ = http2.connection_consume(&stream._lane.engine, entry.credit, u32(n))
 		}
 
 		if entry.offset == len(bytes) {
 			if len(bytes) == 0 {
-				_ = h2.connection_discard(&stream._lane.engine, entry.credit)
+				_ = http2.connection_discard(&stream._lane.engine, entry.credit)
 			}
 
-			h2.incoming_data_destroy(&entry.owner)
+			http2.incoming_data_destroy(&entry.owner)
 			entry^ = {}
 			stream._head = (stream._head + 1) % len(stream._inputs)
 			stream._count -= 1
@@ -419,7 +459,7 @@ h2_tunnel_write :: proc(data: rawptr, source: []u8) -> (int, WebSocket_Stream_Er
 	defer owned.destroy(&chunk)
 
 	for {
-		sent := h2.connection_send_data(&stream._lane.engine, stream._handle, &chunk, false)
+		sent := http2.connection_send_data(&stream._lane.engine, stream._handle, &chunk, false)
 
 		if sent.kind == .None {
 			if pe := h2_tunnel_progress(stream, false); pe.kind != .None {
@@ -444,11 +484,11 @@ h2_tunnel_detach :: proc(stream: ^HTTP2_Tunnel) {
 	}
 
 	for &entry in stream._inputs {
-		if entry.credit != (h2.Data_Token{}) {
-			_ = h2.connection_discard(&lane.engine, entry.credit)
+		if entry.credit != (http2.Data_Token{}) {
+			_ = http2.connection_discard(&lane.engine, entry.credit)
 		}
 
-		h2.incoming_data_destroy(&entry.owner)
+		http2.incoming_data_destroy(&entry.owner)
 		entry = {}
 	}
 
@@ -461,11 +501,18 @@ h2_tunnel_detach :: proc(stream: ^HTTP2_Tunnel) {
 		}
 	}
 
+	stored := false
+
 	for &slot in lane.closed_tunnels {
 		if slot == {} {
 			slot = stream._handle
+			stored = true
 			break
 		}
+	}
+
+	if !stored {
+		lane.reusable = false
 	}
 
 	stream._lane = nil
@@ -482,7 +529,7 @@ h2_tunnel_abort :: proc(data: rawptr) -> WebSocket_Stream_Error {
 
 	// Failure cleanup never blocks on TLS/peer traffic. The engine owns the
 	// queued reset and a later lane pump flushes it independently of this owner.
-	_ = h2.connection_reset(&stream._lane.engine, stream._handle, .Cancel)
+	_ = http2.connection_reset(&stream._lane.engine, stream._handle, .Cancel)
 	h2_tunnel_detach(stream)
 
 	return {}
@@ -501,7 +548,7 @@ h2_tunnel_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 		return {kind = .Invalid_Stream}
 	}
 
-	e := h2.connection_send_data(&stream._lane.engine, stream._handle, &empty, true)
+	e := http2.connection_send_data(&stream._lane.engine, stream._handle, &empty, true)
 
 	if e.kind != .None {
 		owned.destroy(&empty)
@@ -510,7 +557,7 @@ h2_tunnel_close :: proc(data: rawptr) -> WebSocket_Stream_Error {
 	}
 
 	progress := h2_tunnel_progress(stream, false)
-	_ = h2.connection_reap(&stream._lane.engine, stream._handle)
+	_ = http2.connection_reap(&stream._lane.engine, stream._handle)
 	h2_tunnel_detach(stream)
 
 	if progress.kind != .None {
@@ -532,7 +579,7 @@ h2_tunnel_write_deadline :: proc(data: rawptr, deadline: time.Time) -> WebSocket
 	return {}
 }
 
-h2_tunnel_retired :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) -> bool {
+h2_tunnel_retired :: proc(lane: ^HTTP_Lane, handle: http2.Stream_Handle) -> bool {
 	for retired in lane.closed_tunnels {
 		if retired == handle {
 			return true
@@ -551,7 +598,7 @@ h2_tunnel_reap :: proc(lane: ^HTTP_Lane) {
 			continue
 		}
 
-		e := h2.connection_reap(&lane.engine, retired)
+		e := http2.connection_reap(&lane.engine, retired)
 
 		if e.kind == .None || e.kind == .Invalid_Input {
 			retired = {}
@@ -560,22 +607,30 @@ h2_tunnel_reap :: proc(lane: ^HTTP_Lane) {
 }
 
 h2_tunnel_stream_error :: proc(error: HTTP_Error) -> WebSocket_Stream_Error {
-	if error.tls_io.kind != .None {
-		return {kind = .TLS_Failed, tls = error.tls_io}
+	if error.kind == .Deadline_Failed {
+		transport: net.Network_Error = net.TCP_Recv_Error.Timeout
+
+		if error.phase == .Write {
+			transport = net.TCP_Send_Error.Timeout
+		} else if error.phase == .Connect {
+			transport = net.Dial_Error.Timeout
+		}
+
+		return {kind = .TCP_Failed, transport = transport}
+	}
+
+	if error.tls_error != nil {
+		classified := http_error_classify(error, error.phase, error.write_effect, error.status)
+
+		if classified.phase == .TLS {
+			return {kind = .TLS_Failed, tls = error.tls_error}
+		}
 	}
 
 	transport := error.transport
 
-	if error.kind == .Deadline_Failed {
-		transport = {
-			kind = .Timeout,
-		}
-	}
-
 	if error.phase == .Cancellation {
-		transport = {
-			kind = .Cancelled,
-		}
+		transport = net.Connection_Error.Cancelled
 	}
 
 	return {kind = .TCP_Failed, transport = transport}
@@ -619,7 +674,11 @@ websocket_protocols_join :: proc(dst: []u8, subprotocols: []string) -> (string, 
 }
 
 // Records the peer-selected subprotocol; false unless it was offered and fits.
-websocket_subprotocol_accept :: proc(conn: ^WebSocket_Conn, offered: []string, selected: string) -> bool {
+websocket_subprotocol_accept :: proc(
+	conn: ^WebSocket_Conn,
+	offered: []string,
+	selected: string,
+) -> bool {
 	found := false
 
 	for candidate in offered {

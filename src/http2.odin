@@ -1,20 +1,20 @@
 package surf
 
-import http "shared:http"
-import h2 "shared:http/v2"
-import hpack "shared:http/v2/hpack"
-import http1 "shared:http/v1"
 import "base:intrinsics"
-import tls_api "core:crypto/tls"
 import "core:io"
 import "core:mem"
-import owned "core:mem/owned"
 import "core:net"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
-import credential_store "core:crypto/tls/credentials/store"
+import "shared:async/http"
+import http1 "shared:async/http/v1"
+import http2 "shared:async/http/v2"
+import "shared:async/http/v2/hpack"
+import "shared:async/mem/owned"
+import "shared:async/tls"
+import credential_store "shared:async/tls/credentials/store"
 
 // An origin identity uses one live connection. Identity/trust rotation may keep
 // older WebSocket connections alive while new requests use a fresh bounded lane.
@@ -58,14 +58,14 @@ HTTP_Lane :: struct {
 		HTTP1,
 		HTTP2,
 	},
-	tls:                                                    ^tls_api.Conn,
-	engine:                                                 h2.Connection,
+	tls:                                                    ^tls.Conn,
+	engine:                                                 http2.Connection,
 	allocator:                                              mem.Allocator,
 	max_streams, byte_limit:                                int,
 	read_buf:                                               [1 << 14]u8,
 	tunnels:                                                [HTTP_STREAM_SLOTS]^HTTP2_Tunnel,
-	closed_tunnels:                                         [HTTP_STREAM_SLOTS]h2.Stream_Handle,
-	retired_requests:                                       [HTTP_RETIRED_REQUEST_SLOTS]h2.Stream_Handle,
+	closed_tunnels:                                         [HTTP_STREAM_SLOTS]http2.Stream_Handle,
+	retired_requests:                                       [HTTP_RETIRED_REQUEST_SLOTS]http2.Stream_Handle,
 	identity:                                               HTTP_Client_Identity,
 }
 
@@ -74,7 +74,7 @@ H2_Job :: struct {
 	upload:                                                       ^Upload_Source,
 	response:                                                     Response,
 	error:                                                        HTTP_Error,
-	handle:                                                       h2.Stream_Handle,
+	handle:                                                       http2.Stream_Handle,
 	names:                                                        [2048]u8,
 	names_n:                                                      int,
 	length_text:                                                  [32]u8,
@@ -240,7 +240,14 @@ http_client_multiplex :: proc(
 		}
 
 		deadline := time.time_add(time.now(), effective_timeout(c.config))
-		results[0].response, results[0].error = execute_tcp(parsed[0], requests[0], c.config, deadline, allocator, nil)
+		results[0].response, results[0].error = execute_tcp(
+			parsed[0],
+			requests[0],
+			c.config,
+			deadline,
+			allocator,
+			nil,
+		)
 		return results[0].error
 	}
 	deadline := time.time_add(time.now(), effective_timeout(c.config))
@@ -252,13 +259,14 @@ http_client_multiplex :: proc(
 
 		return lane_error
 	}
-	if deadline_error := tls_api.set_deadline(lane.tls, deadline); deadline_error.kind != .None {
+	if deadline_error := tls.set_deadline(lane.tls, deadline); deadline_error != nil {
 		http_lane_close(c, lane)
 		error := HTTP_Error {
 			kind         = .Deadline_Failed,
 			phase        = .Deadline,
 			write_effect = .Not_Sent,
-			transport    = deadline_error,
+			tls_error    = deadline_error,
+			transport    = tls_network(deadline_error),
 		}
 
 		for &result in results {
@@ -284,7 +292,14 @@ http_client_multiplex :: proc(
 			return error
 		}
 
-		results[0].response, results[0].error = http_lane_http1(c, lane, requests[0], nil, allocator, deadline)
+		results[0].response, results[0].error = http_lane_http1(
+			c,
+			lane,
+			requests[0],
+			nil,
+			allocator,
+			deadline,
+		)
 		return results[0].error
 	}
 	if !reused {
@@ -359,10 +374,10 @@ http_tls_connect :: proc(
 	allocator: mem.Allocator,
 	dials: ^int,
 ) -> (
-	^tls_api.Conn,
+	^tls.Conn,
 	HTTP_Error,
 ) {
-	connection, allocation_err := new(tls_api.Conn, allocator)
+	connection, allocation_err := new(tls.Conn, allocator)
 	if allocation_err != nil || connection == nil {
 		if allocation_err == nil {
 			allocation_err = .Out_Of_Memory
@@ -377,10 +392,10 @@ http_tls_connect :: proc(
 	}
 	settings := config.tls
 	settings.server_name = url.host
-	if validation := tls_api.config_validate(settings); validation != .None {
+	if validation := tls.config_validate(settings); validation != nil {
 		free(connection, allocator)
 		return nil, http_error_classify(
-			{kind = .TLS_Failed, tls_dial = {kind = .Invalid_Config, config = validation}},
+			{kind = .TLS_Failed, tls_error = validation},
 			.Configuration,
 			.Not_Sent,
 		)
@@ -400,11 +415,11 @@ http_tls_connect :: proc(
 		return nil, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent}
 	}
 	underlying := net.tcp_connection(&connection.tcp)
-	if client_error := tls_api.client(connection, underlying, settings); client_error != .None {
+	if client_error := tls.client(connection, underlying, settings); client_error != nil {
 		net.close(socket)
 		free(connection, allocator)
 		return nil, http_error_classify(
-			{kind = .TLS_Failed, tls_dial = {kind = .Invalid_Config, config = client_error}},
+			{kind = .TLS_Failed, tls_error = client_error},
 			.Configuration,
 			.Not_Sent,
 		)
@@ -412,11 +427,11 @@ http_tls_connect :: proc(
 	connection.tcp = {
 		socket = socket,
 	}
-	if handshake_error := tls_api.handshake_until(connection, setup_deadline); handshake_error.kind != .None {
-		tls_api.abort(connection)
+	if handshake_error := tls.handshake_until(connection, setup_deadline); handshake_error != nil {
+		tls.abort(connection)
 		free(connection, allocator)
 		return nil, http_error_classify(
-			{kind = .TLS_Failed, tls_dial = {kind = .Handshake_Failed, handshake = handshake_error}},
+			{kind = .TLS_Failed, tls_error = handshake_error},
 			.TLS,
 			.Not_Sent,
 		)
@@ -497,7 +512,7 @@ http_lane_prepare :: proc(
 	}
 	host, allocation := make([]u8, len(url.host), c.allocator)
 	if allocation != nil {
-		tls_api.abort(connection)
+		tls.abort(connection)
 		free(connection, c.allocator)
 		http_identity_release(&lane.identity)
 		return nil, false, {
@@ -516,7 +531,7 @@ http_lane_prepare :: proc(
 	lane.max_streams = c.limits.max_streams
 	lane.byte_limit = http_body_limit(c.config, c.limits)
 	http_arm_socket(c, connection.tcp.socket)
-	selected := tls_api.connection_state(connection).negotiated_protocol
+	selected := tls.connection_state(connection).negotiated_protocol
 	if selected == "h2" {
 		lane.protocol = .HTTP2
 
@@ -538,7 +553,8 @@ http_lane_prepare :: proc(
 }
 
 http_lane_close :: proc(c: ^HTTP_Client, lane: ^HTTP_Lane) {
-	if lane == nil || lane.tls == nil && !lane.engine_up && len(lane.host) == 0 && lane.identity.store == nil {
+	if lane == nil ||
+	   lane.tls == nil && !lane.engine_up && len(lane.host) == 0 && lane.identity.store == nil {
 		return
 	}
 
@@ -550,7 +566,7 @@ http_lane_close :: proc(c: ^HTTP_Client, lane: ^HTTP_Lane) {
 	allocator := lane.allocator
 
 	if lane.tls != nil {
-		tls_api.abort(lane.tls)
+		tls.abort(lane.tls)
 		free(lane.tls, allocator)
 	}
 
@@ -573,17 +589,30 @@ http_lane_http1 :: proc(
 	Response,
 	HTTP_Error,
 ) {
-	if deadline_error := tls_api.set_deadline(lane.tls, deadline); deadline_error.kind != .None {
+	if deadline_error := tls.set_deadline(lane.tls, deadline); deadline_error != nil {
 		http_lane_close(c, lane)
-		return {}, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent, transport = deadline_error}
+		return {}, {
+			kind = .Deadline_Failed,
+			phase = .Deadline,
+			write_effect = .Not_Sent,
+			tls_error = deadline_error,
+			transport = tls_network(deadline_error),
+		}
 	}
-	response, err := exchange_tls(lane.tls, request, upload, c.config.max_body_size, allocator, deadline)
+	response, err := exchange_tls(
+		lane.tls,
+		request,
+		upload,
+		c.config.max_body_size,
+		allocator,
+		deadline,
+	)
 	http_lane_close(c, lane)
 	return response, err
 }
 
 h2_exchange_once :: proc(
-	connection: ^tls_api.Conn,
+	connection: ^tls.Conn,
 	request: http.Request,
 	upload: ^Upload_Source,
 	config: Config,
@@ -632,14 +661,14 @@ h2_engine_open :: proc(lane: ^HTTP_Lane) -> HTTP_Error {
 		return {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent}
 	}
 
-	limits := h2.DEFAULT_LIMITS
+	limits := http2.DEFAULT_LIMITS
 	limits.streams = lane.max_streams
 	limits.reserved_streams = 0
 	limits.work_per_feed = 8192
 	limits.retained_body_bytes = 256 * 1024
 	limits.events = 32
 	capacity := max(lane.max_streams, 4)
-	error := h2.connection_init(
+	error := http2.connection_init(
 		&lane.engine,
 		{role = .Client, limits = limits, initial_stream_capacity = capacity},
 		{header_sections = 4, enable_push = false, max_stream_capacity = capacity},
@@ -667,26 +696,26 @@ h2_engine_close :: proc(lane: ^HTTP_Lane) {
 	}
 
 	for {
-		event, ok := h2.connection_poll(&lane.engine)
+		event, ok := http2.connection_poll(&lane.engine)
 
 		if !ok {
 			break
 		}
 
-		_ = h2.connection_event_release(&lane.engine, event.token)
+		_ = http2.connection_event_release(&lane.engine, event.token)
 	}
 
 	for {
-		view, ok := h2.connection_output_front(&lane.engine)
+		view, ok := http2.connection_output_front(&lane.engine)
 
 		if !ok {
 			break
 		}
 
-		_ = h2.connection_output_advance(&lane.engine, view.token, 0)
+		_ = http2.connection_output_advance(&lane.engine, view.token, 0)
 	}
 
-	_ = h2.connection_destroy(&lane.engine)
+	_ = http2.connection_destroy(&lane.engine)
 	lane.engine_up = false
 }
 
@@ -725,7 +754,7 @@ h2_fail :: proc(job: ^H2_Job, error: HTTP_Error) {
 	owned.destroy(&job.chunk)
 }
 
-h2_map_error :: proc(error: h2.Error, effect: HTTP_Write_Effect, status: int) -> HTTP_Error {
+h2_map_error :: proc(error: http2.Error, effect: HTTP_Write_Effect, status: int) -> HTTP_Error {
 	if error.kind == .None {
 		return {}
 	}
@@ -743,28 +772,42 @@ h2_map_error :: proc(error: h2.Error, effect: HTTP_Write_Effect, status: int) ->
 		phase = .Protocol
 	}
 
-	return {kind = kind, phase = phase, write_effect = effect, status = status, allocation = error.allocation}
-}
-
-h2_tls_error :: proc(io_error: tls_api.IO_Error, effect: HTTP_Write_Effect, status: int) -> HTTP_Error {
-	kind := http.Error_Kind.IO_Failed
-	phase := HTTP_Phase.Read
-
-	if io_error.transport.kind == .Timeout {
-		kind = .Deadline_Failed
-		phase = .Deadline
-	} else if io_error.kind == .Transport_Write_Failed {
-		phase = .Write
-	}
-
 	return {
 		kind = kind,
 		phase = phase,
 		write_effect = effect,
 		status = status,
-		tls_io = io_error,
-		transport = io_error.transport,
+		allocation = error.allocation,
 	}
+}
+
+h2_tls_error :: proc(io_error: tls.Error, effect: HTTP_Write_Effect, status: int) -> HTTP_Error {
+	kind := http.Error_Kind.IO_Failed
+	phase := HTTP_Phase.Read
+	transport := tls_network(io_error)
+
+	if _, write := io_error.(net.TCP_Send_Error); write {
+		phase = .Write
+	}
+
+	if http_network_phase(transport) == .Deadline {
+		kind = .Deadline_Failed
+		phase = .Deadline
+	}
+
+	return http_error_classify(
+		{
+			kind         = kind,
+			phase        = phase,
+			write_effect = effect,
+			status       = status,
+			tls_error    = io_error,
+			transport    = transport,
+		},
+		phase,
+		effect,
+		status,
+	)
 }
 
 h2_boot :: proc(lane: ^HTTP_Lane, deadline: time.Time, cancel: ^int) -> HTTP_Error {
@@ -776,7 +819,7 @@ h2_boot :: proc(lane: ^HTTP_Lane, deadline: time.Time, cancel: ^int) -> HTTP_Err
 				kind = .IO_Failed,
 				phase = .Cancellation,
 				write_effect = .Not_Sent,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 			}
 		}
 
@@ -839,7 +882,12 @@ h2_boot :: proc(lane: ^HTTP_Lane, deadline: time.Time, cancel: ^int) -> HTTP_Err
 	return {kind = .IO_Failed, phase = .Protocol, write_effect = .Not_Sent}
 }
 
-h2_drive :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, deadline: time.Time, cancel: ^int) -> HTTP_Error {
+h2_drive :: proc(
+	lane: ^HTTP_Lane,
+	jobs: []H2_Job,
+	deadline: time.Time,
+	cancel: ^int,
+) -> HTTP_Error {
 	defer h2_finish(lane, jobs)
 
 	for _ in 0 ..< 100000 {
@@ -847,9 +895,9 @@ h2_drive :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, deadline: time.Time, cancel: 
 			h2_reset_open(lane, jobs)
 			_, _ = h2_write_all(lane, jobs)
 			error := HTTP_Error {
-				kind = .IO_Failed,
-				phase = .Cancellation,
-				transport = {kind = .Cancelled},
+				kind      = .IO_Failed,
+				phase     = .Cancellation,
+				transport = net.Connection_Error.Cancelled,
 			}
 
 			h2_fail_open(jobs, error)
@@ -907,9 +955,9 @@ h2_drive :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, deadline: time.Time, cancel: 
 		if read_error.kind != .None {
 			if h2_cancelled(cancel) {
 				read_error = {
-					kind = .IO_Failed,
-					phase = .Cancellation,
-					transport = {kind = .Cancelled},
+					kind      = .IO_Failed,
+					phase     = .Cancellation,
+					transport = net.Connection_Error.Cancelled,
 				}
 			}
 
@@ -1018,13 +1066,13 @@ h2_submit :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 	}
 }
 
-h2_open :: proc(lane: ^HTTP_Lane, job: ^H2_Job) -> h2.Error {
+h2_open :: proc(lane: ^HTTP_Lane, job: ^H2_Job) -> http2.Error {
 	if error := h2_fields(job); error.kind != .None {
 		return error
 	}
 
 	end_stream := len(job.body) == 0 && job.upload_left == 0
-	handle, error := h2.connection_open(&lane.engine, job.fields[:job.field_n], end_stream)
+	handle, error := http2.connection_open(&lane.engine, job.fields[:job.field_n], end_stream)
 
 	if error.kind != .None {
 		return error
@@ -1040,7 +1088,7 @@ h2_open :: proc(lane: ^HTTP_Lane, job: ^H2_Job) -> h2.Error {
 	return {}
 }
 
-h2_fields :: proc(job: ^H2_Job) -> h2.Error {
+h2_fields :: proc(job: ^H2_Job) -> http2.Error {
 	url, error := http.url_parse(job.request.url)
 
 	if error.kind != .None {
@@ -1115,8 +1163,12 @@ h2_field :: proc(job: ^H2_Job, name, value: string) -> bool {
 	}
 
 	job.fields[job.field_n] = {
-		name  = stored,
-		value = value,
+		name          = stored,
+		value         = value,
+		never_indexed = stored == "authorization" ||
+			stored == "proxy-authorization" ||
+			stored == "cookie" ||
+			stored == "set-cookie",
 	}
 
 	job.field_n += 1
@@ -1155,7 +1207,7 @@ field_name_lower :: proc(storage: []u8, used: ^int, name: string) -> (string, bo
 h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 	if job.chunk.allocator.procedure != nil || len(job.chunk.storage) > 0 {
 		end_stream := job.body_at >= len(job.body) && job.upload_left == 0
-		error := h2.connection_send_data(&lane.engine, job.handle, &job.chunk, end_stream)
+		error := http2.connection_send_data(&lane.engine, job.handle, &job.chunk, end_stream)
 
 		if error.kind == .Limit_Exceeded {
 			return
@@ -1180,7 +1232,10 @@ h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 		chunk, error := owned.allocate(amount, lane.allocator)
 
 		if error.kind != .None {
-			h2_fail(job, {kind = .Allocation_Failed, phase = .Admission, allocation = error.allocation})
+			h2_fail(
+				job,
+				{kind = .Allocation_Failed, phase = .Admission, allocation = error.allocation},
+			)
 			return
 		}
 
@@ -1196,7 +1251,10 @@ h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 		chunk, error := owned.allocate(amount, lane.allocator)
 
 		if error.kind != .None {
-			h2_fail(job, {kind = .Allocation_Failed, phase = .Admission, allocation = error.allocation})
+			h2_fail(
+				job,
+				{kind = .Allocation_Failed, phase = .Admission, allocation = error.allocation},
+			)
 			return
 		}
 
@@ -1204,6 +1262,21 @@ h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 
 		for filled < amount {
 			got, read_error := io.read(job.upload.stream, chunk.data[filled:])
+
+			if got < 0 || got > len(chunk.data[filled:]) {
+				owned.destroy(&chunk)
+				h2_fail(
+					job,
+					{
+						kind      = .IO_Failed,
+						phase     = .Write,
+						transport = net.Connection_Error.Invalid_Count,
+						source_io = read_error,
+					},
+				)
+				lane.reusable = false
+				return
+			}
 
 			if got > 0 {
 				filled += got
@@ -1213,7 +1286,7 @@ h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 				owned.destroy(&chunk)
 				fail := HTTP_Error {
 					kind      = .IO_Failed,
-					phase     = .Read,
+					phase     = .Write,
 					source_io = read_error,
 				}
 
@@ -1250,9 +1323,9 @@ h2_service :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 			progress = true
 		}
 
-		flushed := h2.connection_flush(&lane.engine)
-		lived := h2.connection_lifecycle(&lane.engine)
-		fed := h2.connection_feed(&lane.engine, nil)
+		flushed := http2.connection_flush(&lane.engine)
+		lived := http2.connection_lifecycle(&lane.engine)
+		fed := http2.connection_feed(&lane.engine, nil)
 		progress = h2_retired_requests_reap(lane) || progress
 
 		if flushed.error.kind != .None || lived.error.kind != .None || fed.error.kind != .None {
@@ -1269,7 +1342,10 @@ h2_service :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 			fed.reason if \
 				fed.status == .Backpressure else \
 				lived.reason if lived.status == .Backpressure else flushed.reason
-		waiting := fed.status == .Backpressure || lived.status == .Backpressure || flushed.status == .Backpressure
+		waiting :=
+			fed.status == .Backpressure ||
+			lived.status == .Backpressure ||
+			flushed.status == .Backpressure
 
 		if waiting && reason == .Events {
 			continue
@@ -1289,7 +1365,7 @@ h2_poll :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	saw := false
 
 	for {
-		event, ok := h2.connection_poll(&lane.engine)
+		event, ok := http2.connection_poll(&lane.engine)
 
 		if !ok {
 			break
@@ -1302,10 +1378,10 @@ h2_poll :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 			error = h2_apply(lane, jobs, event)
 		}
 
-		release_error: h2.Error
+		release_error: http2.Error
 
 		if !taken {
-			release_error = h2.connection_event_release(&lane.engine, event.token)
+			release_error = http2.connection_event_release(&lane.engine, event.token)
 		}
 
 		if error.kind != .None {
@@ -1318,7 +1394,7 @@ h2_poll :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 
 		for &job in jobs {
 			if job.want_reset && !job.reset_sent && job.opened {
-				reset_error := h2.connection_reset(&lane.engine, job.handle, .Cancel)
+				reset_error := http2.connection_reset(&lane.engine, job.handle, .Cancel)
 				job.reset_sent = reset_error.kind == .None || reset_error.kind == .Closed
 				job.want_reset = false
 			}
@@ -1328,16 +1404,16 @@ h2_poll :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	return saw, {}
 }
 
-h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP_Error {
+h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: http2.Event_View) -> HTTP_Error {
 	if h2_retired_request_event(lane, event) {
 		return {}
 	}
 
 	switch value in event.payload {
-	case h2.Ready_Event:
+	case http2.Ready_Event:
 		lane.ready = true
-	case h2.Peer_Settings_Event, h2.Ping_Ack_Event:
-	case h2.Goaway_Event:
+	case http2.Peer_Settings_Event, http2.Ping_Ack_Event:
+	case http2.Goaway_Event:
 		lane.goaway = true
 		lane.reusable = false
 
@@ -1350,11 +1426,11 @@ h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP
 				h2_fail(&job, {kind = .IO_Failed, phase = .Protocol})
 			}
 		}
-	case h2.Terminal_Event:
+	case http2.Terminal_Event:
 		lane.dead = true
 		lane.reusable = false
 		return h2_map_error(value.error, .Unknown, 0)
-	case h2.Headers_Event:
+	case http2.Headers_Event:
 		job := h2_find(jobs, value.stream)
 
 		if job == nil {
@@ -1389,13 +1465,15 @@ h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP
 
 		job.status = int(value.summary.status)
 
-		if copy_error := h2_copy_headers(job, value.summary.fields, lane.allocator); copy_error.kind != .None {
+		if copy_error := h2_copy_headers(job, value.summary.fields, lane.allocator);
+		   copy_error.kind != .None {
 			h2_fail(job, copy_error)
 			job.want_reset = true
 			break
 		}
 
-		if length, present := value.summary.content_length.?; present && length > u64(lane.byte_limit) {
+		if length, present := value.summary.content_length.?;
+		   present && length > u64(lane.byte_limit) {
 			h2_fail(job, {kind = .Body_Oversized, phase = .Body_Limit, status = job.status})
 			job.want_reset = true
 			break
@@ -1404,7 +1482,7 @@ h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP
 		if value.end_stream {
 			job.ended = true
 		}
-	case h2.Data_Event:
+	case http2.Data_Event:
 		job := h2_find(jobs, value.stream)
 
 		if job == nil {
@@ -1431,10 +1509,16 @@ h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP
 		}
 
 		if len(value.data) > 0 {
-			if _, allocation := append(&job.response.body_storage, ..value.data); allocation != nil {
+			if _, allocation := append(&job.response.body_storage, ..value.data);
+			   allocation != nil {
 				h2_fail(
 					job,
-					{kind = .Allocation_Failed, phase = .Admission, allocation = allocation, status = job.status},
+					{
+						kind = .Allocation_Failed,
+						phase = .Admission,
+						allocation = allocation,
+						status = job.status,
+					},
 				)
 				job.want_reset = true
 				break
@@ -1444,21 +1528,21 @@ h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP
 		if value.end_stream {
 			job.ended = true
 		}
-	case h2.Stream_End_Event:
+	case http2.Stream_End_Event:
 		if job := h2_find(jobs, value.stream); job != nil {
 			job.ended = true
 		}
-	case h2.Reset_Event:
+	case http2.Reset_Event:
 		if job := h2_find(jobs, value.stream); job != nil {
 			h2_fail(job, {kind = .IO_Failed, phase = .Protocol, status = job.status})
 		}
-	case h2.Not_Processed_Event:
+	case http2.Not_Processed_Event:
 		if job := h2_find(jobs, value.stream); job != nil {
 			h2_fail(job, {kind = .IO_Failed, phase = .Protocol, status = job.status})
 		}
 
 		lane.reusable = false
-	case h2.Promise_Event:
+	case http2.Promise_Event:
 		lane.reusable = false
 		return {kind = .IO_Failed, phase = .Protocol, write_effect = .Unknown}
 	}
@@ -1466,7 +1550,7 @@ h2_apply :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, event: h2.Event_View) -> HTTP
 	return {}
 }
 
-h2_find :: proc(jobs: []H2_Job, handle: h2.Stream_Handle) -> ^H2_Job {
+h2_find :: proc(jobs: []H2_Job, handle: http2.Stream_Handle) -> ^H2_Job {
 	for &job in jobs {
 		if job.opened && job.handle == handle {
 			return &job
@@ -1476,7 +1560,11 @@ h2_find :: proc(jobs: []H2_Job, handle: h2.Stream_Handle) -> ^H2_Job {
 	return nil
 }
 
-h2_copy_headers :: proc(job: ^H2_Job, fields: []hpack.Field, allocator: mem.Allocator) -> HTTP_Error {
+h2_copy_headers :: proc(
+	job: ^H2_Job,
+	fields: []hpack.Field,
+	allocator: mem.Allocator,
+) -> HTTP_Error {
 	count, bytes := 0, 0
 
 	for field in fields {
@@ -1489,7 +1577,12 @@ h2_copy_headers :: proc(job: ^H2_Job, fields: []hpack.Field, allocator: mem.Allo
 	}
 
 	if count > http.MAX_HEADERS {
-		return {kind = .Header_Limit, phase = .Protocol, write_effect = h2_effect(job), status = job.status}
+		return {
+			kind = .Header_Limit,
+			phase = .Protocol,
+			write_effect = h2_effect(job),
+			status = job.status,
+		}
 	}
 
 	storage, allocation := make([]u8, bytes, allocator)
@@ -1544,7 +1637,12 @@ h2_copy_headers :: proc(job: ^H2_Job, fields: []hpack.Field, allocator: mem.Allo
 	body, body_allocation := make([dynamic]u8, 0, 64, allocator)
 
 	if body_allocation != nil {
-		return {kind = .Allocation_Failed, phase = .Admission, allocation = body_allocation, status = job.status}
+		return {
+			kind = .Allocation_Failed,
+			phase = .Admission,
+			allocation = body_allocation,
+			status = job.status,
+		}
 	}
 
 	job.response.body_storage = body
@@ -1559,7 +1657,7 @@ h2_reset_open :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 
 	for &job in jobs {
 		if job.opened && !job.reset_sent && !job.ended {
-			error := h2.connection_reset(&lane.engine, job.handle, .Cancel)
+			error := http2.connection_reset(&lane.engine, job.handle, .Cancel)
 			job.reset_sent = error.kind == .None || error.kind == .Closed
 		}
 	}
@@ -1573,21 +1671,21 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 	}
 
 	for _ in 0 ..< 64 {
-		view, ok := h2.connection_output_front(&lane.engine)
+		view, ok := http2.connection_output_front(&lane.engine)
 
 		if !ok {
 			return wrote, {}
 		}
 
 		if len(view.bytes) == 0 {
-			_ = h2.connection_output_advance(&lane.engine, view.token, 0)
+			_ = http2.connection_output_advance(&lane.engine, view.token, 0)
 			continue
 		}
 
-		n, write_error := tls_api.write(lane.tls, view.bytes)
+		n, write_error := tls.write(lane.tls, view.bytes)
 
 		if n > 0 {
-			advance_error := h2.connection_output_advance(&lane.engine, view.token, n)
+			advance_error := http2.connection_output_advance(&lane.engine, view.token, n)
 
 			if advance_error.kind != .None {
 				lane.dead = true
@@ -1604,15 +1702,17 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 
 				job.on_wire = true
 
-				if job.status == 0 && job.error.kind != .None && job.error.write_effect == .Not_Sent {
+				if job.status == 0 &&
+				   job.error.kind != .None &&
+				   job.error.write_effect == .Not_Sent {
 					job.error.write_effect = .Unknown
 				}
 			}
 		}
 
-		if write_error.kind != .None {
+		if write_error != nil {
 			if n == 0 {
-				_ = h2.connection_output_advance(&lane.engine, view.token, 0)
+				_ = http2.connection_output_advance(&lane.engine, view.token, 0)
 			}
 
 			lane.dead = true
@@ -1621,7 +1721,7 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 		}
 
 		if n == 0 {
-			_ = h2.connection_output_advance(&lane.engine, view.token, 0)
+			_ = http2.connection_output_advance(&lane.engine, view.token, 0)
 			lane.dead = true
 			return wrote, {kind = .IO_Failed, phase = .Write, write_effect = .Not_Sent}
 		}
@@ -1631,9 +1731,9 @@ h2_write_all :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) -> (bool, HTTP_Error) {
 }
 
 h2_read :: proc(lane: ^HTTP_Lane) -> (int, HTTP_Error) {
-	n, read_error := tls_api.read(lane.tls, lane.read_buf[:])
+	n, read_error := tls.read(lane.tls, lane.read_buf[:])
 
-	if read_error.kind != .None {
+	if read_error != nil {
 		lane.dead = true
 		lane.reusable = false
 		return n, h2_tls_error(read_error, .Unknown, 0)
@@ -1662,7 +1762,7 @@ h2_finish :: proc(lane: ^HTTP_Lane, jobs: []H2_Job) {
 			// Retain only scalar identity, never the job's borrowed request storage.
 			// The copy is required: escape analysis is not field-sensitive, so passing
 			// job.handle marks the borrowed request as retained by the lane.
-			handle := h2.Stream_Handle {
+			handle := http2.Stream_Handle {
 				owner_id   = job.handle.owner_id,
 				slot       = job.handle.slot,
 				generation = job.handle.generation,
@@ -1688,7 +1788,7 @@ h2_feed :: proc(lane: ^HTTP_Lane, jobs: []H2_Job, src: []u8) -> HTTP_Error {
 	spins := 0
 
 	for len(rest) > 0 && spins < 16 {
-		result := h2.connection_feed(&lane.engine, rest)
+		result := http2.connection_feed(&lane.engine, rest)
 
 		if result.error.kind != .None {
 			lane.dead = true
@@ -1758,7 +1858,7 @@ HTTP_Client_Identity :: struct {
 	lease:      credential_store.Lease,
 	generation: u64,
 }
-http_identity_acquire :: proc(config: tls_api.Config) -> (HTTP_Client_Identity, HTTP_Error) {
+http_identity_acquire :: proc(config: tls.Config) -> (HTTP_Client_Identity, HTTP_Error) {
 	identity := HTTP_Client_Identity {
 		store = config.client_credentials,
 	}
@@ -1803,7 +1903,7 @@ http_identity_release :: proc(identity: ^HTTP_Client_Identity) {
 
 	identity^ = {}
 }
-http_tls_config_equal :: proc(a, b: tls_api.Config) -> bool {
+http_tls_config_equal :: proc(a, b: tls.Config) -> bool {
 	if a.client_credentials != b.client_credentials ||
 	   a.session != b.session ||
 	   a.session_cache != b.session_cache ||
@@ -1844,8 +1944,8 @@ http_lane_has_tunnels :: proc(lane: ^HTTP_Lane) -> bool {
 // permit physical reaping; returning a response is earlier than that boundary.
 HTTP_RETIRED_REQUEST_SLOTS :: 32
 
-h2_retire_request :: proc(lane: ^HTTP_Lane, handle: h2.Stream_Handle) {
-	error := h2.connection_reap(&lane.engine, handle)
+h2_retire_request :: proc(lane: ^HTTP_Lane, handle: http2.Stream_Handle) {
+	error := http2.connection_reap(&lane.engine, handle)
 
 	if error.kind == .None || error.kind == .Invalid_Input {
 		return
@@ -1890,7 +1990,7 @@ h2_retired_requests_reap :: proc(lane: ^HTTP_Lane) -> bool {
 			continue
 		}
 
-		error := h2.connection_reap(&lane.engine, handle)
+		error := http2.connection_reap(&lane.engine, handle)
 
 		if error.kind == .None || error.kind == .Invalid_Input {
 			handle = {}
@@ -1903,18 +2003,18 @@ h2_retired_requests_reap :: proc(lane: ^HTTP_Lane) -> bool {
 	return progress
 }
 
-h2_retired_request_event :: proc(lane: ^HTTP_Lane, event: h2.Event_View) -> bool {
-	handle: h2.Stream_Handle
+h2_retired_request_event :: proc(lane: ^HTTP_Lane, event: http2.Event_View) -> bool {
+	handle: http2.Stream_Handle
 	#partial switch value in event.payload {
-	case h2.Headers_Event:
+	case http2.Headers_Event:
 		handle = value.stream
-	case h2.Data_Event:
+	case http2.Data_Event:
 		handle = value.stream
-	case h2.Stream_End_Event:
+	case http2.Stream_End_Event:
 		handle = value.stream
-	case h2.Reset_Event:
+	case http2.Reset_Event:
 		handle = value.stream
-	case h2.Not_Processed_Event:
+	case http2.Not_Processed_Event:
 		handle = value.stream
 	case:
 		return false

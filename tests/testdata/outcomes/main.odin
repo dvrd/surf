@@ -1,7 +1,7 @@
 package main
 
 import surf "shared:surf"
-import "core:crypto/tls"
+import "shared:async/tls"
 import "core:fmt"
 import "core:os"
 import "core:net"

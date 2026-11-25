@@ -1,8 +1,8 @@
 package main
 
 import surf "shared:surf"
-import http "shared:http"
-import "core:crypto/tls"
+import http "shared:async/http"
+import "shared:async/tls"
 import "core:fmt"
 import "core:mem"
 import "core:os"

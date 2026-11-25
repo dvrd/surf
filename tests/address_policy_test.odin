@@ -1,8 +1,8 @@
 package tests
 
 import surf "shared:surf"
-import http "shared:http"
-import tls "core:crypto/tls"
+import http "shared:async/http"
+import tls "shared:async/tls"
 import "core:fmt"
 import "core:net"
 import "core:sync"

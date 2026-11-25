@@ -1,8 +1,8 @@
 package surf
 
-import http "shared:http"
+import http "shared:async/http"
 import "core:testing"
-import "core:crypto/tls"
+import "shared:async/tls"
 import "core:time"
 
 @(test)

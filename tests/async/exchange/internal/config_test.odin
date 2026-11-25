@@ -1,7 +1,7 @@
 package surf_exchange
 
 import surf "../.."
-import "core:crypto/tls"
+import "shared:async/tls"
 import "core:mem"
 import "core:testing"
 import "core:time"

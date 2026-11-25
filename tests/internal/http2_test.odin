@@ -1,8 +1,10 @@
 package surf
 
-import http "shared:http"
-import "core:crypto/tls"
+import http "shared:async/http"
+import "shared:async/tls"
 import x509 "core:crypto/x509"
+import "core:io"
+import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -438,9 +440,9 @@ http102_client :: proc(t: ^testing.T, config: Config, limits: HTTP_Origin_Limits
 http102_roots :: proc(t: ^testing.T, path: string) -> ^tls.Root_Pool {
 	pool := new(tls.Root_Pool)
 	load_error := tls.root_pool_load_file(pool, path)
-	testing.expect_value(t, load_error.kind, .None)
+	testing.expect_value(t, load_error, nil)
 
-	if load_error.kind != .None {
+	if load_error != nil {
 		free(pool)
 		return nil
 	}
@@ -680,4 +682,83 @@ http102_find_int :: proc(log: ^Http102_Log, key: string) -> (int, bool) {
 	}
 
 	return strconv.parse_int(rest[i:end])
+}
+
+@(test)
+h2_tls_and_tunnel_deadlines_follow_the_shared_phase_rules :: proc(t: ^testing.T) {
+	alert_error := tls.Error(tls.Protocol_Error.Bad_Record_Mac)
+	alert := h2_tls_error(alert_error, .Unknown, 0)
+	classified := http_error_classify(
+		{
+			kind         = .IO_Failed,
+			phase        = .Read,
+			write_effect = .Unknown,
+			tls_error    = alert_error,
+			transport    = tls_network(alert_error),
+		},
+		.Read,
+		.Unknown,
+		0,
+	)
+	testing.expect_value(t, alert.kind, classified.kind)
+	testing.expect_value(t, alert.phase, classified.phase)
+	testing.expect_value(t, alert.tls_error, classified.tls_error)
+	testing.expect_value(t, alert.phase, .TLS)
+	closed := h2_tls_error(net.TCP_Send_Error.Connection_Closed, .Unknown, 0)
+	testing.expect_value(t, closed.phase, .Write)
+	deadline := h2_tunnel_stream_error(
+		{
+			kind      = .Deadline_Failed,
+			phase     = .Write,
+			tls_error = tls.Protocol_Error.Bad_Record_Mac,
+		},
+	)
+	testing.expect_value(t, deadline.kind, .TCP_Failed)
+	sent, ok := deadline.transport.(net.TCP_Send_Error)
+	testing.expect(t, ok && sent == .Timeout)
+}
+
+h2_bad_count_read :: proc(
+	data: rawptr,
+	mode: io.Stream_Mode,
+	_: []u8,
+	_: i64,
+	_: io.Seek_From,
+) -> (
+	i64,
+	io.Error,
+) {
+	if mode != .Read {
+		return 0, nil
+	}
+
+	count := cast(^int)data
+
+	return i64(count^), nil
+}
+
+@(test)
+h2_send_body_rejects_a_count_outside_the_buffer :: proc(t: ^testing.T) {
+	for count in ([]int{-1, 9}) {
+		bad := count
+		source := Upload_Source {
+			stream = {procedure = h2_bad_count_read, data = &bad},
+			content_length = 8,
+		}
+		job := H2_Job {
+			upload      = &source,
+			upload_left = 8,
+		}
+		lane := HTTP_Lane {
+			allocator = context.allocator,
+			reusable  = true,
+		}
+		h2_send_body(&lane, &job)
+		testing.expect_value(t, job.error.kind, .IO_Failed)
+		testing.expect_value(t, job.error.phase, .Write)
+		cause, is_connection := job.error.transport.(net.Connection_Error)
+		testing.expect(t, is_connection && cause == .Invalid_Count)
+		testing.expect(t, !lane.reusable)
+		testing.expect(t, job.chunk.allocator.procedure == nil)
+	}
 }

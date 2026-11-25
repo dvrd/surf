@@ -1,9 +1,10 @@
 package surf_exchange
 
 import channel "../stream"
-import h1 "shared:http/v1"
-import deflate "core:compress/step"
-import "core:mem/owned"
+import h1 "shared:async/http/v1"
+import deflate "shared:async/compress/step"
+import "shared:async/mem/owned"
+import "core:net"
 import "core:testing"
 
 @(test)
@@ -103,7 +104,7 @@ stream_identity_terminal_framing_finishes_while_last_chunk_held :: proc(t: ^test
 		} else {
 			x.base._head.framing = .EOF
 			x.base._read.ready = true
-			x.base._read.result.err.kind = .Peer_Closed
+			x.base._read.result.err = net.Connection_Error.Peer_Closed
 		}
 
 		slot, output := channel.reserve_output(cell)

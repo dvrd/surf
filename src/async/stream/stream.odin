@@ -1,13 +1,13 @@
 package surf_stream
 
-import http "shared:http"
-import "core:mem/owned"
+import http "shared:async/http"
+import "shared:async/mem/owned"
 import "core:sync"
 import surf "../.."
 import signal "shared:async/signal"
 import "core:mem"
-import charged "core:mem/budget"
-import scopes "core:sync/budget"
+import charged "shared:async/mem/budget"
+import scopes "shared:async/sync/budget"
 import "core:io"
 
 range_overlap :: proc(a: rawptr, an: int, b: rawptr, bn: int) -> bool {

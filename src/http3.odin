@@ -1,19 +1,22 @@
 package surf
 
-import http "shared:http"
-import http3 "shared:http/v3"
-import "core:mem"
+import "base:intrinsics"
 import "core:io"
+import "core:mem"
 import "core:net"
 import "core:strings"
 import "core:time"
-import "base:intrinsics"
+import "shared:async/http"
+import http3 "shared:async/http/v3"
+import "shared:async/tls"
+import "shared:async/tls/credentials/store"
 
 Http3_Body :: struct {
 	body:       [dynamic]u8,
 	limit:      int,
 	allocation: mem.Allocator_Error,
 }
+
 http3_body_write :: proc(data: rawptr, chunk: []u8, final: bool) -> (int, http3.Body_Status) {
 	b := cast(^Http3_Body)data
 
@@ -30,6 +33,7 @@ http3_body_write :: proc(data: rawptr, chunk: []u8, final: bool) -> (int, http3.
 
 	return n, .Ready
 }
+
 http3_body_init :: proc(b: ^Http3_Body, config: Config, allocator: mem.Allocator) -> HTTP_Error {
 	b.limit = config.max_body_size
 
@@ -44,7 +48,12 @@ http3_body_init :: proc(b: ^Http3_Body, config: Config, allocator: mem.Allocator
 	body, e := make([dynamic]u8, 0, allocator)
 
 	if e != nil {
-		return {kind = .Allocation_Failed, phase = .Configuration, allocation = e, write_effect = .Not_Sent}
+		return {
+			kind = .Allocation_Failed,
+			phase = .Configuration,
+			allocation = e,
+			write_effect = .Not_Sent,
+		}
 	}
 
 	b.body = body
@@ -101,13 +110,6 @@ execute_http3 :: proc(
 	}
 	deadline := time.time_add(time.now(), budget)
 	port := http3_dial_port(config.alt_svc, url.host, url.port, time.now())
-	endpoint, resolve_error := http3_resolve(url.host, port, deadline, config.resolver)
-	if resolve_error.kind != .None {
-		return {}, resolve_error
-	}
-	if rejected := address_policy_check(config, url.host, []net.Endpoint{endpoint}); rejected.kind != .None {
-		return {}, rejected
-	}
 	path := url.target
 	if len(path) == 0 {
 		path = "/"
@@ -131,9 +133,9 @@ execute_http3 :: proc(
 		}
 	}
 	wire := http3.Client_Request {
-		session_cache           = config.tls.session_cache,
 		cancel                  = config._http3_cancel,
 		cancel_data             = config._http3_cancel_data,
+		session_cache           = config.tls.session_cache,
 		qpack                   = config.http3_qpack,
 		ecn                     = config.http3_ecn,
 		client_credentials      = config.tls.client_credentials,
@@ -150,7 +152,11 @@ execute_http3 :: proc(
 	}
 	trailer_fields: [32]http3.Field
 	trailer_names: [4096]u8
-	trailers, trailers_fit := http3_trailer_fields(&trailer_fields, &trailer_names, request.trailers)
+	trailers, trailers_fit := http3_trailer_fields(
+		&trailer_fields,
+		&trailer_names,
+		request.trailers,
+	)
 	if !trailers_fit {
 		return {}, {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
 	}
@@ -179,20 +185,74 @@ execute_http3 :: proc(
 	wire.body_sink = &sink
 	wire.max_response_bytes = aggregate.limit
 	result: http3.Client_Result
-	// endpoint is the address just checked. A new QUIC client dials it. A pooled
-	// lane already open for this origin is reused and is not checked again.
+
 	if config.http3_pool != nil {
-		result = http3.pool_exchange_request(
-			config.http3_pool,
-			endpoint,
+		reuse := http3_pool_reuse(config.http3_pool, url.host, port, wire, config)
+
+		if reuse {
+			// The zero address is used only because the reuse branch does not dial it.
+			// A pooled lane already open for this origin is reused and is not checked again.
+			endpoint := net.Endpoint {
+				address = net.IP4_Address{0, 0, 0, 0},
+				port    = port,
+			}
+			result = http3.pool_exchange_request(
+				config.http3_pool,
+				endpoint,
+				url.host,
+				wire,
+				config.tls.root_cas,
+				deadline,
+			)
+
+			if result.error != .None && !result.sent {
+				dialed, dial_error := http3_policy_endpoint(url.host, port, deadline, config)
+
+				if dial_error.kind != .None {
+					return {}, dial_error
+				}
+
+				result = http3.pool_exchange_request(
+					config.http3_pool,
+					dialed,
+					url.host,
+					wire,
+					config.tls.root_cas,
+					deadline,
+				)
+			}
+		} else {
+			dialed, dial_error := http3_policy_endpoint(url.host, port, deadline, config)
+
+			if dial_error.kind != .None {
+				return {}, dial_error
+			}
+
+			result = http3.pool_exchange_request(
+				config.http3_pool,
+				dialed,
+				url.host,
+				wire,
+				config.tls.root_cas,
+				deadline,
+			)
+		}
+	} else {
+		dialed, dial_error := http3_policy_endpoint(url.host, port, deadline, config)
+
+		if dial_error.kind != .None {
+			return {}, dial_error
+		}
+
+		result = http3.client_exchange_request(
+			dialed,
 			url.host,
 			wire,
 			config.tls.root_cas,
 			deadline,
 		)
-	} else {
-		result = http3.client_exchange_request(endpoint, url.host, wire, config.tls.root_cas, deadline)
 	}
+
 	if result.error != .None {
 		if aggregate.allocation != nil {
 			return {}, {
@@ -207,14 +267,17 @@ execute_http3 :: proc(
 		error.source_io = source.error
 		return {}, error
 	}
+
 	response, e := http3_response(&result, allocator)
 	if e.kind != .None {
 		return {}, e
 	}
 	delete(response.body_storage)
+
 	response.body_storage = aggregate.body
 	aggregate.body = {}
 	response.body = response.body_storage[:]
+
 	return response, {}
 }
 
@@ -241,7 +304,12 @@ http3_upload_read :: proc(data: rawptr, destination: []u8) -> (int, bool) {
 }
 
 // Alt-Svc wins only while the lookup is valid. Otherwise the URL port, or 443.
-http3_dial_port :: proc(cache: ^Alt_Svc_Cache, host: string, url_port: int, now: time.Time) -> int {
+http3_dial_port :: proc(
+	cache: ^Alt_Svc_Cache,
+	host: string,
+	url_port: int,
+	now: time.Time,
+) -> int {
 	if port, ok := alt_svc_lookup(cache, host, now, url_port); ok && port > 0 {
 		return port
 	}
@@ -261,7 +329,7 @@ http3_resolve :: proc(
 	deadline: time.Time,
 	options: net.Resolver_Options,
 ) -> (
-	net.Endpoint,
+	net.Resolved_Endpoints,
 	HTTP_Error,
 ) {
 	endpoints, resolve_error := net.resolve_endpoints_until(host, port, deadline, options)
@@ -270,18 +338,101 @@ http3_resolve :: proc(
 			resolve_error = net.Resolve_Error.Unable_To_Resolve
 		}
 
-		return {}, http_error_classify({kind = .Dial_Failed, network = resolve_error}, .DNS, .Not_Sent)
+		return {}, http_error_classify(
+			{kind = .Dial_Failed, network = resolve_error},
+			.DNS,
+			.Not_Sent,
+		)
 	}
+	return endpoints, {}
+}
+
+// A new dial sees every resolved address before the socket exists.
+http3_policy_endpoint :: proc(
+	host: string,
+	port: int,
+	deadline: time.Time,
+	config: Config,
+) -> (
+	net.Endpoint,
+	HTTP_Error,
+) {
+	endpoints, resolve_error := http3_resolve(host, port, deadline, config.resolver)
+
+	if resolve_error.kind != .None {
+		return {}, resolve_error
+	}
+
+	if rejected := address_policy_check(config, host, endpoints.items[:endpoints.count]);
+	   rejected.kind != .None {
+		return {}, rejected
+	}
+
 	return endpoints.items[0], {}
 }
 
-http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) -> HTTP_Error {
+// The generation is the one pool_admit compares. A pin that fails is not a reuse hit.
+http3_pool_reuse :: proc(
+	pool: ^http3.Pool,
+	host: string,
+	port: int,
+	request: http3.Client_Request,
+	config: Config,
+) -> bool {
+	generation: u64
+	ok := true
+
+	if request.client_credentials != nil {
+		pin: store.Lease
+		pin_error: store.Error
+
+		if request.client_credential_lease != nil {
+			generation, pin_error = store.lease_generation(
+				request.client_credentials,
+				request.client_credential_lease^,
+			)
+		} else {
+			pin, pin_error = store.acquire(request.client_credentials)
+
+			if pin_error.kind == .None {
+				generation, pin_error = store.lease_generation(request.client_credentials, pin)
+				_ = store.release(request.client_credentials, &pin)
+			}
+		}
+
+		if pin_error.kind != .None {
+			ok = false
+		}
+	} else if request.client_credential_lease != nil {
+		ok = false
+	}
+
+	if !ok {
+		return false
+	}
+
+	_, reuse := http3.pool_pick(
+		pool,
+		host,
+		port,
+		request.qpack,
+		request.client_credentials,
+		generation,
+		request.ecn,
+		tls.quic_roots_identity(config.tls.root_cas),
+	)
+
+	return reuse
+}
+
+http3_map_error :: proc(result: http3.Client_Result, _: time.Time) -> HTTP_Error {
 	effect := HTTP_Write_Effect.Not_Sent
+
 	if result.sent {
 		effect = .Unknown
 	}
 
-	if result.error == .Deadline && time.diff(time.now(), total_deadline) <= 0 {
+	if result.error == .Deadline {
 		return {kind = .Deadline_Failed, phase = .Deadline, write_effect = effect}
 	}
 
@@ -302,11 +453,22 @@ http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) 
 	}
 
 	if result.error == .Source {
-		return {kind = .IO_Failed, phase = .Read, write_effect = effect}
+		phase := HTTP_Phase.Read
+
+		if result.status == 0 {
+			phase = .Write
+		}
+
+		return {kind = .IO_Failed, phase = phase, write_effect = effect}
 	}
 
 	if result.error == .Cancelled {
-		return {kind = .IO_Failed, phase = .Cancellation, write_effect = effect, transport = {kind = .Cancelled}}
+		return {
+			kind = .IO_Failed,
+			phase = .Cancellation,
+			write_effect = effect,
+			transport = net.Connection_Error.Cancelled,
+		}
 	}
 
 	if result.error == .Certificate {
@@ -316,7 +478,13 @@ http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) 
 	return {kind = .IO_Failed, phase = .Protocol, write_effect = effect}
 }
 
-http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -> (Response, HTTP_Error) {
+http3_response :: proc(
+	result: ^http3.Client_Result,
+	allocator: mem.Allocator,
+) -> (
+	Response,
+	HTTP_Error,
+) {
 	if result == nil {
 		return {}, {kind = .IO_Failed, phase = .Protocol, write_effect = .Response_Received}
 	}
@@ -400,7 +568,8 @@ http3_response :: proc(result: ^http3.Client_Result, allocator: mem.Allocator) -
 		at += copied
 	}
 
-	if trailer_error := http3_response_trailers(&response, result, allocator); trailer_error.kind != .None {
+	if trailer_error := http3_response_trailers(&response, result, allocator);
+	   trailer_error.kind != .None {
 		response_destroy(&response)
 		return {}, trailer_error
 	}
@@ -473,7 +642,9 @@ alt_svc_lookup :: proc(
 	}
 	for i in 0 ..< ALT_SVC_SLOTS {
 		slot := &cache.slots[i]
-		if !slot.used || slot.origin_port != effective_port || string(slot.host[:slot.host_len]) != host {
+		if !slot.used ||
+		   slot.origin_port != effective_port ||
+		   string(slot.host[:slot.host_len]) != host {
 			continue
 		}
 
@@ -766,27 +937,32 @@ websocket_http3_open :: proc(
 		count += 1
 	}
 	port := http3_dial_port(client.config.alt_svc, parsed.host, parsed.port, time.now())
-	endpoint, re := http3_resolve(parsed.host, port, deadline, client.config.resolver)
+	endpoints, re := http3_resolve(parsed.host, port, deadline, client.config.resolver)
 
 	if re.kind != .None {
 		return re
 	}
-	if rejected := address_policy_check(client.config, parsed.host, []net.Endpoint{endpoint}); rejected.kind != .None {
+
+	if rejected := address_policy_check(client.config, parsed.host, endpoints.items[:endpoints.count]);
+	   rejected.kind != .None {
 		return rejected
 	}
+
+	endpoint := endpoints.items[0]
 
 	tunnel.client = client
 	intrinsics.atomic_store(&client.cancel, 0)
 	request := http3.Client_Request {
-		method                  = "CONNECT",
+		session_cache           = client.config.tls.session_cache,
 		protocol                = "websocket",
-		authority               = parsed.authority,
-		target                  = options.target,
-		headers                 = fields[:count],
-		qpack                   = client.config.http3_qpack,
 		ecn                     = client.config.http3_ecn,
 		client_credentials      = client.config.tls.client_credentials,
 		client_credential_lease = client.config.tls.client_credential_lease,
+		qpack                   = client.config.http3_qpack,
+		method                  = "CONNECT",
+		target                  = options.target,
+		authority               = parsed.authority,
+		headers                 = fields[:count],
 	}
 	// endpoint is the address just checked. A new lane dials it; an open lane is reused.
 	e := http3.pool_connect_open(
@@ -843,7 +1019,7 @@ h3_tunnel_progress :: proc(t: ^HTTP3_Tunnel, write: bool) -> WebSocket_Stream_Er
 
 	if h2_cancelled(&t.client.cancel) {
 		http3.client_connect_abort(&t.wire)
-		return {kind = .TCP_Failed, transport = {kind = .Cancelled}}
+		return {kind = .TCP_Failed, transport = net.Connection_Error.Cancelled}
 	}
 
 	e := http3.client_connect_step(&t.wire, h3_tunnel_deadline(t, write))
@@ -852,10 +1028,13 @@ h3_tunnel_progress :: proc(t: ^HTTP3_Tunnel, write: bool) -> WebSocket_Stream_Er
 		return {}
 	}
 
-	return {
-		kind = .TCP_Failed,
-		transport = {kind = .Timeout if e == .Deadline else .Cancelled if e == .Cancelled else .Protocol_Failed},
+	transport: net.Network_Error = net.Connection_Error.Protocol_Failed
+	if e == .Deadline {
+		transport = net.TCP_Send_Error.Timeout if write else net.TCP_Recv_Error.Timeout
+	} else if e == .Cancelled {
+		transport = net.Connection_Error.Cancelled
 	}
+	return {kind = .TCP_Failed, transport = transport}
 }
 h3_tunnel_read :: proc(data: rawptr, dst: []u8) -> (int, WebSocket_Stream_Error) {
 	t := cast(^HTTP3_Tunnel)data

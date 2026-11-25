@@ -3,11 +3,12 @@ package surf_async
 import surf ".."
 import runtime_async "shared:async"
 import "core:sync"
-import http "shared:http"
+import http "shared:async/http"
 import "core:mem"
-import charged "core:mem/budget"
+import charged "shared:async/mem/budget"
+import "core:net"
 import stream_api "stream"
-import h1 "shared:http/v1"
+import h1 "shared:async/http/v1"
 
 redirect_status_error :: proc(error: surf.HTTP_Error, status: int) -> surf.HTTP_Error {
 	result := error
@@ -61,7 +62,7 @@ redirect_client_error :: proc(error: Client_Error) -> surf.HTTP_Error {
 	}
 
 	if error.kind == .Closed {
-		return {kind = .IO_Failed, transport = {kind = .Cancelled}, phase = .Cancellation, write_effect = .Not_Sent}
+		return {kind = .IO_Failed, transport = net.Connection_Error.Cancelled, phase = .Cancellation, write_effect = .Not_Sent}
 	}
 
 	// HTTP_Error has no local admission Capacity category. Initial submission
@@ -71,7 +72,7 @@ redirect_client_error :: proc(error: Client_Error) -> surf.HTTP_Error {
 		return {kind = .Dial_Failed, phase = .Connect, write_effect = .Not_Sent}
 	}
 
-	if error.kind == .Runtime_Error {
+	if error.kind == .Error {
 		return session_runtime_error(error.runtime, .Connect)
 	}
 
@@ -442,7 +443,7 @@ redirect_cutoff_locked :: proc(k: ^Kernel, r: ^Request_Slot, now: runtime_async.
 			kind = .Request_Error,
 			http = {
 				kind = .IO_Failed,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 				phase = .Cancellation,
 				write_effect = .Not_Sent,
 			},
@@ -704,14 +705,14 @@ redirect_live_error :: proc(a: ^Session_Actor, h: Request_Handle, now: runtime_a
 	} else if now.at >= r.deadline.at {
 		result = {
 			kind = .Deadline_Failed,
-			transport = {kind = .Timeout},
+			transport = net.TCP_Recv_Error.Timeout,
 			phase = .Deadline,
 			write_effect = .Not_Sent,
 		}
 	} else if s.phase != .Published || s.kernel.closed || r.cancel_requested || runtime_async.cancelled(&a.task) {
 		result = {
 			kind = .IO_Failed,
-			transport = {kind = .Cancelled},
+			transport = net.Connection_Error.Cancelled,
 			phase = .Cancellation,
 			write_effect = .Not_Sent,
 		}

@@ -7,9 +7,9 @@ import rt "base:runtime"
 import "base:intrinsics"
 import "core:fmt"
 import "core:mem"
-import charged "core:mem/budget"
+import charged "shared:async/mem/budget"
 import "core:net"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:sync"
 import "core:testing"
 import "core:time"
@@ -444,7 +444,7 @@ bootstrap_rechecks_lifetime_and_scope_after_physical_preparation :: proc(t: ^tes
 		testing.expect_value(t, failed, nil)
 
 		if expire {
-			testing.expect(t, failure.kind == .Runtime_Error && failure.runtime.kind == .Timeout)
+			testing.expect(t, failure.kind == .Error && failure.runtime.kind == .Timeout)
 		} else {
 			testing.expect(t, failure.kind == .Budget_Rejected && failure.http.budget == .Closed)
 		}
@@ -470,7 +470,7 @@ bootstrap_registered_resume :: proc(data: rawptr) -> runtime_async.Resume_Result
 	p := cast(^Bootstrap_Task_Context)data
 	p.resumes += 1
 	now, error := network_clock(p.state)
-	assert(error.kind == .None && now.epoch == p.state.runtime_epoch)
+	assert(error.kind == .None && now.epoch == p.state.epoch)
 
 	if p.index == 0 {
 		sync.lock(&p.state.mu)
@@ -565,7 +565,7 @@ bootstrap_real_taskgroup_done_witness_and_unstarted_cleanup_preserve_base :: pro
 		sync.unlock(&state.mu)
 		assert(runtime_async.register_group(runtime, state.task_index).kind == .None)
 		now, clock := network_clock(state)
-		assert(clock.kind == .None && now.epoch == state.runtime_epoch)
+		assert(clock.kind == .None && now.epoch == state.epoch)
 
 		if started {
 			for task in state.task_index {
@@ -601,7 +601,7 @@ bootstrap_real_taskgroup_done_witness_and_unstarted_cleanup_preserve_base :: pro
 
 			for handle in handles {
 				completion, valid := kernel_poll(&state.kernel)
-				testing.expect(t, valid && completion.error.transport.kind == .Cancelled)
+				testing.expect(t, valid && completion.error.transport == net.Connection_Error.Cancelled)
 				testing.expect_value(t, kernel_release(&state.kernel, handle).kind, .None)
 			}
 		}
@@ -650,7 +650,7 @@ bootstrap_worker_resume :: proc(data: rawptr) -> runtime_async.Resume_Result {
 		}
 
 		failed, cause := network_prepare(p.runtime, config, allocator)
-		assert(failed == nil && cause.kind == .Runtime_Error && cause.runtime.kind == .Current_Worker_Active)
+		assert(failed == nil && cause.kind == .Error && cause.runtime.kind == .Current_Worker_Active)
 		assert(p.fault.calls == calls)
 	}
 

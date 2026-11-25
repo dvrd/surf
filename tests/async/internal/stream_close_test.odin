@@ -6,7 +6,8 @@ import exchange_api "exchange"
 import channel "stream"
 import rt "base:runtime"
 import "core:mem"
-import "core:mem/owned"
+import "shared:async/mem/owned"
+import "core:net"
 import "core:testing"
 import "core:sync"
 import "core:time"
@@ -102,7 +103,7 @@ stream_close_upload_destructor_barrier_yields_then_finishes_without_io_wake :: p
 	}
 
 	now := runtime_async.deadline_after(&runtime, 0)
-	p.owner.runtime_epoch = now.epoch
+	p.owner.epoch = now.epoch
 	p.owner.config.config.capacities.work_per_resume = 1
 	bank, bank_error := channel.bank_create(
 		{
@@ -143,7 +144,7 @@ stream_close_upload_destructor_barrier_yields_then_finishes_without_io_wake :: p
 	engine.base._phase = .Draining
 	engine.base._failure = {
 		kind = .IO_Failed,
-		transport = {kind = .Cancelled},
+		transport = net.Connection_Error.Cancelled,
 		phase = .Cancellation,
 	}
 

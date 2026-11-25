@@ -1,20 +1,20 @@
 package surf_async
 
 import surf ".."
-import http "shared:http"
+import http "shared:async/http"
 import runtime_async "shared:async"
 import adapter "shared:async/connection"
 import signal "shared:async/signal"
 import exchange_api "exchange"
-import tls_api "core:crypto/tls"
+import tls_api "shared:async/tls"
 import "core:net"
 import "core:sync"
 import "core:time"
 import "core:strings"
 import stream_api "stream"
-import h1 "shared:http/v1"
+import h1 "shared:async/http/v1"
 import "core:mem"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 
 session_valid :: proc(a: ^Session_Actor) -> bool {
 	return(
@@ -79,13 +79,25 @@ session_cancelled :: proc(a: ^Session_Actor) -> bool {
 
 	return request == nil || request.cancel_requested || s.kernel.closed
 }
+session_tls_network :: proc(error: tls_api.Error) -> net.Network_Error {
+	#partial switch cause in error {
+	case net.TCP_Recv_Error:
+		return cause
+	case net.TCP_Send_Error:
+		return cause
+	case net.Dial_Error:
+		return cause
+	}
+
+	return nil
+}
 session_runtime_error :: proc(error: runtime_async.Error, phase: surf.HTTP_Phase) -> surf.HTTP_Error {
 	if error.kind == .Timeout {
-		return {kind = .Deadline_Failed, transport = {kind = .Timeout}, phase = .Deadline, write_effect = .Not_Sent}
+		return {kind = .Deadline_Failed, transport = net.TCP_Recv_Error.Timeout, phase = .Deadline, write_effect = .Not_Sent}
 	}
 
 	if error.kind == .Cancelled || error.kind == .Stopping {
-		return {kind = .IO_Failed, transport = {kind = .Cancelled}, phase = .Cancellation, write_effect = .Not_Sent}
+		return {kind = .IO_Failed, transport = net.Connection_Error.Cancelled, phase = .Cancellation, write_effect = .Not_Sent}
 	}
 
 	if error.allocation_cause != nil {
@@ -102,11 +114,11 @@ session_runtime_error :: proc(error: runtime_async.Error, phase: surf.HTTP_Phase
 	}
 
 	if error.kind == .Closed || error.kind == .Peer_Closed {
-		return {kind = .IO_Failed, transport = {kind = .Peer_Closed}, phase = phase, write_effect = .Not_Sent}
+		return {kind = .IO_Failed, transport = net.Connection_Error.Peer_Closed, phase = phase, write_effect = .Not_Sent}
 	}
 
 	if error.kind == .Task_Busy || error.kind == .Pending {
-		return {kind = .IO_Failed, transport = {kind = .Operation_Pending}, phase = phase, write_effect = .Not_Sent}
+		return {kind = .IO_Failed, transport = net.Connection_Error.Operation_Pending, phase = phase, write_effect = .Not_Sent}
 	}
 
 	return {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent}
@@ -122,7 +134,7 @@ session_before_http :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> b
 	if session_cancelled(a) || runtime_async.cancelled(&a.task) {
 		session_error(
 			a,
-			{kind = .IO_Failed, transport = {kind = .Cancelled}, phase = .Cancellation, write_effect = .Not_Sent},
+			{kind = .IO_Failed, transport = net.Connection_Error.Cancelled, phase = .Cancellation, write_effect = .Not_Sent},
 		)
 		return false
 	}
@@ -130,7 +142,7 @@ session_before_http :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> b
 	if now.at >= a.cutoff.at {
 		session_error(
 			a,
-			{kind = .Deadline_Failed, transport = {kind = .Timeout}, phase = .Deadline, write_effect = .Not_Sent},
+			{kind = .Deadline_Failed, transport = net.TCP_Recv_Error.Timeout, phase = .Deadline, write_effect = .Not_Sent},
 		)
 		return false
 	}
@@ -294,7 +306,7 @@ session_assign :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 			if failure.kind == .None {
 				failure = {
 					kind = .IO_Failed,
-					transport = {kind = .Cancelled},
+					transport = net.Connection_Error.Cancelled,
 					phase = .Cancellation,
 					write_effect = .Not_Sent,
 				}
@@ -347,7 +359,7 @@ session_exchange_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) ->
 		error := result.error
 
 		if a.tls_initialized {
-			error.tls_io = tls_api.async_failure(&a.tls)
+			error.tls_error = tls_api.async_failure(&a.tls)
 		}
 
 		session_error(a, error)
@@ -379,13 +391,13 @@ session_exchange_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) ->
 		if session_cancelled(a) || runtime_async.cancelled(&a.task) {
 			failure = {
 				kind = .IO_Failed,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 				phase = .Cancellation,
 			}
 		}
 
 		if failure.kind == .None {
-			if budget := adapter.budget_error(&a.executor); budget.kind != .None {
+			if budget := adapter.budget_error(&a.executor); budget != nil {
 				failure = surf.http_error_classify(
 					{kind = .IO_Failed, transport = budget},
 					.Read,
@@ -566,7 +578,7 @@ session_resume :: proc(a: ^Session_Actor, force: bool) -> runtime_async.Resume_R
 		if a.request != (Request_Handle{}) && a.phase != .Exchanging {
 			session_error(
 				a,
-				{kind = .Deadline_Failed, transport = {kind = .Timeout}, phase = .Deadline, write_effect = .Not_Sent},
+				{kind = .Deadline_Failed, transport = net.TCP_Recv_Error.Timeout, phase = .Deadline, write_effect = .Not_Sent},
 			)
 		}
 	}
@@ -579,7 +591,7 @@ session_resume :: proc(a: ^Session_Actor, force: bool) -> runtime_async.Resume_R
 		if a.request != (Request_Handle{}) {
 			session_error(
 				a,
-				{kind = .IO_Failed, transport = {kind = .Cancelled}, phase = .Cancellation, write_effect = .Not_Sent},
+				{kind = .IO_Failed, transport = net.Connection_Error.Cancelled, phase = .Cancellation, write_effect = .Not_Sent},
 			)
 		} else {
 			a.phase = .Retiring
@@ -742,7 +754,7 @@ session_close_step :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 
 		error := net.async_close(stream, &a.close)
 
-		if error.kind == .None {
+		if error == nil {
 			a.close_started = true
 		} else {
 			// Owned validated streams normally accept exactly one close. Keep driving
@@ -797,7 +809,7 @@ session_close_step :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 		if failure.kind == .None {
 			failure = {
 				kind = .IO_Failed,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 				phase = .Cancellation,
 				write_effect = .Not_Sent,
 			}
@@ -884,12 +896,12 @@ session_tls_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 		adapter.executor(&a.executor),
 		config,
 		a.owner.resources.allocator,
-	); init != .None {
+	); init != nil {
 		session_error(
 			a,
 			{
 				kind = .TLS_Failed,
-				tls_dial = {kind = .Invalid_Config, config = init},
+				tls_error = init,
 				phase = .TLS,
 				write_effect = .Not_Sent,
 			},
@@ -903,8 +915,14 @@ session_tls_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 		user_data = a,
 	}
 
-	if error := tls_api.async_handshake(&a.tls, &a.handshake, adapter.wall_budget(&a.executor)); error.kind != .None {
-		session_error(a, {kind = .TLS_Failed, transport = error, phase = .TLS, write_effect = .Not_Sent})
+	if error := tls_api.async_handshake(&a.tls, &a.handshake, adapter.wall_budget(&a.executor)); error != nil {
+		session_error(a, {
+			kind = .TLS_Failed,
+			tls_error = error,
+			transport = session_tls_network(error),
+			phase = .TLS,
+			write_effect = .Not_Sent,
+		})
 		return .Yield
 	}
 
@@ -921,7 +939,7 @@ session_tls_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> runt
 	if now.at >= a.setup_cutoff.at {
 		session_error(
 			a,
-			{kind = .Deadline_Failed, phase = .Deadline, transport = {kind = .Timeout}, write_effect = .Not_Sent},
+			{kind = .Deadline_Failed, phase = .Deadline, transport = net.TCP_Recv_Error.Timeout, write_effect = .Not_Sent},
 		)
 		return .Yield
 	}
@@ -930,14 +948,18 @@ session_tls_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> runt
 		return .Waiting
 	}
 
-	if a.handshake.err.kind != .None {
+	handshake_error := tls_api.async_handshake_error(&a.handshake)
+	if handshake_error != nil {
+		transport := a.handshake.err
+		if transport == nil {
+			transport = session_tls_network(handshake_error)
+		}
 		session_error(
 			a,
 			{
 				kind = .TLS_Failed,
-				transport = a.handshake.err,
-				tls_dial = {kind = .Handshake_Failed, handshake = a.handshake.result},
-				tls_io = tls_api.async_failure(&a.tls),
+				transport = transport,
+				tls_error = handshake_error,
 				phase = .TLS,
 				write_effect = .Not_Sent,
 			},
@@ -954,7 +976,7 @@ session_tls_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> runt
 	if state != .Ready {
 		session_error(
 			a,
-			{kind = .TLS_Failed, tls_io = {kind = .Invalid_State}, phase = .TLS, write_effect = .Not_Sent},
+			{kind = .TLS_Failed, tls_error = tls_api.General_Error.Invalid_State, phase = .TLS, write_effect = .Not_Sent},
 		)
 		return .Yield
 	}
@@ -978,7 +1000,7 @@ session_reuse :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	if !exchange_api.exchange_quiescent(&a.exchange) {
 		session_error(
 			a,
-			{kind = .IO_Failed, transport = {kind = .Protocol_Failed}, phase = .Protocol, write_effect = .Not_Sent},
+			{kind = .IO_Failed, transport = net.Connection_Error.Protocol_Failed, phase = .Protocol, write_effect = .Not_Sent},
 		)
 		return .Yield
 	}
@@ -986,7 +1008,7 @@ session_reuse :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	if a.secure && tls_api.async_idle_state(&a.tls) != .Ready {
 		session_error(
 			a,
-			{kind = .IO_Failed, transport = {kind = .Protocol_Failed}, phase = .Protocol, write_effect = .Not_Sent},
+			{kind = .IO_Failed, transport = net.Connection_Error.Protocol_Failed, phase = .Protocol, write_effect = .Not_Sent},
 		)
 		return .Yield
 	}
@@ -1008,7 +1030,7 @@ session_reuse :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 			a,
 			{
 				kind = .IO_Failed,
-				transport = {kind = .Peer_Closed if observed == .Closed else .Protocol_Failed},
+				transport = net.Connection_Error.Peer_Closed if observed == .Closed else net.Connection_Error.Protocol_Failed,
 				phase = .Read,
 				write_effect = .Not_Sent,
 			},
@@ -1106,16 +1128,16 @@ session_dns_error :: proc(error: runtime_async.DNS_Error) -> surf.HTTP_Error {
 	}
 
 	if error.status == .Timeout || error.cause.kind == .Timeout {
-		return {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent, transport = {kind = .Timeout}}
+		return {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent, transport = net.TCP_Recv_Error.Timeout}
 	}
 
 	if error.status == .Cancelled || error.cause.kind == .Cancelled {
-		return {kind = .IO_Failed, phase = .Cancellation, write_effect = .Not_Sent, transport = {kind = .Cancelled}}
+		return {kind = .IO_Failed, phase = .Cancellation, write_effect = .Not_Sent, transport = net.Connection_Error.Cancelled}
 	}
 
 	return result
 }
-session_dns_block :: proc(a: ^Session_Actor) -> bool {
+session_dns_block :: proc(a: ^Session_Actor) -> (bool, Client_Error) {
 	s := a.owner
 	sync.lock(&s.mu)
 	metadata := &s.requests[int(a.request.slot) - 1]
@@ -1128,13 +1150,13 @@ session_dns_block :: proc(a: ^Session_Actor) -> bool {
 	sync.unlock(&s.mu)
 
 	if remaining <= 0 {
-		return false
+		return false, {}
 	}
 
 	block, error := network_dns_reserve(s, min(DNS_IDS_PER_QUERY, remaining))
 
 	if error.kind != .None {
-		return false
+		return false, error
 	}
 
 	sync.lock(&s.mu)
@@ -1149,12 +1171,12 @@ session_dns_block :: proc(a: ^Session_Actor) -> bool {
 
 	if !valid {
 		network_dns_burn(s, &block)
-		return false
+		return false, {}
 	}
 
 	a.ids = block
 
-	return true
+	return true, {}
 }
 session_query_begin :: proc(
 	a: ^Session_Actor,
@@ -1261,12 +1283,15 @@ session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	}
 
 	a.dns_server_count = copy(a.dns_servers[:], servers)
+	// A set policy must see A and AAAA together. Both_A_First keeps them in the
+	// one query begin_dns_connect dials. A nil policy still connects from A.
+	policy := a.owner.profile.config.http.address_policy != nil
 	error := session_query_begin(
 		a,
 		origin.host,
 		int(origin.port),
-		.A_Only,
-		a.owner.profile.config.http.address_policy == nil,
+		.Both_A_First if policy else .A_Only,
+		!policy,
 	)
 
 	if error.status != .Success {
@@ -1274,15 +1299,15 @@ session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 		return .Yield
 	}
 
-	a.phase = .Resolving_A
+	a.phase = .Resolving_AAAA if policy else .Resolving_A
 
 	return .Yield
 }
 
-// Hostname lookups with an address policy stay unconnected until the resolved
-// set is accepted. begin_dns_connect then dials that same query. Numeric dials
-// are checked in session_dial_begin. A nil policy, or a dial already started,
-// continues straight into connect.
+// Hostname lookups with an address policy stay unconnected until both families
+// are in the query and that set is accepted. begin_dns_connect then dials that
+// same query. Numeric dials are checked in session_dial_begin. A nil policy,
+// or a dial already started, continues straight into connect.
 session_policy_gate :: proc(a: ^Session_Actor) -> (ready: bool, result: runtime_async.Resume_Result) {
 	if a.owner.profile.config.http.address_policy == nil || a.dial._self == &a.dial {
 		return true, {}
@@ -1327,26 +1352,38 @@ session_dial_unresolved :: proc(a: ^Session_Actor, error: runtime_async.DNS_Erro
 	if a.phase == .Resolving_A &&
 	   cause.status != .Timeout &&
 	   cause.status != .Cancelled &&
-	   cause.status != .Limit &&
-	   session_dns_block(a) {
-		_, origin, borrow := session_borrow(a)
-		if borrow.kind == .None {
-			a.query = {}
-			a.dial = {}
-			next := session_query_begin(
-				a,
-				origin.host,
-				int(origin.port),
-				.AAAA_Only,
-				a.owner.profile.config.http.address_policy == nil,
-			)
-			if next.status == .Success {
-				a.phase = .Resolving_AAAA
-				return .Yield
+	   cause.status != .Limit {
+		drew, draw_error := session_dns_block(a)
+
+		if draw_error.kind != .None {
+			session_error(a, network_dns_bank_exhausted().http)
+			return .Yield
+		}
+
+		if drew {
+			_, origin, borrow := session_borrow(a)
+
+			if borrow.kind == .None {
+				a.query = {}
+				a.dial = {}
+				next := session_query_begin(
+					a,
+					origin.host,
+					int(origin.port),
+					.AAAA_Only,
+					a.owner.profile.config.http.address_policy == nil,
+				)
+
+				if next.status == .Success {
+					a.phase = .Resolving_AAAA
+					return .Yield
+				}
+
+				cause = next
 			}
-			cause = next
 		}
 	}
+
 	session_error(a, session_dns_error(cause))
 	return .Yield
 }
@@ -1359,7 +1396,7 @@ session_dial_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> run
 	if now.at >= a.setup_cutoff.at {
 		session_error(
 			a,
-			{kind = .Deadline_Failed, transport = {kind = .Timeout}, phase = .Deadline, write_effect = .Not_Sent},
+			{kind = .Deadline_Failed, transport = net.TCP_Recv_Error.Timeout, phase = .Deadline, write_effect = .Not_Sent},
 		)
 		return .Yield
 	}
@@ -1395,26 +1432,35 @@ session_dial_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> run
 		} else if a.phase == .Resolving_A &&
 		   error.status != .Timeout &&
 		   error.status != .Cancelled &&
-		   error.status != .Limit &&
-		   session_dns_block(a) {
-			_, origin, borrow := session_borrow(a)
-			if borrow.kind == .None {
-				a.query = {}
-				a.dial = {}
-				next := session_query_begin(
-					a,
-					origin.host,
-					int(origin.port),
-					.AAAA_Only,
-					a.owner.profile.config.http.address_policy == nil,
-				)
+		   error.status != .Limit {
+			drew, draw_error := session_dns_block(a)
 
-				if next.status == .Success {
-					a.phase = .Resolving_AAAA
-					return .Yield
+			if draw_error.kind != .None {
+				session_error(a, network_dns_bank_exhausted().http)
+				return .Yield
+			}
+
+			if drew {
+				_, origin, borrow := session_borrow(a)
+
+				if borrow.kind == .None {
+					a.query = {}
+					a.dial = {}
+					next := session_query_begin(
+						a,
+						origin.host,
+						int(origin.port),
+						.AAAA_Only,
+						a.owner.profile.config.http.address_policy == nil,
+					)
+
+					if next.status == .Success {
+						a.phase = .Resolving_AAAA
+						return .Yield
+					}
+
+					error = next
 				}
-
-				error = next
 			}
 		}
 
@@ -1914,7 +1960,7 @@ network_clock :: proc(s: ^Client_State) -> (runtime_async.Deadline, Client_Error
 
 	now := runtime_async.deadline_after(s.runtime, 0)
 
-	if now.epoch != s.runtime_epoch || now.at <= 0 {
+	if now.epoch != s.epoch || now.at <= 0 {
 		return {}, {kind = .Invalid_State}
 	}
 
@@ -2064,7 +2110,7 @@ network_unstarted_cancel :: proc(s: ^Client_State) {
 			&s.kernel,
 			handle,
 			&response,
-			{kind = .IO_Failed, transport = {kind = .Cancelled}, phase = .Cancellation, write_effect = .Not_Sent},
+			{kind = .IO_Failed, transport = net.Connection_Error.Cancelled, phase = .Cancellation, write_effect = .Not_Sent},
 		)
 		assert(error.kind == .None)
 

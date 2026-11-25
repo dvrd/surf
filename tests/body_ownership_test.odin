@@ -1,7 +1,7 @@
 package tests
 
 import surf "shared:surf"
-import owned "core:mem/owned"
+import owned "shared:async/mem/owned"
 import "core:mem"
 import "core:net"
 import "core:testing"

@@ -2,13 +2,13 @@ package main
 
 import kernel "shared:surf/async"
 import surf "shared:surf"
-import http "shared:http"
+import http "shared:async/http"
 import async "shared:async"
 import rt "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:net"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:strings"
 import "core:time"
 

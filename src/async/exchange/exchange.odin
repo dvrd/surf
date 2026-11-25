@@ -1,15 +1,15 @@
 package surf_exchange
 
 import surf "../.."
-import http "shared:http"
-import "core:time"
-import h1 "shared:http/v1"
+import channel "../stream"
+import deflate "shared:async/compress/step"
 import "core:mem"
 import "core:net"
-import channel "../stream"
-import deflate "core:compress/step"
 import "core:strings"
-import "core:mem/owned"
+import "core:time"
+import "shared:async/http"
+import h1 "shared:async/http/v1"
+import "shared:async/mem/owned"
 
 // Pure bounds/default selection. No allocator, clock, retention, callbacks or
 // network calls. On rejection no partially normalized result is returned.
@@ -58,10 +58,18 @@ exchange_valid :: proc(x: ^Exchange) -> bool {
 	return x != nil && x._self == x
 }
 exchange_pending_error :: proc() -> surf.HTTP_Error {
-	return {kind = .Invalid_Config, transport = {kind = .Operation_Pending}, phase = .Configuration}
+	return {
+		kind = .Invalid_Config,
+		transport = net.Connection_Error.Operation_Pending,
+		phase = .Configuration,
+	}
 }
 
-exchange_init :: proc(x: ^Exchange, options: Options, allocator: mem.Allocator) -> surf.HTTP_Error {
+exchange_init :: proc(
+	x: ^Exchange,
+	options: Options,
+	allocator: mem.Allocator,
+) -> surf.HTTP_Error {
 	if x == nil || x._self != nil {
 		return {kind = .Invalid_Config}
 	}
@@ -209,9 +217,15 @@ exchange_check_budget :: proc(x: ^Exchange, now: i64, cancelled: bool) {
 
 	if cancelled {
 		x._cancelled = true
-		exchange_fail(x, {kind = .IO_Failed, transport = {kind = .Cancelled}, phase = .Cancellation})
+		exchange_fail(
+			x,
+			{kind = .IO_Failed, transport = net.Connection_Error.Cancelled, phase = .Cancellation},
+		)
 	} else if x._budget.at != 0 && now >= x._budget.at {
-		exchange_fail(x, {kind = .Deadline_Failed, transport = {kind = .Timeout}, phase = .Deadline})
+		exchange_fail(
+			x,
+			{kind = .Deadline_Failed, transport = net.TCP_Recv_Error.Timeout, phase = .Deadline},
+		)
 	}
 }
 exchange_drain :: proc(x: ^Exchange) -> bool {
@@ -227,7 +241,10 @@ exchange_drain :: proc(x: ^Exchange) -> bool {
 		x._read.ready = false
 
 		if x._read.result.count < 0 || x._read.result.count > READ_BUFFER_SIZE {
-			exchange_fail(x, {kind = .IO_Failed, transport = {kind = .Invalid_Count}, phase = .Read})
+			exchange_fail(
+				x,
+				{kind = .IO_Failed, transport = net.Connection_Error.Invalid_Count, phase = .Read},
+			)
 		}
 	}
 
@@ -290,7 +307,9 @@ exchange_drive :: proc(x: ^Exchange, now: i64, cancelled: bool, work: int) -> Dr
 				x._body_remaining = x._head.content_length
 
 				if x._head.framing == .Chunked {
-					error = surf.http_protocol_error(h1.chunk_decoder_init(&x._chunk, u64(x._options.body_limit)))
+					error = surf.http_protocol_error(
+						h1.chunk_decoder_init(&x._chunk, u64(x._options.body_limit)),
+					)
 
 					if error.kind != .None {
 						exchange_fail(x, error)
@@ -465,7 +484,14 @@ exchange_grant :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u8,
 	   raw_data(grant) == nil ||
 	   uintptr(raw_data(grant)) % uintptr(alignment) != 0 {
 		if raw_data(grant) != nil {
-			_, _ = allocator.procedure(allocator.data, .Free, 0, alignment, raw_data(grant), len(grant))
+			_, _ = allocator.procedure(
+				allocator.data,
+				.Free,
+				0,
+				alignment,
+				raw_data(grant),
+				len(grant),
+			)
 		}
 		if cause == nil {
 			cause = .Out_Of_Memory
@@ -481,7 +507,14 @@ exchange_grant :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u8,
 }
 exchange_free :: proc(grant: []u8, alignment: int, allocator: mem.Allocator) {
 	if raw_data(grant) != nil {
-		_, _ = allocator.procedure(allocator.data, .Free, 0, alignment, raw_data(grant), len(grant))
+		_, _ = allocator.procedure(
+			allocator.data,
+			.Free,
+			0,
+			alignment,
+			raw_data(grant),
+			len(grant),
+		)
 	}
 }
 exchange_response_empty :: proc(r: ^surf.Response) -> bool {
@@ -515,7 +548,12 @@ exchange_aliases :: proc(x: ^Exchange, request: http.Request) -> bool {
 	if len(request.headers) > http.MAX_HEADERS {
 		return false
 	} // Encoder reports the bound before dereference.
-	if exchange_overlap(x, size_of(Exchange), raw_data(request.headers), len(request.headers) * size_of(http.Header)) {
+	if exchange_overlap(
+		x,
+		size_of(Exchange),
+		raw_data(request.headers),
+		len(request.headers) * size_of(http.Header),
+	) {
 		return true
 	}
 
@@ -634,7 +672,14 @@ exchange_phase :: proc(x: ^Exchange) -> (Exchange_Phase, bool) {
 	}
 
 	switch x._phase {
-	case .Idle, .Writing_Head, .Writing_Body, .Reading_Head, .Copying_Head, .Reading_Body, .Draining, .Done:
+	case .Idle,
+	     .Writing_Head,
+	     .Writing_Body,
+	     .Reading_Head,
+	     .Copying_Head,
+	     .Reading_Body,
+	     .Draining,
+	     .Done:
 		return x._phase, true
 	case:
 		return {}, false
@@ -655,14 +700,17 @@ exchange_fill :: proc(x: ^Exchange) -> Exchange_Step {
 		result := x._read.result
 
 		if result.count < 0 || result.count > len(x._read_buffer) {
-			exchange_fail(x, {kind = .IO_Failed, transport = {kind = .Invalid_Count}, phase = .Read})
+			exchange_fail(
+				x,
+				{kind = .IO_Failed, transport = net.Connection_Error.Invalid_Count, phase = .Read},
+			)
 			return .Continue
 		}
 
 		x._read_at = 0
 		x._read_used = result.count
 
-		if result.err.kind == .Peer_Closed {
+		if result.err == net.Connection_Error.Peer_Closed {
 			x._peer_eof = true
 		}
 
@@ -670,7 +718,7 @@ exchange_fill :: proc(x: ^Exchange) -> Exchange_Step {
 			return .Continue
 		}
 
-		if result.err.kind == .None {
+		if result.err == nil {
 			exchange_fail(x, {kind = .No_Progress, phase = .Read})
 			return .Continue
 		}
@@ -678,8 +726,8 @@ exchange_fill :: proc(x: ^Exchange) -> Exchange_Step {
 
 	error := x._read.result.err
 
-	if error.kind != .None {
-		if error.kind == .Peer_Closed {
+	if error != nil {
+		if error == net.Connection_Error.Peer_Closed {
 			if x._phase == .Reading_Body && x._head.framing == .EOF {
 				x._phase = .Draining
 				return .Barrier
@@ -696,9 +744,14 @@ exchange_fill :: proc(x: ^Exchange) -> Exchange_Step {
 	x._read.result = {}
 	x._read.cancel_requested = false
 	x._read.accepted = true
-	error = net.async_read(x._stream, &x._read.operation, x._read_buffer[:], x._budget.wall)
+	error = net.async_read(
+		x._stream,
+		&x._read.operation,
+		x._read_buffer[:],
+		budget_tick(x._budget.wall),
+	)
 
-	if error.kind != .None {
+	if error != nil {
 		x._read.accepted = false
 		exchange_fail(x, {kind = .IO_Failed, transport = error, phase = .Read})
 		return .Continue
@@ -788,7 +841,7 @@ exchange_head_step :: proc(x: ^Exchange) -> Exchange_Step {
 exchange_body_finished :: proc(x: ^Exchange) -> Exchange_Step {
 	// Surplus belongs to the retiring stream, never to a future request. The
 	// completed HTTP response is still valid, but its connection is not reusable.
-	if x._read_at != x._read_used || x._peer_eof || x._read.result.err.kind != .None {
+	if x._read_at != x._read_used || x._peer_eof || x._read.result.err != nil {
 		x._reuse_eligible = false
 	}
 
@@ -819,7 +872,11 @@ exchange_body_step :: proc(x: ^Exchange) -> Exchange_Step {
 			storage = raw_data(body)[:cap(body)]
 		}
 
-		consumed, written, done, error := h1.chunk_decoder_feed(&x._chunk, source, storage[len(body):])
+		consumed, written, done, error := h1.chunk_decoder_feed(
+			&x._chunk,
+			source,
+			storage[len(body):],
+		)
 		raw := cast(^mem.Raw_Dynamic_Array)&x._response.body_storage
 		raw.len += written
 		x._read_at += consumed
@@ -918,10 +975,12 @@ stream_exchange_begin :: proc(
 		tx        = .Head,
 		redirects = redirects,
 	}
-	if error := exchange_init(&x.base, {body_limit = int(options.max_encoded_bytes)}, allocator); error.kind != .None {
+	if error := exchange_init(&x.base, {body_limit = int(options.max_encoded_bytes)}, allocator);
+	   error.kind != .None {
 		return error
 	}
-	if error := exchange_begin(&x.base, stream, request, budget, notify, head[:count]); error.kind != .None {
+	if error := exchange_begin(&x.base, stream, request, budget, notify, head[:count]);
+	   error.kind != .None {
 		return error
 	}
 	// RX is enabled after the independent TX head finishes.
@@ -992,7 +1051,12 @@ stream_copy_head :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	}
 
 	x.private_response =
-		x.redirects && (x.status == 301 || x.status == 302 || x.status == 303 || x.status == 307 || x.status == 308)
+		x.redirects &&
+		(x.status == 301 ||
+				x.status == 302 ||
+				x.status == 303 ||
+				x.status == 307 ||
+				x.status == 308)
 	x.base._body_remaining = x.base._head.content_length
 
 	if x.base._head.framing == .Chunked {
@@ -1015,7 +1079,12 @@ stream_copy_head :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	return .Barrier // Header allocations require a fresh owner clock before publication.
 }
 
-stream_exchange_drive :: proc(x: ^Stream_Exchange, now: i64, cancelled: bool, work: int) -> Drive_Result {
+stream_exchange_drive :: proc(
+	x: ^Stream_Exchange,
+	now: i64,
+	cancelled: bool,
+	work: int,
+) -> Drive_Result {
 	if x == nil || !exchange_valid(&x.base) || work < 1 || work > MAX_WORK_PER_DRIVE || now < 0 {
 		return {status = .Done, error = {kind = .Invalid_Config}}
 	}
@@ -1105,7 +1174,10 @@ stream_exchange_drive :: proc(x: ^Stream_Exchange, now: i64, cancelled: bool, wo
 			continue
 		}
 
-		if x.rx_done && (x.tx == .Done || x.tx == .Stopped) && !base._read.accepted && !base._write.accepted {
+		if x.rx_done &&
+		   (x.tx == .Done || x.tx == .Stopped) &&
+		   !base._read.accepted &&
+		   !base._write.accepted {
 			base._phase = .Done
 			base._busy = false
 			return {status = .Done, work_used = used, reuse_eligible = base._reuse_eligible}
@@ -1248,7 +1320,10 @@ stream_publish_head :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	encoding := channel.Encoding.Decoded_Gzip if x.decoded else channel.Encoding.Wire
 
 	if !channel.publish_head(x.channel, &x.base._response, length, encoding) {
-		exchange_fail(&x.base, {kind = .IO_Failed, transport = {kind = .Cancelled}, phase = .Cancellation})
+		exchange_fail(
+			&x.base,
+			{kind = .IO_Failed, transport = net.Connection_Error.Cancelled, phase = .Cancellation},
+		)
 		return .Continue
 	}
 
@@ -1305,11 +1380,20 @@ stream_body_step :: proc(x: ^Stream_Exchange, work: ^int) -> Exchange_Step {
 	produced := 0
 
 	if x.decoded {
-		decoded := deflate.inflate_gzip_decoder_step(&x.decoder, source, destination, x.entity_done, max(1, work^))
+		decoded := deflate.inflate_gzip_decoder_step(
+			&x.decoder,
+			source,
+			destination,
+			x.entity_done,
+			max(1, work^),
+		)
 		work^ = max(0, work^ - decoded.work)
 
 		if decoded.err != .None {
-			exchange_fail(&x.base, {kind = .Content_Decoding_Failed, decoding = decoded.err, phase = .Decode})
+			exchange_fail(
+				&x.base,
+				{kind = .Content_Decoding_Failed, decoding = decoded.err, phase = .Decode},
+			)
 			return .Continue
 		}
 
@@ -1347,13 +1431,22 @@ stream_body_step :: proc(x: ^Stream_Exchange, work: ^int) -> Exchange_Step {
 		published = true
 
 		if !accepted {
-			exchange_fail(&x.base, {kind = .IO_Failed, transport = {kind = .Cancelled}, phase = .Cancellation})
+			exchange_fail(
+				&x.base,
+				{
+					kind = .IO_Failed,
+					transport = net.Connection_Error.Cancelled,
+					phase = .Cancellation,
+				},
+			)
 			return .Continue
 		}
 	}
 
 	if x.rx_done {
-		if x.base._read_at != x.base._read_used || x.base._peer_eof || x.base._read.result.err.kind != .None {
+		if x.base._read_at != x.base._read_used ||
+		   x.base._peer_eof ||
+		   x.base._read.result.err != nil {
 			x.base._reuse_eligible = false
 		}
 
@@ -1393,7 +1486,10 @@ stream_write_ready :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	base._write.ready = false
 
 	if result.count < 0 || result.count > x.write_requested {
-		exchange_fail(base, {kind = .IO_Failed, transport = {kind = .Invalid_Count}, phase = .Write})
+		exchange_fail(
+			base,
+			{kind = .IO_Failed, transport = net.Connection_Error.Invalid_Count, phase = .Write},
+		)
 		return .Continue
 	}
 
@@ -1407,12 +1503,12 @@ stream_write_ready :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 		x.upload_at += result.count
 	}
 
-	if result.err.kind != .None && !(x.early_response && result.err.kind == .Cancelled) {
+	if result.err != nil && !(x.early_response && result.err == net.Connection_Error.Cancelled) {
 		exchange_fail(base, {kind = .IO_Failed, transport = result.err, phase = .Write})
 		return .Continue
 	}
 
-	if result.count == 0 && result.err.kind == .None {
+	if result.count == 0 && result.err == nil {
 		exchange_fail(base, {kind = .No_Progress, phase = .Write})
 		return .Continue
 	}
@@ -1524,9 +1620,14 @@ stream_write_step :: proc(x: ^Stream_Exchange) -> Exchange_Step {
 	base._write.result = {}
 	base._write.cancel_requested = false
 	base._write.accepted = true
-	error := net.async_write(base._stream, &base._write.operation, source, base._budget.wall)
+	error := net.async_write(
+		base._stream,
+		&base._write.operation,
+		source,
+		budget_tick(base._budget.wall),
+	)
 
-	if error.kind != .None {
+	if error != nil {
 		base._write.accepted = false
 		exchange_fail(base, {kind = .IO_Failed, transport = error, phase = .Write})
 		return .Continue
@@ -1558,6 +1659,25 @@ Resolved_Options :: struct {
 Budget :: struct {
 	at:   i64,
 	wall: time.Time,
+}
+// net.async_read and net.async_write take a monotonic tick. Zero wall time is
+// no deadline. A wall time already reached must not collapse to that zero.
+budget_tick :: proc(deadline: time.Time) -> time.Tick {
+	if deadline == {} {
+		return {}
+	}
+
+	remain := time.diff(time.now(), deadline)
+	if remain <= 0 {
+		return time.tick_add(time.tick_now(), -time.Nanosecond)
+	}
+
+	tick := time.tick_add(time.tick_now(), remain)
+	if tick == {} {
+		return time.tick_add(time.tick_now(), time.Nanosecond)
+	}
+
+	return tick
 }
 // Borrowed until all accepted operations retire and reset/destroy clears it.
 // wake may notify/enqueue the owning loop; it is not a completion callback and
@@ -1664,7 +1784,7 @@ exchange_write_result :: proc(x: ^Exchange) -> surf.HTTP_Error {
 			min(READ_BUFFER_SIZE, len(x._request_body) - x._request_body_at)
 
 	if result.count < 0 || result.count > expected {
-		return {kind = .IO_Failed, transport = {kind = .Invalid_Count}, phase = .Write}
+		return {kind = .IO_Failed, transport = net.Connection_Error.Invalid_Count, phase = .Write}
 	}
 
 	x._written += u64(result.count)
@@ -1675,12 +1795,12 @@ exchange_write_result :: proc(x: ^Exchange) -> surf.HTTP_Error {
 		x._request_body_at += result.count
 	}
 
-	if result.err.kind != .None {
+	if result.err != nil {
 		return {kind = .IO_Failed, transport = result.err, phase = .Write}
 	}
 
 	if result.count != expected {
-		return {kind = .IO_Failed, transport = {kind = .Invalid_Count}, phase = .Write}
+		return {kind = .IO_Failed, transport = net.Connection_Error.Invalid_Count, phase = .Write}
 	}
 
 	return {}
@@ -1719,9 +1839,9 @@ exchange_write_step :: proc(x: ^Exchange) -> Exchange_Step {
 	x._write.result = {}
 	x._write.cancel_requested = false
 	x._write.accepted = true
-	error := net.async_write(x._stream, &x._write.operation, source, x._budget.wall)
+	error := net.async_write(x._stream, &x._write.operation, source, budget_tick(x._budget.wall))
 
-	if error.kind != .None {
+	if error != nil {
 		x._write.accepted = false
 		exchange_fail(x, {kind = .IO_Failed, transport = error, phase = .Write})
 		return .Continue

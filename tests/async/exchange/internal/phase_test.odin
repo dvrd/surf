@@ -43,8 +43,8 @@ phase_provider_submit :: proc(
 	op: ^net.Async_Operation,
 	kind: net.Async_Operation_Kind,
 	buffer: []u8,
-	deadline: time.Time,
-) -> net.Connection_Error {
+	deadline: time.Tick,
+) -> net.Network_Error {
 	f := cast(^Phase_Provider)data
 	// The provider is invoked inside public drive. Reentrant rejection is part
 	// of the getter contract and must preserve the entire busy owner byte image.
@@ -62,7 +62,7 @@ phase_provider_submit :: proc(
 	}
 	return {}
 }
-phase_provider_cancel :: proc(data: rawptr, op: ^net.Async_Operation) -> net.Connection_Error {
+phase_provider_cancel :: proc(data: rawptr, op: ^net.Async_Operation) -> net.Network_Error {
 	f := cast(^Phase_Provider)data
 	assert(op == f.pending)
 	phase_reject_preserved(f.owner)
@@ -81,7 +81,7 @@ phase_provider_complete :: proc(f: ^Phase_Provider) {
 	result: net.Async_Result
 
 	if f.cancelled {
-		result.err.kind = .Cancelled
+		result.err = net.Connection_Error.Cancelled
 	} else if op.kind == .Write {
 		result.count = len(f.buffer); f.write_bytes += result.count
 	} else {

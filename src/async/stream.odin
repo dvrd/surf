@@ -3,14 +3,14 @@ package surf_async
 import surf ".."
 import stream_api "stream"
 import exchange_api "exchange"
-import http "shared:http"
+import http "shared:async/http"
 import runtime_async "shared:async"
 import adapter "shared:async/connection"
-import tls_api "core:crypto/tls"
+import tls_api "shared:async/tls"
 import "core:net"
 import "core:sync"
 import "core:io"
-import "core:mem/owned"
+import "shared:async/mem/owned"
 
 session_stream_channel :: proc(a: ^Session_Actor) -> ^stream_api.Channel {
 	sync.lock(&a.owner.kernel.mu)
@@ -119,7 +119,7 @@ session_stream_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> r
 		error := result.error
 
 		if a.tls_initialized {
-			error.tls_io = tls_api.async_failure(&a.tls)
+			error.tls_error = tls_api.async_failure(&a.tls)
 		}
 
 		session_error(a, error)
@@ -138,7 +138,7 @@ session_stream_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> r
 		}
 
 		if sleep.kind != .Pending {
-			session_error(a, {kind = .IO_Failed, phase = .Cancellation, transport = {kind = .Cancelled}})
+			session_error(a, {kind = .IO_Failed, phase = .Cancellation, transport = net.Connection_Error.Cancelled})
 			return .Yield
 		}
 
@@ -168,7 +168,7 @@ session_stream_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> r
 	} else if session_cancelled(a) || runtime_async.cancelled(&a.task) {
 		failure = {
 			kind = .IO_Failed,
-			transport = {kind = .Cancelled},
+			transport = net.Connection_Error.Cancelled,
 			phase = .Cancellation,
 		}
 	} else if fresh.at >= a.cutoff.at {
@@ -176,7 +176,7 @@ session_stream_step :: proc(a: ^Session_Actor, now: runtime_async.Deadline) -> r
 			kind  = .Deadline_Failed,
 			phase = .Deadline,
 		}
-	} else if budget := adapter.budget_error(&a.executor); budget.kind != .None {
+	} else if budget := adapter.budget_error(&a.executor); budget != nil {
 		failure = {
 			kind      = .IO_Failed,
 			transport = budget,
@@ -440,7 +440,7 @@ client_upload_gate :: proc(s: ^Client_State, handle: Request_Handle) -> Client_E
 	if request.cancel_requested || s.kernel.closed {
 		return {
 			kind = .Request_Error,
-			http = {kind = .IO_Failed, transport = {kind = .Cancelled}, phase = .Cancellation},
+			http = {kind = .IO_Failed, transport = net.Connection_Error.Cancelled, phase = .Cancellation},
 		}
 	}
 
@@ -451,7 +451,7 @@ client_upload_gate :: proc(s: ^Client_State, handle: Request_Handle) -> Client_E
 	if now.at >= request.deadline.at {
 		return {
 			kind = .Request_Error,
-			http = {kind = .Deadline_Failed, transport = {kind = .Timeout}, phase = .Deadline},
+			http = {kind = .Deadline_Failed, transport = net.TCP_Recv_Error.Timeout, phase = .Deadline},
 		}
 	}
 

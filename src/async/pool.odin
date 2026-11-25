@@ -1,19 +1,19 @@
 package surf_async
 
-import "core:sync"
-import http "shared:http"
 import surf ".."
 import "core:mem"
-import "core:strings"
-import signal "shared:async/signal"
-import stream_api "stream"
-import runtime_async "shared:async"
-import adapter "shared:async/connection"
-import exchange_api "exchange"
-import tls_api "core:crypto/tls"
 import "core:net"
-import scopes "core:sync/budget"
+import "core:strings"
+import "core:sync"
 import "core:time"
+import exchange_api "exchange"
+import "shared:async"
+import adapter "shared:async/connection"
+import "shared:async/http"
+import "shared:async/signal"
+import scopes "shared:async/sync/budget"
+import tls_api "shared:async/tls"
+import stream_api "stream"
 
 pool_session_locked :: proc(k: ^Kernel, handle: Cell_Handle) -> ^Session_Model {
 	if handle.slot == 0 || u64(handle.slot) > u64(len(k.sessions)) || handle.generation == 0 {
@@ -32,7 +32,8 @@ pool_expired :: proc(s: ^Session_Model, k: ^Kernel, now: i64) -> bool {
 	// Compare elapsed intervals without signed subtraction overflow. Future times
 	// are not expired; caller supplies one monotonic clock domain.
 	age_expired := now >= s.created_at && u64(now) - u64(s.created_at) >= u64(k.config.max_age)
-	idle_expired := now >= s.idle_since && u64(now) - u64(s.idle_since) >= u64(k.config.idle_timeout)
+	idle_expired :=
+		now >= s.idle_since && u64(now) - u64(s.idle_since) >= u64(k.config.idle_timeout)
 
 	return age_expired || idle_expired
 }
@@ -45,7 +46,15 @@ Pool_Selection :: struct {
 	new_origin, new_session, waiting: bool,
 }
 
-pool_select_locked :: proc(k: ^Kernel, key: Origin_Key, now: i64, allow_new: bool) -> (Pool_Selection, Client_Error) {
+pool_select_locked :: proc(
+	k: ^Kernel,
+	key: Origin_Key,
+	now: i64,
+	allow_new: bool,
+) -> (
+	Pool_Selection,
+	Client_Error,
+) {
 	if k == nil || k.self != k {
 		return {}, {kind = .Invalid_State}
 	}
@@ -91,7 +100,9 @@ pool_select_locked :: proc(k: ^Kernel, key: Origin_Key, now: i64, allow_new: boo
 
 	if !new_origin {
 		for session, i in k.sessions {
-			if session.state == .Idle && session.origin == origin_handle && !pool_expired(&k.sessions[i], k, now) {
+			if session.state == .Idle &&
+			   session.origin == origin_handle &&
+			   !pool_expired(&k.sessions[i], k, now) {
 				session_index = u32(i + 1)
 				break
 			}
@@ -254,7 +265,12 @@ pool_reserve_policy :: proc(
 	return reservation, {}
 }
 
-pool_session_state :: proc(k: ^Kernel, handle: Cell_Handle, state: Session_State, now: i64) -> Client_Error {
+pool_session_state :: proc(
+	k: ^Kernel,
+	handle: Cell_Handle,
+	state: Session_State,
+	now: i64,
+) -> Client_Error {
 	if k == nil || k.self != k {
 		return {kind = .Invalid_State}
 	}
@@ -283,7 +299,8 @@ pool_session_state :: proc(k: ^Kernel, handle: Cell_Handle, state: Session_State
 		if session.request != (Request_Handle{}) {
 			return {kind = .Pending}
 		}
-	} else if state == .Retiring && (previous == .Connecting || previous == .Busy || previous == .Idle) {
+	} else if state == .Retiring &&
+	   (previous == .Connecting || previous == .Busy || previous == .Idle) {
 		// Transport close can begin before the active request's terminal cleanup.
 	} else {
 		return {kind = .Invalid_State}
@@ -400,7 +417,14 @@ pool_retire :: proc(k: ^Kernel, handle: Cell_Handle) -> Client_Error {
 	return {}
 }
 
-origin_prepare :: proc(profile: ^Profile, url: string, allocator: mem.Allocator) -> (Prepared_Origin, Client_Error) {
+origin_prepare :: proc(
+	profile: ^Profile,
+	url: string,
+	allocator: mem.Allocator,
+) -> (
+	Prepared_Origin,
+	Client_Error,
+) {
 	if !profile_valid(profile) {
 		return {}, {kind = .Invalid_State}
 	}
@@ -438,13 +462,23 @@ origin_prepare :: proc(profile: ^Profile, url: string, allocator: mem.Allocator)
 	}
 
 	return {
-		key = {profile_id = identity, secure = parsed.secure, host = string(storage), port = u16(parsed.port)},
+		key = {
+			profile_id = identity,
+			secure = parsed.secure,
+			host = string(storage),
+			port = u16(parsed.port),
+		},
 		storage = storage,
 		allocator = allocator,
 	}, {}
 }
 origin_equal :: proc(a, b: Origin_Key) -> bool {
-	return a.profile_id == b.profile_id && a.secure == b.secure && a.port == b.port && a.host == b.host
+	return(
+		a.profile_id == b.profile_id &&
+		a.secure == b.secure &&
+		a.port == b.port &&
+		a.host == b.host \
+	)
 }
 origin_destroy :: proc(owner: ^Prepared_Origin) {
 	if owner == nil {
@@ -469,8 +503,34 @@ network_saturate :: proc(counter: ^u64, amount: u64) {
 	counter^ += min(amount, max(u64) - counter^)
 }
 
+network_dns_bank_exhausted :: proc() -> Client_Error {
+	return {
+		kind = .Capacity,
+		http = {
+			kind = .Dial_Failed,
+			phase = .DNS,
+			network = net.Resolve_Error.Unable_To_Resolve,
+			write_effect = .Not_Sent,
+		},
+	}
+}
+
+network_dns_refill_fresh :: proc(s: ^Client_State) -> Client_Error {
+	ids: [DNS_IDS_PER_QUERY]u16
+	prepared := async.prepare_dns_ids(ids[:])
+
+	if prepared.kind != .None {
+		return {kind = .Error, runtime = prepared}
+	}
+
+	return network_dns_refill(s, ids[:])
+}
+
 network_dns_refill :: proc(s: ^Client_State, ids: []u16) -> Client_Error {
-	if !network_valid(s) || len(ids) < 0 || len(ids) > MAX_DNS_IDS || len(ids) > 0 && raw_data(ids) == nil {
+	if !network_valid(s) ||
+	   len(ids) < 0 ||
+	   len(ids) > MAX_DNS_IDS ||
+	   len(ids) > 0 && raw_data(ids) == nil {
 		return {kind = .Invalid_Config}
 	}
 
@@ -649,17 +709,17 @@ State_Backing :: struct {
 }
 Coordinator_State :: struct {
 	owner:                      ^Client_State,
-	task:                       runtime_async.Task,
+	task:                       async.Task,
 	wake:                       signal.Signal,
 	registered, done, detached: bool,
 	request_cursor, dns_cursor: u32,
 	scan_remaining:             int,
-	next_deadline:              runtime_async.Deadline,
+	next_deadline:              async.Deadline,
 }
 Session_Actor :: struct {
 	owner:                                                                ^Client_State,
 	index:                                                                u32,
-	task:                                                                 runtime_async.Task,
+	task:                                                                 async.Task,
 	wake:                                                                 signal.Signal,
 	registered, done, detached:                                           bool,
 	command:                                                              Session_Command,
@@ -668,7 +728,7 @@ Session_Actor :: struct {
 	phase:                                                                Actor_Phase,
 	model:                                                                Cell_Handle,
 	request:                                                              Request_Handle,
-	cutoff, setup_cutoff:                                                 runtime_async.Deadline,
+	cutoff, setup_cutoff:                                                 async.Deadline,
 	executor:                                                             adapter.Executor,
 	transport:                                                            adapter.Transport,
 	tls:                                                                  tls_api.Async_Conn,
@@ -676,12 +736,12 @@ Session_Actor :: struct {
 	close:                                                                net.Async_Operation,
 	exchange:                                                             exchange_api.Exchange,
 	stream_exchange:                                                      ^exchange_api.Stream_Exchange,
-	query:                                                                runtime_async.DNS_Query,
-	dial:                                                                 runtime_async.DNS_Connect,
+	query:                                                                async.DNS_Query,
+	dial:                                                                 async.DNS_Connect,
 	ids:                                                                  DNS_ID_Block,
 	dns_tx:                                                               [DNS_TX_BYTES]u8,
 	dns_rx:                                                               [DNS_RX_BYTES]u8,
-	dns_aliases:                                                          [DNS_ALIAS_CAPACITY]runtime_async.DNS_Name,
+	dns_aliases:                                                          [DNS_ALIAS_CAPACITY]async.DNS_Name,
 	dns_results:                                                          [DNS_RESULT_CAPACITY]net.Endpoint,
 	dns_servers:                                                          [MAX_NAME_SERVERS]net.Endpoint,
 	dns_server_count:                                                     int,
@@ -710,7 +770,7 @@ Client_State :: struct {
 	coordinator:                                       Coordinator_State,
 	actors:                                            []Session_Actor,
 	requests:                                          []Request_Network,
-	task_index:                                        []^runtime_async.Task,
+	task_index:                                        []^async.Task,
 	dns_ids:                                           []u16,
 	dns_head, dns_count:                               int,
 	// Construction reference becomes the Client base on publication. Last drop
@@ -720,9 +780,9 @@ Client_State :: struct {
 	registered_tasks:                                  int,
 	// runtime is borrowed only while registration witness is protected by mu.
 	// Last on_done clears it under the same mutex; no check-unlock-clock TOCTOU.
-	runtime:                                           ^runtime_async.Runtime,
-	runtime_epoch:                                     u64,
-	last_clock:                                        runtime_async.Deadline,
+	runtime:                                           ^async.Runtime,
+	epoch:                                     u64,
+	last_clock:                                        async.Deadline,
 	unstarted_cleanup_started, unstarted_cleanup_done: bool,
 	producer_calls, returning_calls:                   int,
 	signal_cells:                                      int,
@@ -732,7 +792,7 @@ Client_State :: struct {
 Session_Assignment :: struct {
 	assignment:           Assignment,
 	request:              http.Request,
-	cutoff, setup_cutoff: runtime_async.Deadline,
+	cutoff, setup_cutoff: async.Deadline,
 	secure:               bool,
 	host:                 string,
 	port:                 u16,
@@ -746,13 +806,17 @@ Session_Assignment :: struct {
 network_config_normalize :: proc(input: Normalized_Config) -> (Network_Config, Client_Error) {
 	servers := input.http.resolver.name_servers
 
-	if len(servers) < 0 || len(servers) > MAX_NAME_SERVERS || len(servers) > 0 && raw_data(servers) == nil {
+	if len(servers) < 0 ||
+	   len(servers) > MAX_NAME_SERVERS ||
+	   len(servers) > 0 && raw_data(servers) == nil {
 		return {}, {kind = .Invalid_Config}
 	}
 
 	offers := input.http.tls.alpn_protocols
 
-	if len(offers) < 0 || len(offers) > tls_api.MAX_ALPN_PROTOCOLS || len(offers) > 0 && raw_data(offers) == nil {
+	if len(offers) < 0 ||
+	   len(offers) > tls_api.MAX_ALPN_PROTOCOLS ||
+	   len(offers) > 0 && raw_data(offers) == nil {
 		return {}, {kind = .Invalid_Config}
 	}
 
@@ -828,7 +892,12 @@ network_config_normalize :: proc(input: Normalized_Config) -> (Network_Config, C
 		input.capacities.dns_ids,
 	}
 
-	sizes := [4]int{size_of(Session_Actor), size_of(Request_Network), size_of(^runtime_async.Task), size_of(u16)}
+	sizes := [4]int {
+		size_of(Session_Actor),
+		size_of(Request_Network),
+		size_of(^async.Task),
+		size_of(u16),
+	}
 	outputs := [4]^int {
 		&result.actor_storage_bytes,
 		&result.request_storage_bytes,
@@ -857,7 +926,9 @@ network_queue_changed_locked :: proc(s: ^Client_State) {
 // State.mu is held. The exact generation is cleared BEFORE physical disposal;
 // unused reserved draws are burned, never put back in the fresh-ID ring.
 network_queue_forget_locked :: proc(s: ^Client_State, handle: Request_Handle) {
-	if handle.owner_id != s.kernel.owner_id || handle.slot == 0 || u64(handle.slot) > u64(len(s.requests)) {
+	if handle.owner_id != s.kernel.owner_id ||
+	   handle.slot == 0 ||
+	   u64(handle.slot) > u64(len(s.requests)) {
 		return
 	}
 
@@ -948,7 +1019,7 @@ network_queue_claim_budget :: proc(
 				int(origin.key.port),
 			)
 
-			if error.kind != .None {
+			if error != nil {
 				return {}, network_snapshot_error(error)
 			}
 
@@ -1004,7 +1075,24 @@ network_queue_claim_budget :: proc(
 		sync.unlock(&s.mu)
 		reserved, error := network_dns_reserve(s, min(DNS_IDS_PER_QUERY, total_queries_remaining))
 
-		if error.kind != .None && error.kind != .Pending {
+		if error.kind == .Pending && len(s.dns_ids) > 0 {
+			fresh := network_dns_refill_fresh(s)
+
+			if fresh.kind == .None {
+				reserved, error = network_dns_reserve(
+					s,
+					min(DNS_IDS_PER_QUERY, total_queries_remaining),
+				)
+			}
+
+			if fresh.kind != .None || error.kind == .Pending {
+				return {}, network_dns_bank_exhausted()
+			}
+
+			if error.kind != .None {
+				return {}, error
+			}
+		} else if error.kind != .None && error.kind != .Pending {
 			return {}, error
 		}
 
@@ -1034,7 +1122,8 @@ network_queue_claim_budget :: proc(
 	// policy again.
 	sync.lock(&s.kernel.mu)
 	reused :=
-		reservation.session.slot != 0 && s.kernel.sessions[int(reservation.session.slot) - 1].reserved_from == .Idle
+		reservation.session.slot != 0 &&
+		s.kernel.sessions[int(reservation.session.slot) - 1].reserved_from == .Idle
 	sync.unlock(&s.kernel.mu)
 	if !reused {
 		metadata.ids = block
@@ -1055,7 +1144,7 @@ network_queue_committed_locked :: proc(
 	s: ^Client_State,
 	preparing: Preparing_Request,
 	input: ^Request_Owner,
-	now: runtime_async.Deadline,
+	now: async.Deadline,
 ) -> Client_Error {
 	if s.phase == .Closing || s.phase == .Disposing {
 		return {kind = .Closed}
@@ -1085,7 +1174,11 @@ network_queue_committed_locked :: proc(
 	return {}
 }
 
-pool_dispatchable :: proc(request: ^Request_Slot, now: i64, allow_waiting_dns: bool = false) -> bool {
+pool_dispatchable :: proc(
+	request: ^Request_Slot,
+	now: i64,
+	allow_waiting_dns: bool = false,
+) -> bool {
 	return(
 		request != nil &&
 		request.state == .Queued &&
@@ -1094,7 +1187,12 @@ pool_dispatchable :: proc(request: ^Request_Slot, now: i64, allow_waiting_dns: b
 		(request.deadline.at == 0 || now < request.deadline.at) \
 	)
 }
-pool_head_locked :: proc(k: ^Kernel, origin: Cell_Handle, now: i64, allow_waiting_dns: bool = false) -> ^Request_Slot {
+pool_head_locked :: proc(
+	k: ^Kernel,
+	origin: Cell_Handle,
+	now: i64,
+	allow_waiting_dns: bool = false,
+) -> ^Request_Slot {
 	slot := &k.origins[int(origin.slot) - 1]
 
 	if slot.queue_head == 0 || u64(slot.queue_head) > u64(len(k.requests)) {
@@ -1103,7 +1201,9 @@ pool_head_locked :: proc(k: ^Kernel, origin: Cell_Handle, now: i64, allow_waitin
 
 	request := &k.requests[int(slot.queue_head) - 1]
 
-	if !pool_dispatchable(request, now, allow_waiting_dns) || request.origin != origin || request.session.slot != 0 {
+	if !pool_dispatchable(request, now, allow_waiting_dns) ||
+	   request.origin != origin ||
+	   request.session.slot != 0 {
 		return nil
 	}
 
@@ -1257,8 +1357,15 @@ pool_dispatch :: proc(k: ^Kernel, work: int, now: i64) -> (Assignment, int, Clie
 				request := admission_request_locked(k, session.request)
 				if pool_dispatchable(request, now, session.reserved_from == .Idle) &&
 				   request.origin == origin_handle &&
-				   request.session == (Cell_Handle{slot = u32(index + 1), generation = session.generation}) {
-					return pool_assign_locked(k, origin_handle, u32(index + 1), now, false), used, {}
+				   request.session ==
+					   (Cell_Handle{slot = u32(index + 1), generation = session.generation}) {
+					return pool_assign_locked(
+						k,
+						origin_handle,
+						u32(index + 1),
+						now,
+						false,
+					), used, {}
 				}
 			} else if session.state == .Idle &&
 			   !pool_expired(session, k, now) &&
@@ -1273,7 +1380,9 @@ pool_dispatch :: proc(k: ^Kernel, work: int, now: i64) -> (Assignment, int, Clie
 		used += 1
 		request := pool_head_locked(k, origin_handle, now)
 
-		if request != nil && origin.sessions < k.config.capacities.connections_per_origin && k.session_free_count > 0 {
+		if request != nil &&
+		   origin.sessions < k.config.capacities.connections_per_origin &&
+		   k.session_free_count > 0 {
 			index := k.session_free[k.session_free_count - 1]
 			session := &k.sessions[int(index) - 1]
 			assert(session.state == .Free && session.generation != 0)

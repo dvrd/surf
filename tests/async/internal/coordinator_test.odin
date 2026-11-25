@@ -3,7 +3,7 @@ package surf_async
 import surf ".."
 import signal "shared:async/signal"
 import "base:intrinsics"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
 import "core:time"
 import "core:thread"
 
@@ -69,7 +69,7 @@ coordinator_unstarted_close_burns_queued_reserved_dns_metadata :: proc(t: ^testi
 	testing.expect_value(t, state.dns_draws_reserved, u64(6))
 	testing.expect_value(t, state.dns_draws_burned, u64(6))
 	completion, available := kernel_poll(&state.kernel)
-	testing.expect(t, available && completion.request == handle && completion.error.transport.kind == .Cancelled)
+	testing.expect(t, available && completion.request == handle && completion.error.transport == net.Connection_Error.Cancelled)
 	assert(kernel_release(&state.kernel, handle).kind == .None)
 	fmt.printf("COORD17 unstarted_reserved_dns_burn=%d no_protocol_io=true\n", state.dns_draws_burned)
 	sync.lock(&state.mu)
@@ -204,7 +204,7 @@ coordinator_test_actor_resume :: proc(data: rawptr) -> runtime_async.Resume_Resu
 		if closing || cancel {
 			error = {
 				kind = .IO_Failed,
-				transport = {kind = .Cancelled},
+				transport = net.Connection_Error.Cancelled,
 				phase = .Cancellation,
 				write_effect = .Not_Sent,
 			}
@@ -417,23 +417,58 @@ coordinator_parked_bankempty_requests_expire_without_connection_claim :: proc(t:
 }
 
 @(test)
-coordinator_dns_refill_unparks_real_fifo_and_burns_terminal_blocks :: proc(t: ^testing.T) {
+coordinator_empty_bank_rejects_hostname_and_admits_numeric :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 10 * time.Second)
 	c: Coordinator_Test_Case
 	coordinator_test_init(&c, 1)
 	initial, removed := network_dns_reserve(c.state, 1)
 	assert(removed.kind == .None)
 	network_dns_burn(c.state, &initial)
-	request := coordinator_test_admit(&c, "http://refill.example/path", time.Second)
-	time.sleep(5 * time.Millisecond)
-	testing.expect_value(t, intrinsics.atomic_load(&c.actors[0].assigned), 0)
-	ids := [1]u16{31337}
-	assert(network_dns_refill(c.state, ids[:]).kind == .None)
-	completed := coordinator_test_wait(&c)
-	testing.expect(t, completed.request == request && completed.error.kind == .None)
-	testing.expect_value(t, ids[0], u16(31337))
-	testing.expect_value(t, intrinsics.atomic_load(&c.actors[0].assigned), 1)
-	assert(kernel_release(&c.state.kernel, request).kind == .None)
+	s := c.state
+	url := "http://refill.example/path"
+	now := runtime_async.deadline_after(&c.runtime, 0)
+	lease, error := resources_request_lease(&s.resources)
+	assert(error.kind == .None)
+	preparing, cause := kernel_reserve(
+		&s.kernel,
+		runtime_async.deadline_after(&c.runtime, 30 * time.Second),
+		&lease,
+	)
+	assert(cause.kind == .None)
+	origin, prepared := origin_prepare(&s.profile, url, s.resources.allocator)
+	assert(prepared.kind == .None)
+	started := time.tick_now()
+	_, claim := network_queue_claim(s, preparing, &origin, now.at)
+	origin_destroy(&origin)
+	testing.expect(t, time.tick_since(started) < 2 * time.Second)
+	testing.expect_value(t, claim.kind, .Capacity)
+	testing.expect_value(t, claim.http.kind, .Dial_Failed)
+	testing.expect_value(t, claim.http.phase, .DNS)
+	testing.expect_value(t, claim.http.write_effect, .Not_Sent)
+	testing.expect_value(
+		t,
+		claim.http.network,
+		net.Network_Error(net.Resolve_Error.Unable_To_Resolve),
+	)
+	sync.lock(&s.mu)
+	disposal, rolled := kernel_rollback(&s.kernel, preparing)
+	assert(rolled.kind == .None)
+	network_queue_forget_locked(s, preparing.request)
+	sync.unlock(&s.mu)
+	held := disposal.origin.origin
+	request_disposal_destroy(&disposal)
+
+	if held.slot != 0 {
+		assert(kernel_origin_cleanup_finish(&s.kernel, held).kind == .None)
+	}
+
+	next, done, finish := kernel_cleanup_finish(&s.kernel, preparing.request, now)
+	assert(finish.kind == .None && done)
+	request_disposal_destroy(&next)
+	ready := coordinator_test_admit(&c, "http://127.0.0.1/cheap", time.Second)
+	completion := coordinator_test_wait(&c)
+	testing.expect(t, completion.request == ready && completion.error.kind == .None)
+	assert(kernel_release(&c.state.kernel, ready).kind == .None)
 	coordinator_test_destroy(&c)
 }
 
@@ -452,7 +487,7 @@ coordinator_cancellation_of_parked_waiter_preserves_terminal_once :: proc(t: ^te
 	testing.expect(
 		t,
 		completed.request == request &&
-		completed.error.transport.kind == .Cancelled &&
+		completed.error.transport == net.Connection_Error.Cancelled &&
 		completed.error.phase == .Cancellation,
 	)
 	_, again := kernel_poll(&c.state.kernel)
@@ -546,7 +581,7 @@ coordinator_numeric_progress_bypasses_bankempty_named_queue :: proc(t: ^testing.
 	sync.unlock(&c.state.mu)
 	_ = signal.wake(c.state.coordinator.wake)
 	cancelled := coordinator_test_wait(&c)
-	testing.expect(t, cancelled.request == blocked && cancelled.error.transport.kind == .Cancelled)
+	testing.expect(t, cancelled.request == blocked && cancelled.error.transport == net.Connection_Error.Cancelled)
 	assert(kernel_release(&c.state.kernel, ready).kind == .None)
 	assert(kernel_release(&c.state.kernel, blocked).kind == .None)
 	coordinator_test_destroy(&c)
@@ -686,7 +721,7 @@ coordinator_commit_dns_stage_is_atomic_and_rejection_keeps_input :: proc(t: ^tes
 	sync.unlock(&s.mu)
 	_ = signal.wake(s.coordinator.wake)
 	completed := coordinator_test_wait(&c)
-	testing.expect(t, completed.request == preparing.request && completed.error.transport.kind == .Cancelled)
+	testing.expect(t, completed.request == preparing.request && completed.error.transport == net.Connection_Error.Cancelled)
 	assert(kernel_release(&s.kernel, preparing.request).kind == .None)
 	coordinator_test_destroy(&c)
 }

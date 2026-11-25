@@ -1,8 +1,8 @@
 package surf
-import h3 "shared:http/v3"
-import "core:crypto/tls"
-import "core:crypto/tls/credentials"
-import store "core:crypto/tls/credentials/store"
+import h3 "shared:async/http/v3"
+import "shared:async/tls"
+import "shared:async/tls/credentials"
+import store "shared:async/tls/credentials/store"
 import "core:fmt"
 import "core:net"
 import "core:sync"
@@ -77,7 +77,7 @@ surf_http3_aggregates_more_than_inline_capacity_and_recovers_limit :: proc(t: ^t
 	}
 
 	roots: tls.Root_Pool
-	assert(tls.root_pool_parse(&roots, #load("../tests/http3/localhost.pem")).kind == .None)
+	assert(tls.root_pool_parse(&roots, #load("../tests/http3/localhost.pem")) == nil)
 	defer tls.root_pool_destroy(&roots)
 	pool: h3.Pool
 	assert(h3.pool_init(&pool, {}, context.allocator) == .None)

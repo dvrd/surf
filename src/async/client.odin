@@ -1,18 +1,18 @@
 package surf_async
 
 import surf ".."
-import stream_api "stream"
-import http "shared:http"
-import runtime_async "shared:async"
-import "core:mem"
-import charged "core:mem/budget"
-import "core:sync"
-import scopes "core:sync/budget"
-import "core:time"
-import signal "shared:async/signal"
-import tls "core:crypto/tls"
-import "core:net"
 import "core:crypto/x509"
+import "core:mem"
+import "core:net"
+import "core:sync"
+import "core:time"
+import "shared:async"
+import "shared:async/http"
+import charged "shared:async/mem/budget"
+import "shared:async/signal"
+import scopes "shared:async/sync/budget"
+import "shared:async/tls"
+import stream_api "stream"
 
 // Stable public header. Operational APIs must verify the original address before using opaque state.
 Client :: struct {
@@ -39,7 +39,7 @@ Client_Config :: struct {
 	http:                  surf.Config,
 	capacities:            Maybe(Capacities),
 	idle_timeout, max_age: time.Duration,
-	lifetime:              runtime_async.Deadline,
+	lifetime:              async.Deadline,
 	streaming:             Maybe(Stream_Client_Limits),
 }
 // Pure borrowed view: config_normalize neither clones nor retains any member.
@@ -49,7 +49,7 @@ Normalized_Config :: struct {
 	idle_timeout, max_age, request_timeout: time.Duration,
 	response_body_limit:                    int,
 	streaming:                              Maybe(Stream_Client_Limits),
-	lifetime:                               runtime_async.Deadline,
+	lifetime:                               async.Deadline,
 }
 Client_Error_Kind :: enum {
 	None,
@@ -62,12 +62,12 @@ Client_Error_Kind :: enum {
 	Allocation_Failed,
 	Budget_Rejected,
 	Request_Error,
-	Runtime_Error,
+	Error,
 }
 Client_Error :: struct {
 	kind:    Client_Error_Kind,
 	http:    surf.HTTP_Error,
-	runtime: runtime_async.Error,
+	runtime: async.Error,
 }
 Request_Stage :: enum {
 	Queued,
@@ -189,7 +189,7 @@ Request_Slot :: struct {
 	returning_to:                         Request_State,
 	stage:                                Request_Stage,
 	cancel_requested:                     bool,
-	deadline:                             runtime_async.Deadline,
+	deadline:                             async.Deadline,
 	origin, session:                      Cell_Handle,
 	input:                                Request_Owner,
 	response:                             surf.Response,
@@ -398,7 +398,7 @@ client_leave :: proc(s: ^Client_State) {
 
 client_init :: proc(
 	c: ^Client,
-	runtime: ^runtime_async.Runtime,
+	runtime: ^async.Runtime,
 	config: Client_Config,
 	allocator: mem.Allocator,
 ) -> Client_Error {
@@ -462,7 +462,7 @@ client_init :: proc(
 		actor.registered = true
 	}
 	sync.unlock(&s.mu)
-	registration := runtime_async.register_group(runtime, s.task_index)
+	registration := async.register_group(runtime, s.task_index)
 	if registration.kind != .None {
 		sync.lock(&s.mu)
 		s.references -= u64(len(s.task_index))
@@ -478,7 +478,7 @@ client_init :: proc(
 		// failure first, then use only detached State and scalar error locals.
 		c^ = {}
 		assert(network_dispose_prepared(s).kind == .None)
-		return {kind = .Runtime_Error, runtime = registration}
+		return {kind = .Error, runtime = registration}
 	}
 	sync.lock(&s.mu)
 	if s.phase == .Constructing {
@@ -501,13 +501,22 @@ resource_allocation_failure :: proc(error: charged.Error) -> Client_Error {
 		return resource_failure(error.budget if error.kind == .Budget_Rejected else .Overflow)
 	}
 
-	if error.kind == .Invalid_Config || error.kind == .Invalid_Handle || error.kind == .Invalid_Argument {
+	if error.kind == .Invalid_Config ||
+	   error.kind == .Invalid_Handle ||
+	   error.kind == .Invalid_Argument {
 		return {kind = .Invalid_Config, http = {kind = .Invalid_Config, budget = error.budget}}
 	}
 
-	return {kind = .Allocation_Failed, http = {kind = .Allocation_Failed, allocation = error.allocation}}
+	return {
+		kind = .Allocation_Failed,
+		http = {kind = .Allocation_Failed, allocation = error.allocation},
+	}
 }
-resources_init :: proc(r: ^Kernel_Resources, scope: scopes.Scope, backing: mem.Allocator) -> Client_Error {
+resources_init :: proc(
+	r: ^Kernel_Resources,
+	scope: scopes.Scope,
+	backing: mem.Allocator,
+) -> Client_Error {
 	if r == nil || backing.procedure == nil {
 		return {kind = .Invalid_Config}
 	}
@@ -646,7 +655,14 @@ kernel_grant :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u8, C
 }
 kernel_free :: proc(storage: []u8, alignment: int, allocator: mem.Allocator) {
 	if raw_data(storage) != nil {
-		_, _ = allocator.procedure(allocator.data, .Free, 0, alignment, raw_data(storage), len(storage))
+		_, _ = allocator.procedure(
+			allocator.data,
+			.Free,
+			0,
+			alignment,
+			raw_data(storage),
+			len(storage),
+		)
 	}
 }
 kernel_array :: proc($T: typeid, count: int, allocator: mem.Allocator) -> ([]T, Client_Error) {
@@ -718,12 +734,22 @@ profile_allocate :: proc(size, alignment: int, allocator: mem.Allocator) -> ([]u
 	   raw_data(storage) == nil ||
 	   uintptr(raw_data(storage)) % uintptr(alignment) != 0 {
 		if raw_data(storage) != nil {
-			_, _ = allocator.procedure(allocator.data, .Free, 0, alignment, raw_data(storage), len(storage))
+			_, _ = allocator.procedure(
+				allocator.data,
+				.Free,
+				0,
+				alignment,
+				raw_data(storage),
+				len(storage),
+			)
 		}
 		if cause == nil {
 			cause = .Out_Of_Memory
 		}
-		return nil, {kind = .Allocation_Failed, http = {kind = .Allocation_Failed, allocation = cause}}
+		return nil, {
+			kind = .Allocation_Failed,
+			http = {kind = .Allocation_Failed, allocation = cause},
+		}
 	}
 
 	for &byte in storage {
@@ -736,7 +762,11 @@ profile_valid :: proc(p: ^Profile) -> bool {
 	return p != nil && p.self == p && p.owner_id != 0
 }
 
-profile_init :: proc(p: ^Profile, config: Normalized_Config, allocator: mem.Allocator) -> Client_Error {
+profile_init :: proc(
+	p: ^Profile,
+	config: Normalized_Config,
+	allocator: mem.Allocator,
+) -> Client_Error {
 	if p == nil || p.self != nil || p.owner_id != 0 || raw_data(p.storage) != nil {
 		return {kind = .Invalid_State}
 	}
@@ -809,7 +839,9 @@ profile_init :: proc(p: ^Profile, config: Normalized_Config, allocator: mem.Allo
 	snapshot := normalized
 
 	if len(config.http.tls.root_cas) > 0 {
-		roots := (cast([^]^x509.Certificate)raw_data(storage[roots_at:]))[:len(config.http.tls.root_cas)]
+		roots := (cast([^]^x509.Certificate)raw_data(storage[roots_at:]))[:len(
+			config.http.tls.root_cas,
+		)]
 		copy(roots, config.http.tls.root_cas)
 		snapshot.http.tls.root_cas = roots
 	} else {
@@ -817,7 +849,9 @@ profile_init :: proc(p: ^Profile, config: Normalized_Config, allocator: mem.Allo
 	}
 
 	if len(config.http.resolver.name_servers) > 0 {
-		servers := (cast([^]net.Endpoint)raw_data(storage[servers_at:]))[:len(config.http.resolver.name_servers)]
+		servers := (cast([^]net.Endpoint)raw_data(storage[servers_at:]))[:len(
+			config.http.resolver.name_servers,
+		)]
 		copy(servers, config.http.resolver.name_servers)
 		snapshot.http.resolver.name_servers = servers
 	} else {
@@ -825,10 +859,14 @@ profile_init :: proc(p: ^Profile, config: Normalized_Config, allocator: mem.Allo
 	}
 
 	copy(storage[name_at:name_at + len(config.http.tls.server_name)], config.http.tls.server_name)
-	snapshot.http.tls.server_name = string(storage[name_at:name_at + len(config.http.tls.server_name)])
+	snapshot.http.tls.server_name = string(
+		storage[name_at:name_at + len(config.http.tls.server_name)],
+	)
 
 	if len(config.http.tls.alpn_protocols) > 0 {
-		offers := (cast([^]string)raw_data(storage[offers_at:]))[:len(config.http.tls.alpn_protocols)]
+		offers := (cast([^]string)raw_data(storage[offers_at:]))[:len(
+			config.http.tls.alpn_protocols,
+		)]
 		at := text_at
 
 		for offer, i in config.http.tls.alpn_protocols {
@@ -885,15 +923,34 @@ client_state_alias :: proc(s: ^Client_State, c: ^Client, destination: rawptr, si
 	return(
 		ranges_overlap(destination, size, c, size_of(Client)) ||
 		ranges_overlap(destination, size, s, size_of(Client_State)) ||
-		ranges_overlap(destination, size, raw_data(s.actors), len(s.actors) * size_of(Session_Actor)) ||
-		ranges_overlap(destination, size, raw_data(s.requests), len(s.requests) * size_of(Request_Network)) ||
-		ranges_overlap(destination, size, raw_data(s.task_index), len(s.task_index) * size_of(^runtime_async.Task)) ||
+		ranges_overlap(
+			destination,
+			size,
+			raw_data(s.actors),
+			len(s.actors) * size_of(Session_Actor),
+		) ||
+		ranges_overlap(
+			destination,
+			size,
+			raw_data(s.requests),
+			len(s.requests) * size_of(Request_Network),
+		) ||
+		ranges_overlap(
+			destination,
+			size,
+			raw_data(s.task_index),
+			len(s.task_index) * size_of(^async.Task),
+		) ||
 		ranges_overlap(destination, size, raw_data(s.dns_ids), len(s.dns_ids) * size_of(u16)) ||
 		ranges_overlap(destination, size, raw_data(s.profile.storage), len(s.profile.storage)) \
 	)
 }
 
-client_destination_alias :: proc(s: ^Client_State, c: ^Client, destination: ^surf.Response) -> bool {
+client_destination_alias :: proc(
+	s: ^Client_State,
+	c: ^Client,
+	destination: ^surf.Response,
+) -> bool {
 	return client_state_alias(s, c, destination, size_of(surf.Response))
 }
 
@@ -919,7 +976,11 @@ client_poll :: proc(c: ^Client) -> (Completion, bool) {
 
 	return kernel_poll(&s.kernel)
 }
-client_take :: proc(c: ^Client, handle: Request_Handle, destination: ^surf.Response) -> Client_Error {
+client_take :: proc(
+	c: ^Client,
+	handle: Request_Handle,
+	destination: ^surf.Response,
+) -> Client_Error {
 	s, error := client_enter(c)
 
 	if error.kind != .None {

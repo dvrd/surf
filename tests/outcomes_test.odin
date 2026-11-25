@@ -1,7 +1,8 @@
 package tests
 
 import surf "shared:surf"
-import http "shared:http"
+import http "shared:async/http"
+import "shared:async/tls"
 import "core:net"
 import "core:mem"
 import "base:runtime"
@@ -10,11 +11,11 @@ import "core:testing"
 Fault_Stream :: struct {
 	wire:        string,
 	at:          int,
-	write_error: net.Connection_Error,
-	read_error:  net.Connection_Error,
+	write_error: net.Network_Error,
+	read_error:  net.Network_Error,
 	writes:      int,
 }
-fault_read :: proc(data: rawptr, dst: []u8) -> (int, net.Connection_Error) {
+fault_read :: proc(data: rawptr, dst: []u8) -> (int, net.Network_Error) {
 	state := cast(^Fault_Stream)data
 
 	if state.at == len(state.wire) {
@@ -24,20 +25,20 @@ fault_read :: proc(data: rawptr, dst: []u8) -> (int, net.Connection_Error) {
 	n := copy(dst, state.wire[state.at:])
 	state.at += n
 
-	return n, {}
+	return n, nil
 }
-fault_write :: proc(data: rawptr, src: []u8) -> (int, net.Connection_Error) {
+fault_write :: proc(data: rawptr, src: []u8) -> (int, net.Network_Error) {
 	state := cast(^Fault_Stream)data
 	state.writes += 1
 
-	if state.write_error.kind != .None {
+	if state.write_error != nil {
 		return 0, state.write_error
 	}
 
-	return len(src), {}
+	return len(src), nil
 }
-fault_close :: proc(data: rawptr) -> net.Connection_Error {
-	return {}
+fault_close :: proc(data: rawptr) -> net.Network_Error {
+	return nil
 }
 fault_connection :: proc(state: ^Fault_Stream) -> net.Connection {
 	return {data = state, read = fault_read, write = fault_write, close = fault_close}
@@ -71,13 +72,13 @@ public_exchange_distinguishes_write_read_timeout_and_cancel :: proc(t: ^testing.
 	}
 
 	for sample in ([]struct {
-			write, read: net.Connection_Error,
+			write, read: net.Network_Error,
 			expected:    surf.HTTP_Phase,
 		} {
-			{{kind = .Write_Failed}, {}, .Write},
-			{{}, {kind = .Read_Failed}, .Read},
-			{{}, {kind = .Timeout}, .Deadline},
-			{{}, {kind = .Cancelled}, .Cancellation},
+			{net.TCP_Send_Error.Connection_Closed, nil, .Write},
+			{nil, net.TCP_Recv_Error.Connection_Closed, .Read},
+			{nil, net.TCP_Recv_Error.Timeout, .Deadline},
+			{nil, net.Connection_Error.Cancelled, .Cancellation},
 		}) {
 		state := Fault_Stream {
 			write_error = sample.write,
@@ -107,7 +108,7 @@ public_exchange_retains_observed_status_after_body_failure :: proc(t: ^testing.T
 		}) {
 		state := Fault_Stream {
 			wire = sample.wire,
-			read_error = {kind = .Peer_Closed},
+			read_error = net.Connection_Error.Peer_Closed,
 		}
 		response, error := surf.exchange(
 			fault_connection(&state),
@@ -151,19 +152,19 @@ validated_status_survives_response_allocation_failure :: proc(t: ^testing.T) {
 @(test)
 tls_record_failures_preserve_tls_but_transport_causes_remain_specific :: proc(t: ^testing.T) {
 	broken_record := surf.http_error_classify(
-		{kind = .IO_Failed, tls_io = {kind = .Decryption_Failed}},
+		{kind = .IO_Failed, tls_error = tls.Protocol_Error.Bad_Record_Mac},
 		.Read,
 		.Unknown,
 	)
 	testing.expect_value(t, broken_record.phase, .TLS)
 	transport_read := surf.http_error_classify(
-		{kind = .IO_Failed, tls_io = {kind = .Transport_Read_Failed, transport = {kind = .Read_Failed}}},
+		{kind = .IO_Failed, tls_error = net.TCP_Recv_Error.Connection_Closed},
 		.Read,
 		.Unknown,
 	)
 	testing.expect_value(t, transport_read.phase, .Read)
 	timed_out := surf.http_error_classify(
-		{kind = .IO_Failed, tls_io = {kind = .Transport_Read_Failed, transport = {kind = .Timeout}}},
+		{kind = .IO_Failed, tls_error = net.TCP_Recv_Error.Timeout},
 		.Read,
 		.Unknown,
 	)
@@ -209,7 +210,7 @@ partial_response_allocation_failures_release_all_owned_storage :: proc(t: ^testi
 
 		state := Fault_Stream {
 			wire = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\n\r\nx",
-			read_error = {kind = .Peer_Closed},
+			read_error = net.Connection_Error.Peer_Closed,
 		}
 
 		response, error := surf.exchange(

@@ -1,8 +1,8 @@
 package tests
 
 import surf "shared:surf"
-import http "shared:http"
-import tls "core:crypto/tls"
+import http "shared:async/http"
+import tls "shared:async/tls"
 import "core:fmt"
 import "core:net"
 import "core:sync"
@@ -329,8 +329,16 @@ address_policy_public_only_refuses_non_global_ranges :: proc(t: ^testing.T) {
 		"169.254.1.1",
 		"169.254.169.254",
 		"0.0.0.0",
+		"0.0.0.1",
+		"0.255.255.255",
+		"100.64.0.0",
+		"100.64.0.1",
+		"100.127.255.255",
 		"224.0.0.1",
 		"239.255.255.255",
+		"240.0.0.1",
+		"240.255.255.255",
+		"255.255.255.255",
 		"::1",
 		"::",
 		"fe80::1",
@@ -339,6 +347,8 @@ address_policy_public_only_refuses_non_global_ranges :: proc(t: ^testing.T) {
 		"fd12:3456::1",
 		"ff00::1",
 		"ff02::1",
+		"64:ff9b::",
+		"64:ff9b::8.8.8.8",
 		"::ffff:127.0.0.1",
 		"::ffff:10.1.2.3",
 		"::ffff:172.16.5.5",
@@ -346,26 +356,30 @@ address_policy_public_only_refuses_non_global_ranges :: proc(t: ^testing.T) {
 		"::ffff:192.168.0.1",
 		"::ffff:169.254.169.254",
 		"::ffff:0.0.0.0",
+		"::ffff:0.0.0.1",
+		"::ffff:100.64.0.1",
 		"::ffff:224.0.0.1",
 		"::ffff:239.1.1.1",
+		"::ffff:240.0.0.1",
 	}
 	allowed := [?]string {
 		"1.1.1.1",
 		"8.8.8.8",
 		"11.0.0.1",
+		"100.63.255.255",
+		"100.128.0.1",
 		"172.15.255.255",
 		"172.32.0.1",
 		"192.169.0.1",
 		"169.255.1.1",
-		"100.64.0.1",
 		"203.0.113.1",
 		"223.255.255.255",
-		"240.0.0.1",
-		"0.0.0.1",
 		"::2",
 		"fec0::1",
+		"64:ff9b:1::",
 		"2001:4860:4860::8888",
 		"::ffff:1.1.1.1",
+		"::ffff:100.63.255.255",
 		"::ffff:172.15.0.1",
 		"::ffff:172.32.0.1",
 		"::ffff:8.8.8.8",
@@ -612,9 +626,9 @@ websocket_dial_connects_to_the_endpoint_the_policy_checked :: proc(t: ^testing.T
 	pool: tls.Root_Pool
 	defer tls.root_pool_destroy(&pool)
 	load_error := tls.root_pool_load_file(&pool, "tests/testdata/credentials/root.pem")
-	testing.expect_value(t, load_error.kind, .None)
+	testing.expect_value(t, load_error, nil)
 
-	if load_error.kind != .None {
+	if load_error != nil {
 		return
 	}
 

@@ -5,7 +5,8 @@ import runtime_async "shared:async"
 import rt "base:runtime"
 import "core:mem"
 import "core:bytes"
-import scopes "core:sync/budget"
+import scopes "shared:async/sync/budget"
+import "core:net"
 import "core:testing"
 
 Admission_Probe :: struct {
@@ -243,7 +244,7 @@ admission_preparing_close_and_expiry_preserve_unaccepted_inputs :: proc(t: ^test
 		}
 
 		if mode == 3 {
-			testing.expect_value(t, cause.http.transport.kind, .Cancelled)
+			testing.expect_value(t, cause.http.transport, net.Connection_Error.Cancelled)
 		}
 
 		request_owner_destroy(&owner)
@@ -394,7 +395,7 @@ admission_rollback_and_queued_cancel_restore_reserved_provenance :: proc(t: ^tes
 			handle = adm_commit(&p, preparing)
 			assert(kernel_cancel(&p.kernel, handle).kind == .None)
 			empty: surf.Response
-			assert(adm_terminal(&p, handle, &empty, {kind = .IO_Failed, transport = {kind = .Cancelled}}) == 1)
+			assert(adm_terminal(&p, handle, &empty, {kind = .IO_Failed, transport = net.Connection_Error.Cancelled}) == 1)
 			assert(kernel_release(&p.kernel, handle).kind == .None)
 		}
 
