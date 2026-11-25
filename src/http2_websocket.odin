@@ -134,6 +134,7 @@ websocket_http2_open :: proc(
 		return {kind = .Invalid_Config, phase = .Protocol, write_effect = .Not_Sent}
 	}
 	if de := tls.set_deadline(lane.tls, deadline); de != nil {
+		http_lane_close(client, lane)
 		return {
 			kind = .IO_Failed,
 			phase = .Deadline,
@@ -144,11 +145,13 @@ websocket_http2_open :: proc(
 	}
 	if !reused {
 		if e = h2_boot(lane, deadline, &client.cancel); e.kind != .None {
+			http_lane_close(client, lane)
 			return e
 		}
 	}
 	allowed, _, valid := http2.connection_connect_protocol(&lane.engine)
 	if !valid || !allowed {
+		http_lane_close(client, lane)
 		return {kind = .Invalid_Config, phase = .Protocol, write_effect = .Not_Sent}
 	}
 	index := -1
@@ -160,10 +163,12 @@ websocket_http2_open :: proc(
 		}
 	}
 	if index < 0 {
+		http_lane_close(client, lane)
 		return {kind = .Invalid_Config, phase = .Admission, write_effect = .Not_Sent}
 	}
 	handle, opened := http2.connection_open(&lane.engine, fields[:count], false)
 	if opened.kind != .None {
+		http_lane_close(client, lane)
 		return h2_map_error(opened, .Not_Sent, 0)
 	}
 	tunnel^ = {
@@ -176,6 +181,7 @@ websocket_http2_open :: proc(
 	lane.tunnels[index] = tunnel
 	defer if !success {
 		_ = h2_tunnel_abort(tunnel)
+		http_lane_close(client, lane)
 	}
 	for tunnel._status == 0 && !tunnel._closed {
 		if e = h2_tunnel_progress(tunnel, true); e.kind != .None {
@@ -490,11 +496,18 @@ h2_tunnel_detach :: proc(stream: ^HTTP2_Tunnel) {
 		}
 	}
 
+	stored := false
+
 	for &slot in lane.closed_tunnels {
 		if slot == {} {
 			slot = stream._handle
+			stored = true
 			break
 		}
+	}
+
+	if !stored {
+		lane.reusable = false
 	}
 
 	stream._lane = nil

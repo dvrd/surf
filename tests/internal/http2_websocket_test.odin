@@ -44,7 +44,7 @@ http2_websocket_requires_negotiated_permission_without_sending_or_poisoning_pool
 	testing.expect_value(t, normal.kind, .None)
 	testing.expect_value(t, response.status, 200)
 	testing.expect_value(t, string(response.body), "/echo")
-	testing.expect_value(t, http_client_dials(client), 1)
+	testing.expect_value(t, http_client_dials(client), 2)
 }
 
 @(test)
