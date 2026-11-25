@@ -1,6 +1,6 @@
 package surf
 
-import step "core:compress/step"
+import step "shared:async/compress/step"
 import "shared:async/tls"
 import "core:io"
 import "core:mem"

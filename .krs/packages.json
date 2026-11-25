@@ -9,13 +9,6 @@
       "hash": "22a007346c3fb4646c0f200ff5560dc85e534d236c2cbd93b2e74a7757edb5f8"
     },
     {
-      "name": "http",
-      "source": "local",
-      "tag": "v0.3.0",
-      "commit": "0670b9a30bbcd3cb7fce4ec33636786fe1f6de26",
-      "hash": "e71b5b59ab487ac692ff5ffd06dd217a6b7fe5a4d0edb6a90003c29b84ae80f9"
-    },
-    {
       "name": "websocket",
       "source": "local",
       "tag": "v0.1.0",
