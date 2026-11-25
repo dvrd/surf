@@ -3,6 +3,7 @@ package surf
 import http "shared:async/http"
 import "shared:async/tls"
 import x509 "core:crypto/x509"
+import "core:io"
 import "core:net"
 import "core:os"
 import "core:strconv"
@@ -715,4 +716,49 @@ h2_tls_and_tunnel_deadlines_follow_the_shared_phase_rules :: proc(t: ^testing.T)
 	testing.expect_value(t, deadline.kind, .TCP_Failed)
 	sent, ok := deadline.transport.(net.TCP_Send_Error)
 	testing.expect(t, ok && sent == .Timeout)
+}
+
+h2_bad_count_read :: proc(
+	data: rawptr,
+	mode: io.Stream_Mode,
+	_: []u8,
+	_: i64,
+	_: io.Seek_From,
+) -> (
+	i64,
+	io.Error,
+) {
+	if mode != .Read {
+		return 0, nil
+	}
+
+	count := cast(^int)data
+
+	return i64(count^), nil
+}
+
+@(test)
+h2_send_body_rejects_a_count_outside_the_buffer :: proc(t: ^testing.T) {
+	for count in ([]int{-1, 9}) {
+		bad := count
+		source := Upload_Source {
+			stream = {procedure = h2_bad_count_read, data = &bad},
+			content_length = 8,
+		}
+		job := H2_Job {
+			upload      = &source,
+			upload_left = 8,
+		}
+		lane := HTTP_Lane {
+			allocator = context.allocator,
+			reusable  = true,
+		}
+		h2_send_body(&lane, &job)
+		testing.expect_value(t, job.error.kind, .IO_Failed)
+		testing.expect_value(t, job.error.phase, .Write)
+		cause, is_connection := job.error.transport.(net.Connection_Error)
+		testing.expect(t, is_connection && cause == .Invalid_Count)
+		testing.expect(t, !lane.reusable)
+		testing.expect(t, job.chunk.allocator.procedure == nil)
+	}
 }

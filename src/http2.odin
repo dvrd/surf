@@ -1263,6 +1263,21 @@ h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 		for filled < amount {
 			got, read_error := io.read(job.upload.stream, chunk.data[filled:])
 
+			if got < 0 || got > len(chunk.data[filled:]) {
+				owned.destroy(&chunk)
+				h2_fail(
+					job,
+					{
+						kind      = .IO_Failed,
+						phase     = .Write,
+						transport = net.Connection_Error.Invalid_Count,
+						source_io = read_error,
+					},
+				)
+				lane.reusable = false
+				return
+			}
+
 			if got > 0 {
 				filled += got
 			}
@@ -1271,7 +1286,7 @@ h2_send_body :: proc(lane: ^HTTP_Lane, job: ^H2_Job) {
 				owned.destroy(&chunk)
 				fail := HTTP_Error {
 					kind      = .IO_Failed,
-					phase     = .Read,
+					phase     = .Write,
 					source_io = read_error,
 				}
 

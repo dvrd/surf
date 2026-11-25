@@ -453,7 +453,13 @@ http3_map_error :: proc(result: http3.Client_Result, _: time.Time) -> HTTP_Error
 	}
 
 	if result.error == .Source {
-		return {kind = .IO_Failed, phase = .Read, write_effect = effect}
+		phase := HTTP_Phase.Read
+
+		if result.status == 0 {
+			phase = .Write
+		}
+
+		return {kind = .IO_Failed, phase = phase, write_effect = effect}
 	}
 
 	if result.error == .Cancelled {

@@ -347,6 +347,17 @@ surf_http3_live_lane_does_not_resolve_again :: proc(t: ^testing.T) {
 	testing.expect_value(t, after_second, after_first)
 }
 
+@(test)
+http3_source_failure_is_a_write_until_a_status_exists :: proc(t: ^testing.T) {
+	none := http3_map_error({error = .Source}, {})
+	testing.expect_value(t, none.kind, .IO_Failed)
+	testing.expect_value(t, none.phase, .Write)
+	testing.expect_value(t, none.write_effect, .Not_Sent)
+	seen := http3_map_error({error = .Source, status = 200}, {})
+	testing.expect_value(t, seen.kind, .IO_Failed)
+	testing.expect_value(t, seen.phase, .Read)
+}
+
 surf_h3_slow_source :: proc(
 	data: rawptr,
 	mode: io.Stream_Mode,
