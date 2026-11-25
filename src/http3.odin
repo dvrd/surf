@@ -108,14 +108,15 @@ execute_http3 :: proc(
 	}
 	deadline := time.time_add(time.now(), budget)
 	port := http3_dial_port(config.alt_svc, url.host, url.port, time.now())
-	endpoint, resolve_error := http3_resolve(url.host, port, deadline, config.resolver)
+	endpoints, resolve_error := http3_resolve(url.host, port, deadline, config.resolver)
 	if resolve_error.kind != .None {
 		return {}, resolve_error
 	}
-	if rejected := address_policy_check(config, url.host, []net.Endpoint{endpoint});
+	if rejected := address_policy_check(config, url.host, endpoints.items[:endpoints.count]);
 	   rejected.kind != .None {
 		return {}, rejected
 	}
+	endpoint := endpoints.items[0]
 	path := url.target
 	if len(path) == 0 {
 		path = "/"
@@ -287,7 +288,7 @@ http3_resolve :: proc(
 	deadline: time.Time,
 	options: net.Resolver_Options,
 ) -> (
-	net.Endpoint,
+	net.Resolved_Endpoints,
 	HTTP_Error,
 ) {
 	endpoints, resolve_error := net.resolve_endpoints_until(host, port, deadline, options)
@@ -302,7 +303,7 @@ http3_resolve :: proc(
 			.Not_Sent,
 		)
 	}
-	return endpoints.items[0], {}
+	return endpoints, {}
 }
 
 http3_map_error :: proc(result: http3.Client_Result, _: time.Time) -> HTTP_Error {
@@ -811,15 +812,18 @@ websocket_http3_open :: proc(
 		count += 1
 	}
 	port := http3_dial_port(client.config.alt_svc, parsed.host, parsed.port, time.now())
-	endpoint, re := http3_resolve(parsed.host, port, deadline, client.config.resolver)
+	endpoints, re := http3_resolve(parsed.host, port, deadline, client.config.resolver)
 
 	if re.kind != .None {
 		return re
 	}
-	if rejected := address_policy_check(client.config, parsed.host, []net.Endpoint{endpoint});
+
+	if rejected := address_policy_check(client.config, parsed.host, endpoints.items[:endpoints.count]);
 	   rejected.kind != .None {
 		return rejected
 	}
+
+	endpoint := endpoints.items[0]
 
 	tunnel.client = client
 	intrinsics.atomic_store(&client.cancel, 0)

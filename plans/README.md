@@ -20,7 +20,7 @@ Run 009 and 010 first. They do not share files. After 009, plans that name diffe
 | 014 | An HTTP/3 budget expiry stays a deadline | P1 | S | 009 | `claude:sonnet` (`codex`) | DONE |
 | 015 | The buffered HTTP/1 encoder rejects caller framing | P1 | S | 009 | `claude:opus` (`codex`) | DONE |
 | 016 | An empty async DNS ID bank is a DNS failure | P1 | M | 009 | `claude:opus` (`codex`) | DONE |
-| 018 | `address_policy` sees every resolved address | P1 | M | 016 | `claude:opus` (`codex`) | TODO |
+| 018 | `address_policy` sees every resolved address | P1 | M | 016 | `claude:opus` (`codex`) | DONE |
 | 017 | Resolver-snapshot failures keep their own DNS errors | P2 | S | 016 | `claude:sonnet` (`codex`) | DONE |
 | 020 | HTTP/2 does not index authorization or cookie | P2 | S | 009 | `claude:sonnet` (`codex`) | TODO |
 | 021 | HTTP/2 TLS alerts and tunnel timeouts use the shared phase rules | P2 | S | 013 | `claude:sonnet` (`codex`) | TODO |

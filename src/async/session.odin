@@ -1283,12 +1283,15 @@ session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 	}
 
 	a.dns_server_count = copy(a.dns_servers[:], servers)
+	// A set policy must see A and AAAA together. Both_A_First keeps them in the
+	// one query begin_dns_connect dials. A nil policy still connects from A.
+	policy := a.owner.profile.config.http.address_policy != nil
 	error := session_query_begin(
 		a,
 		origin.host,
 		int(origin.port),
-		.A_Only,
-		a.owner.profile.config.http.address_policy == nil,
+		.Both_A_First if policy else .A_Only,
+		!policy,
 	)
 
 	if error.status != .Success {
@@ -1296,15 +1299,15 @@ session_dial_begin :: proc(a: ^Session_Actor) -> runtime_async.Resume_Result {
 		return .Yield
 	}
 
-	a.phase = .Resolving_A
+	a.phase = .Resolving_AAAA if policy else .Resolving_A
 
 	return .Yield
 }
 
-// Hostname lookups with an address policy stay unconnected until the resolved
-// set is accepted. begin_dns_connect then dials that same query. Numeric dials
-// are checked in session_dial_begin. A nil policy, or a dial already started,
-// continues straight into connect.
+// Hostname lookups with an address policy stay unconnected until both families
+// are in the query and that set is accepted. begin_dns_connect then dials that
+// same query. Numeric dials are checked in session_dial_begin. A nil policy,
+// or a dial already started, continues straight into connect.
 session_policy_gate :: proc(a: ^Session_Actor) -> (ready: bool, result: runtime_async.Resume_Result) {
 	if a.owner.profile.config.http.address_policy == nil || a.dial._self == &a.dial {
 		return true, {}

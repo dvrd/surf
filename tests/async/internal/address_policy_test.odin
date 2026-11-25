@@ -607,7 +607,7 @@ address_policy_rejects_a_hostname_resolved_to_a_refused_address :: proc(t: ^test
 	testing.expect(t, async_witness_has_v4(&witness, 0, net.IP4_Loopback))
 	testing.expect_value(t, witness.counts[0], 1)
 	testing.expect_value(t, a_queries, 1)
-	testing.expect_value(t, aaaa_queries, 0)
+	testing.expect_value(t, aaaa_queries, 1)
 	testing.expect_value(t, policy_tcp_accepts(&peer), 0)
 }
 
@@ -666,6 +666,60 @@ address_policy_never_dials_a_refused_address_beside_an_allowed_one :: proc(t: ^t
 }
 
 @(test)
+address_policy_rejects_a_refused_aaaa_beside_an_allowed_a :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 12 * time.Second)
+	dns: Policy_DNS
+	dns.first_v4[0] = {1, 1, 1, 1}
+	dns.first_v4_n = 1
+	dns.first_v6[0] = policy_aaaa_loopback()
+	dns.first_v6_n = 1
+	dns_endpoint, dns_worker, dns_ok := policy_dns_start(&dns)
+	testing.expect(t, dns_ok)
+
+	if !dns_ok {
+		return
+	}
+
+	defer policy_dns_stop(&dns, dns_worker)
+	peer: Policy_TCP
+	listener, tcp_worker, tcp_ok := policy_tcp_start(&peer, net.IP4_Loopback)
+	testing.expect(t, tcp_ok)
+
+	if !tcp_ok {
+		return
+	}
+
+	defer policy_tcp_stop(&peer, tcp_worker)
+	witness: Async_Witness
+	witness.refuse_loopback = true
+	servers := [1]net.Endpoint{dns_endpoint}
+	url := fmt.aprintf("http://mixed-family.invalid:%d/secret", listener.port)
+	defer delete(url)
+	completion, _, ok := async_policy_exchange(
+		{
+			allow_http = true,
+			timeout = 4 * time.Second,
+			address_policy = async_policy,
+			address_policy_data = &witness,
+			resolver = {name_servers = servers[:]},
+		},
+		ASYNC_POLICY_CAPACITIES,
+		url,
+		6 * time.Second,
+	)
+	_, aaaa_queries := policy_dns_counts(&dns)
+	testing.expect(t, ok)
+	testing.expect_value(t, completion.error.kind, .Address_Rejected)
+	testing.expect_value(t, completion.error.write_effect, .Not_Sent)
+	testing.expect_value(t, witness.calls, 1)
+	testing.expect_value(t, witness.counts[0], 2)
+	testing.expect(t, async_witness_has_v4(&witness, 0, net.IP4_Address{1, 1, 1, 1}))
+	testing.expect(t, async_witness_has_v6(&witness, 0, net.IP6_Loopback))
+	testing.expect(t, aaaa_queries >= 1)
+	testing.expect_value(t, policy_tcp_accepts(&peer), 0)
+}
+
+@(test)
 address_policy_dials_the_address_the_policy_saw :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 12 * time.Second)
 	dns: Policy_DNS
@@ -716,7 +770,7 @@ address_policy_dials_the_address_the_policy_saw :: proc(t: ^testing.T) {
 	testing.expect(t, async_witness_has_v4(&witness, 0, net.IP4_Loopback))
 	testing.expect_value(t, witness.addresses[0][0].port, listener.port)
 	testing.expect_value(t, a_queries, 1)
-	testing.expect_value(t, aaaa_queries, 0)
+	testing.expect_value(t, aaaa_queries, 1)
 	testing.expect_value(t, policy_tcp_accepts(&peer), 1)
 }
 
