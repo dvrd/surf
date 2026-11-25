@@ -13,7 +13,7 @@ Run 009 and 010 first. They do not share files. After 009, plans that name diffe
 | Plan | Title | Pri | Effort | Depends on | Executor | Status |
 |------|-------|-----|--------|------------|----------|--------|
 | 009 | `task test` compiles against `shared:async/compress/step` | P1 | S | — | `claude:haiku` (`grok:fast`) | DONE |
-| 010 | Plans 001 and 008 no longer contradict `a552088` | P1 | S | — | `claude:haiku` (`grok:fast`) | TODO |
+| 010 | Plans 001 and 008 no longer contradict `a552088` | P1 | S | — | `claude:haiku` (`grok:fast`) | DONE |
 | 011 | Blocking WebSocket dial honors `handshake_timeout` and rejects `h2` | P1 | S | 009 | `claude:sonnet` (`codex`) | DONE |
 | 012 | `websocket_dial` returns the DNS or TCP error it stored | P1 | S | 011 | `claude:sonnet` (`codex`) | DONE |
 | 013 | A failed HTTP/2 WebSocket open releases the lane | P1 | S | 009 | `claude:sonnet` (`codex`) | DONE |
@@ -41,15 +41,15 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
 
 The parenthetical after an executor is the fallback. Plans 001–008 do not name an executor in the plan file. 008 is not re-executed. For 001–007, use `claude:sonnet` with fallback `codex`, except 006 and 007, which are `claude:haiku` with fallback `grok:fast`.
 
-008 is done at `a552088`. Its prose still says the opposite of that commit. Plan 010 rewrites the prose. Do not re-execute 008 and do not revert `src/`.
+008 is done at `a552088`. The contradiction has been removed. Do not re-execute 008 and do not revert `src/`.
 
-001 is blocked. The library port is already in `a552088`. What remains is the gate, testdata, and `tests/stream104` port. That work waits on 010, which deletes the STOP text that would undo the port, and on 009, because `core:compress/step` no longer exists. The banner at the top of `plans/001-tls-net-errors.md` says the same thing.
+001 is blocked on the gate, testdata, and `tests/stream104` residue. The library port is already in `a552088`. Plan 009 is done. Plan 004 owns the shared gate helper. 001 owns the type errors in those programs.
 
 ## Dependency notes
 
 - 009 is the compile gate. Any plan whose done criteria run `task test` waits on it, including the residue of 001 and plans 002, 003, 004, 005, and 006. 010 is prose only and can run beside 009.
 - 010 lands before anyone executes 001. It also rewrites 008 so the file matches HEAD. After 010, 008 stays DONE and is not a work item.
-- Ignore every STOP in 001 or 008 that says to keep `Config.tls` on core TLS, to leave HTTP/3 `session_cache`, `client_credentials`, or `client_credential_lease` nil, or to stop because `tls_dial` is gone. Forwarding those three fields is the committed behavior at `a552088`.
+- 001 and 008 record the port at `a552088`. `Config.tls` is `shared:async/tls.Config`, and HTTP/3 forwards `session_cache`, `client_credentials`, and `client_credential_lease`. Do not revert `src/`.
 - Same file, in this order, and never at the same time:
   - `src/websocket.odin`: 011, then 012.
   - `src/async/coordinator.odin`: 016, then 017.

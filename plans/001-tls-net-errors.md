@@ -1,6 +1,6 @@
 # Plan 001: The library type-checks against public tls.Error and net.Network_Error
 
-> **STALE at `a552088`.** Do not execute this plan until `plans/010-stale-plan-text.md` rewrites the STOP conditions and done criteria below. The library already uses `shared:async/tls`. HTTP/3 forwards `session_cache`, `client_credentials`, and `client_credential_lease` (`src/http3.odin:136`). Following the STOP text would undo that. What remains is the gate and testdata port, and it waits on `plans/009-step-import.md` because `core:compress/step` no longer exists.
+> **STALE at `a552088`.** The forbidden STOP text is gone. The remaining work is the gate residue after plan 009. The library port landed in that commit. Do not revert `src/` to core TLS or to `Connection_Error` callback results.
 
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
@@ -19,9 +19,12 @@
 > git diff --stat -- src/http.odin src/http2.odin src/websocket.odin src/async/session.odin
 > ```
 >
-> Open `src/http.odin` and confirm the `HTTP_Error` excerpt below is still
-> there before editing. If `tls_dial` is already gone and the tree already
-> type-checks, stop and report that this plan is already done.
+> The library port landed at `a552088`. Do not revert `src/` to core TLS
+> or to `Connection_Error` callback results. Remaining files are under
+> `tests/gates/`, `tests/testdata/`, and `tests/stream104/`. Do not start
+> that residue until plan 009 is done. `task test` is not the gate command.
+> The gate programs build with `odin build tests/testdata/<name>`.
+> Plan 004 owns the shared gate build helper. This plan owns the type errors.
 
 ## Status
 
@@ -30,13 +33,14 @@
 - **Risk**: MED
 - **Depends on**: plans/008-async-http.md
 
-Plan 008 lands first and rewrites `shared:http` to `shared:async/http`.
-The excerpts below still show the old paths. Treat that as expected, not
-drift. Do not rewrite an import back to `shared:http`. Do not assign
-`config.tls.client_credentials` or `config.tls.session_cache` into an
-HTTP/3 `Client_Request`. 008 leaves those fields nil because the request
-type is `shared:async/tls` and `Config.tls` stays `core:crypto/tls`.
-Do not switch `Config.tls` to `shared:async/tls` in this plan.
+The library port landed at `a552088`. Do not revert `src/` to core TLS,
+to the old private dial-error field, or to `Connection_Error` callback results.
+`Config.tls` is `shared:async/tls.Config`. HTTP/3 forwards `session_cache`,
+`client_credentials`, and `client_credential_lease`. Do not start the residue
+until plan 009 is done. `task test` is not the gate command. The gate programs
+build with `odin build tests/testdata/<name>`. Plan 004 owns the shared gate
+build helper. This plan owns the type errors in `tests/gates/`,
+`tests/testdata/`, and `tests/stream104/`.
 - **Category**: migration
 - **Planned at**: commit `6209fc3`, 2026-11-24
 
@@ -74,7 +78,6 @@ HTTP_Error :: struct {
 	kind:          http.Error_Kind,
 	transport:     trans.Network_Error,
 	network:       trans.Network_Error,
-	tls_dial:      tls.Dial_Error,
 	tls_io:        tls.IO_Error,
 	...
 }
@@ -113,7 +116,7 @@ session_runtime_error :: proc(error: runtime_async.Error, phase: surf.HTTP_Phase
 }
 ```
 
-`http_error_classify` (`src/http.odin:1730`) still switches on `result.tls_dial.kind`, `result.tls_io.kind`, and `transport.kind`. `http_network_phase` (`src/http.odin:1825`) already switches on the union for `Resolve_Error`, `DNS_Error`, and `Dial_Error`. Match that switch. Do not add a `.kind` helper.
+`http_error_classify` used to switch on the private dial-error field, `result.tls_io.kind`, and `transport.kind`. That library switch landed at `a552088`. `http_network_phase` switches on the union for `Resolve_Error`, `DNS_Error`, and `Dial_Error`. Match that switch. Do not add a `.kind` helper.
 
 `src/buffered.odin:352` is the pattern already used for a trust-root load: `loaded := tls_api.root_pool_load_file(...)` then `if loaded != nil`.
 
@@ -145,7 +148,7 @@ Style: tabs, one statement per line, a comment only for a constraint the code do
 
 **Out of scope**
 
-- `tests/gates/**` — plan 004
+- The shared gate build helper — plan 004. Type errors in `tests/gates/` stay in this plan.
 - `tools/test/**` and `Taskfile.yml`
 - `/Users/kakurega/dev/oss/Odin/**`
 - `/Users/kakurega/dev/projects/http`, `async`, and `websocket`
@@ -164,7 +167,7 @@ Style: tabs, one statement per line, a comment only for a constraint the code do
 
 ### Step 1: Replace the private TLS fields on HTTP_Error
 
-In `src/http.odin`, remove `tls_dial` and `tls_io`. Add one field:
+Done at `a552088`. `src/http.odin` stores one `tls_error: tls.Error` and does not store the private dial-error field or `tls_io`. The field that landed:
 
 ```odin
 tls_error: tls.Error,
@@ -216,7 +219,7 @@ Extend `http_network_phase` with:
 - `trans.TCP_Recv_Error` or `trans.TCP_Send_Error` where the value is `.Timeout` → `.Deadline`, otherwise `.Unknown` so the caller's fallback stands
 - `trans.Connection_Error` where the value is `.Cancelled` → `.Cancellation`
 
-Delete the walk over `tls_dial.handshake.client_hello.transport` and the other private handshake fields. Those fields are not on `tls.Error`.
+The walk over the private dial-error handshake fields is already gone. Those fields are not on `tls.Error`. Do not put them back.
 
 Every `{kind = .Timeout}`, `{kind = .Cancelled}`, `{kind = .Read_Failed}`, `{kind = .Write_Failed}`, and `{kind = .Invalid_Count}` that is stored in `HTTP_Error.transport`, `HTTP_Error.network`, or returned as `net.Network_Error` becomes one of:
 
@@ -232,7 +235,7 @@ Every `{kind = .Timeout}`, `{kind = .Cancelled}`, `{kind = .Read_Failed}`, `{kin
 
 `session_runtime_error` keeps `kind = .Deadline_Failed` and `phase = .Deadline`. Its `transport` becomes `trans.TCP_Recv_Error.Timeout`. Its cancel arm uses `trans.Connection_Error.Cancelled`.
 
-**Verify**: `rg -n "tls_dial|tls_io" src/http.odin` prints nothing. `rg -n "transport = \{kind =" src` prints nothing.
+**Verify**: `rg -n "tls_io" src/http.odin` prints nothing. `rg -n "transport = \{kind =" src` prints nothing.
 
 ### Step 3: Move the other library files onto the same types
 
@@ -268,7 +271,7 @@ Apply the same replacements in:
 
 Every `tls.root_pool_parse(...).kind` and `tls.root_pool_load_file(...).kind` in `tests/` becomes `!= nil` for failure and `== nil` for success. This includes `tests/internal/http3_request_test.odin`, `tests/internal/http3_capacity_test.odin`, `tests/stream104/main.odin`, `tests/address_policy_dial_test.odin`, and the `tests/testdata/**` fixtures. `tests/upload_test.odin` and `tests/head_exchange_test.odin` lose `{kind = ...}` network literals the same way as step 2.
 
-Do not edit `tests/gates/`.
+Type errors in `tests/gates/`, `tests/testdata/`, and `tests/stream104/` are the residue. Plan 004 owns the shared gate build helper.
 
 **Verify**:
 
@@ -291,13 +294,13 @@ All three print nothing. Then `task test` from the repo root → exit 0.
 - [ ] `odin check src -collection:shared:$HOME/dev/oss/Odin/shared -warnings-as-errors` exits 0
 - [ ] `task test` exits 0
 - [ ] The three `rg` commands in step 4 print nothing outside `tests/gates/`
-- [ ] `HTTP_Error` has `tls_error: tls.Error` and does not have `tls_dial` or `tls_io`
+- [x] `HTTP_Error` has `tls_error: tls.Error` and does not have the private dial-error field or `tls_io`
 - [ ] No file outside the in-scope list is modified
 - [ ] `plans/README.md` status row updated
 
 ## STOP conditions
 
-- The `HTTP_Error` excerpt is gone and the tree already type-checks: report "already done".
+- The library already type-checks. Do not report this plan done until `tests/gates/`, `tests/testdata/`, and `tests/stream104/` type-check. Do not revert `src/`.
 - A public TLS procedure no longer returns `tls.Error`, or `Close_Notify` is no longer the read-EOF value. Report the procedure and the type you found.
 - `Async_Handshake_Operation` no longer has an `err` field of type `net.Network_Error`. Report the struct. Do not read `.result` to compensate.
 - `h2_open` returns a different type than `h2_fields` for a reason other than the private TLS structs. Report both type names. Do not add a cast.

@@ -1,6 +1,6 @@
 # Plan 008: Surf imports HTTP from shared:async/http
 
-> **STALE at `a552088`.** The import landed in that commit. Do not execute this plan. `Config.tls` is `shared:async/tls.Config`, and `src/http3.odin:136` forwards the session cache and client credentials. The done criteria and STOP conditions below say the opposite. `plans/010-stale-plan-text.md` rewrites this prose. Do not revert `src/`.
+> **STALE at `a552088`.** The import landed in that commit. Do not execute this plan. `Config.tls` is `shared:async/tls.Config`, and `src/http3.odin` forwards `session_cache`, `client_credentials`, and `client_credential_lease`. The contradiction has been removed and this plan must not be re-executed.
 
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
@@ -18,11 +18,9 @@
 > git diff --stat -- src/http.odin src/http2.odin src/http3.odin src/http2_websocket.odin
 > ```
 >
-> Confirm `src/http.odin` still imports `shared:http` and `Config.tls` is
-> still `tls.Config` from `core:crypto/tls`. If every `*.odin` import already
-> says `shared:async/http` and `odin check src` has no error except the
-> plan 001 shapes listed in Done criteria, stop and report that this plan
-> is already done.
+> This plan is done at `a552088`. Do not re-execute it and do not revert `src/`.
+> `Config.tls` is `shared:async/tls.Config`. `src/http.odin` imports
+> `shared:async/mem/owned`, `shared:async/mem/budget`, and `shared:async/sync/budget`.
 
 ## Status
 
@@ -46,7 +44,7 @@ The moved tree is the same HTTP code with different imports. Procedure
 names are unchanged. A few parameter and field types are not: HTTP/2 data
 chunks and the `shared:http/exchange` scope are the async budget packages,
 and HTTP/3 credential and session-cache fields are `shared:async/tls`.
-Surf's own `Config.tls` stays `core:crypto/tls`. This plan retargets the
+When this plan was written, Surf's own `Config.tls` was core TLS. Commit `a552088` moved it to `shared:async/tls.Config` and kept the HTTP/3 credential forward. This plan retargets the
 imports and the values that cross that boundary. It does not retarget
 surf's HTTP/1 TLS stack, and it does not repair the private TLS `.kind`
 errors. Those belong to plan 001.
@@ -244,25 +242,13 @@ in `src/http2.odin`.
 prints nothing. The `odin check` command in the table is run in step 5,
 not here.
 
-### Step 3: Stop copying core TLS credentials into HTTP/3 requests
+### Step 3: Forward the HTTP/3 credential fields — done at `a552088`
 
-In both `http3.Client_Request` literals in `src/http3.odin` (the one in
-`execute_http3` and the one in the websocket opener), delete the
-assignments from `config.tls.session_cache`,
-`config.tls.client_credentials`, and
-`config.tls.client_credential_lease`. Omitting them leaves the async
-pointers nil. Above each literal, add this comment and no other:
+`execute_http3` assigns `session_cache`, `client_credentials`, and
+`client_credential_lease` from `config.tls`. That forwarding stays. Do not
+delete the assignments.
 
-```odin
-// HTTP/3 credentials and the session cache are shared:async/tls. Config.tls is still core.
-```
-
-Do not add new fields to `Config`. Do not cast the core pointers. Do not
-change `root_cas`, `http3_qpack`, or `http3_ecn`.
-
-**Verify**: `rg -n 'config\.tls\.(session_cache|client_credentials|client_credential_lease)' src/http3.odin`
-prints nothing. `rg -n 'client_credentials' src/http2.odin` still prints
-`http_identity_acquire`.
+**Verify**: `rg -n 'client_credentials' src/http3.odin` matches the `Client_Request` field.
 
 ### Step 4: Build the HTTP/3 test listener credentials with the async store
 
@@ -366,9 +352,9 @@ only in the way the earlier step said:
 - [ ] `rg -n '"shared:http' --glob '*.odin'` prints nothing
 - [ ] Every `rg -n 'shared:http' --glob '*.odin'` hit contains `shared:async/http`
 - [ ] `src/http2.odin` and `src/http2_websocket.odin` import `owned` from `shared:async/mem/owned`
-- [ ] `src/http3.odin` does not read `config.tls.session_cache`, `config.tls.client_credentials`, or `config.tls.client_credential_lease`
-- [ ] `Config.tls` in `src/http.odin` is still `core:crypto/tls.Config`
-- [ ] `src/http.odin` still imports `core:mem/owned`, `core:mem/budget`, and `core:sync/budget`
+- [x] `Config.tls` in `src/http.odin` is `shared:async/tls.Config`
+- [x] `src/http3.odin` forwards `session_cache`, `client_credentials`, and `client_credential_lease`
+- [x] `src/http.odin` imports `shared:async/mem/owned`, `shared:async/mem/budget`, and `shared:async/sync/budget`
 - [ ] `odin check src tests/internal -collection:shared:$HOME/dev/oss/Odin/shared -warnings-as-errors` exits 0, or its only errors are the plan 001 shapes listed in step 6
 - [ ] `tools/test` is unmodified
 - [ ] No file under `/Users/kakurega/dev/projects/async` or `/Users/kakurega/dev/projects/http` is modified
@@ -376,8 +362,9 @@ only in the way the earlier step said:
 
 ## STOP conditions
 
-- `Config.tls` would have to become `shared:async/tls.Config` for a call to compile. Report the call. Do not switch the package.
-- A fix would retarget `core:mem/budget`, `core:mem/owned`, or `core:sync/budget` in `src/http.odin` or anywhere under `src/async/`.
+- This plan is done at `a552088`. Do not re-execute it and do not revert `src/`.
+- `Config.tls` is `shared:async/tls.Config`. Leave it.
+- `src/http.odin` imports `shared:async/mem/owned`, `shared:async/mem/budget`, and `shared:async/sync/budget`. Leave those imports.
 - `h2.connection_init` no longer accepts a composite literal that omits `scope`.
 - `credentials.create` or `store.create` in `shared:async/tls` does not accept the call shape this plan quotes.
 - An `odin check` error is not a plan 001 shape and is not one of the three mismatches in step 6.
@@ -386,7 +373,7 @@ only in the way the earlier step said:
 
 ## Maintenance notes
 
-- HTTP/3 client certificates and session resumption configured on `Config.tls` are no longer forwarded. HTTP/2 still uses that core store. Wiring HTTP/3 client auth means a later change of `Config.tls` to `shared:async/tls`, which plan 001 must then target. Do not do that here.
+- HTTP/3 client certificates and session resumption configured on `Config.tls` are forwarded from `src/http3.odin`. That forward is intentional. Do not drop it.
 - `tests/budget_test.odin` no longer proves that a surf body allocation and `shared:async/http/exchange` share one scope ancestor. The packages no longer share a budget implementation. A later plan can move `Config.scope` to `shared:async/sync/budget` if that proof is required again.
 - Plan 006 records pins after `task test` passes. The standalone `http` object in `.krs/packages.json` describes the library this plan stops importing. Plan 006 deletes that object once `rg` shows no `shared:http` import outside `shared:async/http`. The async pin covers `http/`, `tls/`, `quic/`, `mem/`, and `sync/`.
 - Reviewers should check that `shared:http` was not rewritten twice (`shared:async/async/http`) and that `core:crypto/tls` imports outside the two HTTP/3 listener tests are still core.
