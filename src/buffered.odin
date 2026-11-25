@@ -881,6 +881,10 @@ buffered_http_encode :: proc(
 		}
 
 		if strings.equal_fold(name, "Host") {
+			if !suppress && !http.header_value_valid(value) {
+				return 0, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
+			}
+
 			host.on = !suppress
 
 			if !suppress {
@@ -891,6 +895,10 @@ buffered_http_encode :: proc(
 		}
 
 		if strings.equal_fold(name, "Accept") {
+			if !suppress && !http.header_value_valid(value) {
+				return 0, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
+			}
+
 			accept.on = !suppress
 
 			if !suppress {
@@ -901,17 +909,19 @@ buffered_http_encode :: proc(
 		}
 
 		if strings.equal_fold(name, "Content-Length") {
-			length_on = !suppress
-
-			if !suppress {
-				length_text = value
-			}
-
-			continue
+			return 0, {kind = .Reserved_Header, phase = .Configuration, write_effect = .Not_Sent}
 		}
 
 		if suppress {
 			continue
+		}
+
+		if header_reserved(name) {
+			return 0, {kind = .Reserved_Header, phase = .Configuration, write_effect = .Not_Sent}
+		}
+
+		if !http.header_value_valid(value) {
+			return 0, {kind = .Invalid_Header, phase = .Configuration, write_effect = .Not_Sent}
 		}
 
 		if custom_count == len(custom) {
@@ -951,6 +961,8 @@ buffered_http_encode :: proc(
 	if length_on {
 		buffered_http_put(&w, "Content-Length: ", length_text, "\r\n")
 	}
+
+	buffered_http_put(&w, "Connection: close\r\n")
 	buffered_http_put(&w, "\r\n")
 	if w.overflow {
 		return 0, {kind = .Header_Oversized, phase = .Configuration, write_effect = .Not_Sent}
