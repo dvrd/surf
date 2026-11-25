@@ -1158,8 +1158,12 @@ h2_field :: proc(job: ^H2_Job, name, value: string) -> bool {
 	}
 
 	job.fields[job.field_n] = {
-		name  = stored,
-		value = value,
+		name          = stored,
+		value         = value,
+		never_indexed = stored == "authorization" ||
+			stored == "proxy-authorization" ||
+			stored == "cookie" ||
+			stored == "set-cookie",
 	}
 
 	job.field_n += 1

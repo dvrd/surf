@@ -79,3 +79,23 @@ buffered_h2_public_wire_preserves_authentication_headers :: proc(t: ^testing.T) 
 		"HTTP/2.0|POST|Bearer fixture|session=fixture|application/json|first,second|body-review",
 	)
 }
+
+@(test)
+h2_field_keeps_authorization_and_cookie_out_of_the_dynamic_table :: proc(t: ^testing.T) {
+	job: H2_Job
+	testing.expect(t, h2_field(&job, "Authorization", "Bearer secret"))
+	testing.expect(t, h2_field(&job, "Cookie", "a=b"))
+	testing.expect(t, h2_field(&job, "Proxy-Authorization", "Basic x"))
+	testing.expect(t, h2_field(&job, "Set-Cookie", "a=1"))
+	testing.expect(t, h2_field(&job, "X-Test", "1"))
+	testing.expect(t, h2_field(&job, ":method", "GET"))
+	testing.expect_value(t, job.field_n, 6)
+	testing.expect(t, job.fields[0].never_indexed)
+	testing.expect(t, job.fields[1].never_indexed)
+	testing.expect(t, job.fields[2].never_indexed)
+	testing.expect(t, job.fields[3].never_indexed)
+	testing.expect(t, !job.fields[4].never_indexed)
+	testing.expect(t, !job.fields[5].never_indexed)
+	testing.expect_value(t, job.fields[0].name, "authorization")
+	testing.expect_value(t, job.fields[5].name, ":method")
+}

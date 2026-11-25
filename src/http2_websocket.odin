@@ -114,9 +114,14 @@ websocket_http2_open :: proc(
 			return {kind = .Header_Limit, phase = .Configuration, write_effect = .Not_Sent}
 		}
 
-		fields[count] = {name, header.value, name == "authorization" || name == "cookie"}
+		sensitive := name == "authorization" ||
+			name == "proxy-authorization" ||
+			name == "cookie" ||
+			name == "set-cookie"
+		fields[count] = {name, header.value, sensitive}
 		count += 1
 	}
+
 	if _, e := http2.headers_validate(
 		fields[:count],
 		.Request,
