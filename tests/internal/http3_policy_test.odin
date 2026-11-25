@@ -36,8 +36,8 @@ surf_http3_post_is_not_replayed :: proc(t: ^testing.T) {
 	}
 
 	_, error := execute(request, {http3 = true, timeout = 2 * time.Second})
-	testing.expect_value(t, error.kind, .IO_Failed)
-	testing.expect_value(t, error.phase, .Protocol)
+	testing.expect_value(t, error.kind, .Deadline_Failed)
+	testing.expect_value(t, error.phase, .Deadline)
 	testing.expect_value(t, error.write_effect, .Not_Sent)
 }
 

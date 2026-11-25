@@ -305,13 +305,14 @@ http3_resolve :: proc(
 	return endpoints.items[0], {}
 }
 
-http3_map_error :: proc(result: http3.Client_Result, total_deadline: time.Time) -> HTTP_Error {
+http3_map_error :: proc(result: http3.Client_Result, _: time.Time) -> HTTP_Error {
 	effect := HTTP_Write_Effect.Not_Sent
+
 	if result.sent {
 		effect = .Unknown
 	}
 
-	if result.error == .Deadline && time.diff(time.now(), total_deadline) <= 0 {
+	if result.error == .Deadline {
 		return {kind = .Deadline_Failed, phase = .Deadline, write_effect = effect}
 	}
 
