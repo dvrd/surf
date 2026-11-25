@@ -1,0 +1,63 @@
+name: Release surf
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'develop' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    concurrency:
+      group: surf-main-releases
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Publish the version that the merged commits produce
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stable='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          breaking='^[[:alpha:]][[:alnum:]-]*(\([^()]+\))?!:'
+          feature='^feat(\([^()]+\))?:'
+          footer='^BREAKING[ -]CHANGE:'
+
+          git merge-base --is-ancestor "$MERGE_SHA" HEAD
+          previous=$(git tag --merged "$MERGE_SHA" --sort=-version:refname | grep -E "$stable" | sed -n '1p' || true)
+          range=${previous:+$previous..}$MERGE_SHA
+          # A rerun of an already published pull request has no work to do.
+          if [[ -z "$(git rev-list -n 1 "$range")" ]]; then
+            exit 0
+          fi
+
+          # Every commit since the last release counts, so a run that failed
+          # is finished by the next merge. The largest change wins.
+          IFS=. read -r major minor patch <<< "${previous:-v0.0.0}"
+          major=${major#v}
+          if git log --format=%s "$range" | grep -qE "$breaking" ||
+             git log --format=%b "$range" | grep -qE "$footer"; then
+            major=$((major + 1)); minor=0; patch=0
+          elif git log --format=%s "$range" | grep -qE "$feature"; then
+            minor=$((minor + 1)); patch=0
+          else
+            patch=$((patch + 1))
+          fi
+          tag="v$major.$minor.$patch"
+          gh release create "$tag" --target "$MERGE_SHA" --title "surf $tag" \
+            --generate-notes ${previous:+--notes-start-tag "$previous"} --latest
