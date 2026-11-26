@@ -25,22 +25,14 @@ main :: proc() {
 		run_concurrency()
 	case "consumer":
 		run_consumer()
-	case "exchange":
-		run_exchange()
 	case "failure":
 		run_failure()
-	case "kernel":
-		run_kernel()
 	case "outcomes":
 		run_outcomes()
 	case "pool":
 		run_pool()
 	case "redirect":
 		run_redirect()
-	case "redirect_foundations":
-		run_redirect_foundations()
-	case "session":
-		run_session()
 	case "setup":
 		run_setup()
 	case "stream":
@@ -53,8 +45,9 @@ main :: proc() {
 }
 
 usage :: proc() {
-	fmt.eprintf("usage: gate <name> --odin <compiler> --shared <collection> --report <path>\n")
-	fmt.eprintf("names: budgets cancel client compatibility concurrency consumer exchange failure kernel outcomes pool redirect redirect_foundations session setup stream uploads\n")
+	fmt.eprintf("usage: task gate [GATE=name] [VERBOSE=1]\n")
+	fmt.eprintf("       gate <name> --odin <compiler> --shared <collection> --report <path>\n")
+	fmt.eprintf("names: budgets cancel client compatibility concurrency consumer failure outcomes pool redirect setup stream uploads\n")
 	os.exit(2)
 }
 

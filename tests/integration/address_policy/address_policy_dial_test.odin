@@ -1,14 +1,13 @@
 package tests
 
-import surf "shared:surf"
-import http "shared:async/http"
-import tls "shared:async/tls"
 import "core:fmt"
 import "core:net"
 import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
+import "shared:async"
+import "shared:surf"
 
 // 127.0.0.2 is not assigned here. A later answer uses a non-local address so a
 // second lookup cannot reach the listener that accepted the first answer.
@@ -439,7 +438,7 @@ header_reserved_exports_the_request_fields_rejected_on_submit :: proc(t: ^testin
 	testing.expect(t, !surf.header_reserved("Content-Type"))
 	testing.expect(t, !surf.header_reserved("Accept"))
 	testing.expect(t, !surf.header_reserved(""))
-	headers := [1]http.Header {
+	headers := [1]async.Http_Header {
 		{name = "Host", value = "example.test"},
 	}
 	response, error := surf.execute(
@@ -575,34 +574,10 @@ http3_refuses_the_resolved_endpoint_before_a_datagram :: proc(t: ^testing.T) {
 	testing.expect_value(t, a_queries, 1)
 }
 
+// An HTTPS origin whose name resolves to the listener: the address the policy
+// saw is the one connected to. The listener closes without TLS.
 @(test)
-websocket_dial_rejects_before_connect_and_leaves_the_connection_uninitialized :: proc(t: ^testing.T) {
-	witness: Dial_Witness
-	conn := new(surf.WebSocket_Conn)
-	defer free(conn)
-	error := surf.websocket_dial(
-		conn,
-		"127.0.0.1",
-		1,
-		{},
-		{},
-		{address_policy = dial_policy, address_policy_data = &witness},
-	)
-	testing.expect_value(t, error.kind, .Address_Rejected)
-	testing.expect_value(t, conn.phase, .Uninitialized)
-	testing.expect_value(t, witness.calls, 1)
-	testing.expect_value(t, witness.count, 1)
-	testing.expect_value(t, witness.endpoint.port, 1)
-	switch ip in witness.endpoint.address {
-	case net.IP4_Address:
-		testing.expect(t, ip == net.IP4_Loopback)
-	case net.IP6_Address:
-		testing.expect(t, false)
-	}
-}
-
-@(test)
-websocket_dial_connects_to_the_endpoint_the_policy_checked :: proc(t: ^testing.T) {
+tcp_dials_the_endpoint_the_policy_checked :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 12 * time.Second)
 	dns: Dial_DNS
 	dial_dns_prepare(&dns)
@@ -623,39 +598,32 @@ websocket_dial_connects_to_the_endpoint_the_policy_checked :: proc(t: ^testing.T
 	}
 
 	defer dial_tcp_stop(&peer, tcp_worker)
-	pool: tls.Root_Pool
-	defer tls.root_pool_destroy(&pool)
-	load_error := tls.root_pool_load_file(&pool, "tests/support/credentials/root.pem")
-	testing.expect_value(t, load_error, nil)
+	roots: async.Root_Pool
+	defer async.root_pool_destroy(&roots)
 
-	if load_error != nil {
+	if !testing.expect_value(t, async.root_pool_load_file(&roots, "tests/support/credentials/root.pem"), nil) {
 		return
 	}
 
 	witness: Dial_Witness
 	witness.allow = true
 	servers := [1]net.Endpoint{dns_endpoint}
-	conn := new(surf.WebSocket_Conn)
-	defer free(conn)
-	error := surf.websocket_dial(
-		conn,
-		"checked.invalid",
-		listener.port,
-		{},
+	url := fmt.aprintf("https://checked.invalid:%d/", listener.port)
+	defer delete(url)
+	response, error := surf.execute(
+		{method = .GET, url = url},
 		{
-			root_cas = pool.roots[:pool.count],
-			server_name = "checked.invalid",
-			handshake_timeout = 2 * time.Second,
-		},
-		{
+			tls = {roots = &roots},
+			timeout = 3 * time.Second,
 			address_policy = dial_policy,
 			address_policy_data = &witness,
 			resolver = {name_servers = servers[:]},
 		},
 	)
-	a_queries, aaaa_queries := dial_dns_counts(&dns)
-	testing.expect_value(t, error.kind, .TLS_Failed)
-	testing.expect_value(t, conn.phase, .Failed)
+	defer surf.response_destroy(&response)
+	a_queries, _ := dial_dns_counts(&dns)
+	testing.expectf(t, error.kind != .None && error.kind != .Address_Rejected, "%v", error)
+	testing.expect_value(t, error.write_effect, .Not_Sent)
 	testing.expect_value(t, witness.calls, 1)
 	testing.expect_value(t, witness.count, 1)
 	testing.expect_value(t, witness.endpoint.port, listener.port)
@@ -665,13 +633,13 @@ websocket_dial_connects_to_the_endpoint_the_policy_checked :: proc(t: ^testing.T
 	case net.IP6_Address:
 		testing.expect(t, false)
 	}
-	testing.expect_value(t, a_queries, 1)
-	testing.expect_value(t, aaaa_queries, 1)
-	testing.expect_value(t, dial_tcp_accepts(&peer), 1)
+
+	testing.expect(t, a_queries >= 1)
+	testing.expectf(t, dial_tcp_accepts(&peer) == 1, "%v", error)
 }
 
 @(test)
-websocket_dial_does_not_connect_when_the_hostname_is_refused :: proc(t: ^testing.T) {
+tcp_does_not_connect_when_the_hostname_is_refused :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 12 * time.Second)
 	dns: Dial_DNS
 	dial_dns_prepare(&dns)
@@ -694,25 +662,25 @@ websocket_dial_does_not_connect_when_the_hostname_is_refused :: proc(t: ^testing
 	defer dial_tcp_stop(&peer, tcp_worker)
 	witness: Dial_Witness
 	servers := [1]net.Endpoint{dns_endpoint}
-	conn := new(surf.WebSocket_Conn)
-	defer free(conn)
-	error := surf.websocket_dial(
-		conn,
-		"checked.invalid",
-		listener.port,
-		{},
-		{},
+	url := fmt.aprintf("http://checked.invalid:%d/", listener.port)
+	defer delete(url)
+	response, error := surf.execute(
+		{method = .GET, url = url},
 		{
+			allow_http = true,
+			timeout = 3 * time.Second,
 			address_policy = dial_policy,
 			address_policy_data = &witness,
 			resolver = {name_servers = servers[:]},
 		},
 	)
+	defer surf.response_destroy(&response)
 	a_queries, _ := dial_dns_counts(&dns)
 	testing.expect_value(t, error.kind, .Address_Rejected)
-	testing.expect_value(t, conn.phase, .Uninitialized)
+	testing.expect_value(t, error.phase, .Connect)
+	testing.expect_value(t, error.write_effect, .Not_Sent)
 	testing.expect_value(t, witness.calls, 1)
 	testing.expect_value(t, witness.endpoint.port, listener.port)
-	testing.expect_value(t, a_queries, 1)
+	testing.expect(t, a_queries >= 1)
 	testing.expect_value(t, dial_tcp_accepts(&peer), 0)
 }

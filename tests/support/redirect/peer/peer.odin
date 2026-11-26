@@ -517,9 +517,11 @@ response_wire :: proc(buf: []u8, final: bool, status: int, target, payload, meth
 			payload,
 		)
 	}
+	// A HEAD redirect is complete at its head, and a client may reuse the
+	// connection for the next hop. This peer answers one request per connection.
 	return fmt.bprintf(
 		buf,
-		"HTTP/1.1 %d Redirect\r\nLocation: %s\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n",
+		"HTTP/1.1 %d Redirect\r\nLocation: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
 		status,
 		target,
 		len(payload),

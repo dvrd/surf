@@ -1,12 +1,11 @@
 {
   "schema": 1,
   "workers": 1,
-  "work_per_resume": 1,
   "sanitizers": [
     "address",
     "thread"
   ],
-  "expected_cases": 80,
+  "expected_cases": 67,
   "cases": [
     {
       "name": "dns-tcp-cancel",
@@ -29,22 +28,12 @@
       "class": "held_phase"
     },
     {
-      "name": "dns-tcp-lifetime",
-      "phase": "dns",
-      "transport": "tcp",
-      "action": "lifetime",
-      "expected_stage": "Connecting",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "dns-tcp-close",
       "phase": "dns",
       "transport": "tcp",
       "action": "close",
       "expected_stage": "Connecting",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -89,22 +78,12 @@
       "class": "held_phase"
     },
     {
-      "name": "dns-tls-lifetime",
-      "phase": "dns",
-      "transport": "tls",
-      "action": "lifetime",
-      "expected_stage": "Connecting",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "dns-tls-close",
       "phase": "dns",
       "transport": "tls",
       "action": "close",
       "expected_stage": "Connecting",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -133,7 +112,7 @@
       "phase": "tls",
       "transport": "tls",
       "action": "cancel",
-      "expected_stage": "Handshaking",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Cancellation",
       "layer": "public_client",
       "class": "held_phase"
@@ -143,17 +122,7 @@
       "phase": "tls",
       "transport": "tls",
       "action": "total",
-      "expected_stage": "Handshaking",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
-      "name": "tls-tls-lifetime",
-      "phase": "tls",
-      "transport": "tls",
-      "action": "lifetime",
-      "expected_stage": "Handshaking",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
@@ -163,8 +132,8 @@
       "phase": "tls",
       "transport": "tls",
       "action": "close",
-      "expected_stage": "Handshaking",
-      "expected_terminal_phase": "Cancellation",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -173,7 +142,7 @@
       "phase": "tls",
       "transport": "tls",
       "action": "shutdown",
-      "expected_stage": "Handshaking",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Cancellation",
       "layer": "public_client",
       "class": "held_phase"
@@ -183,7 +152,7 @@
       "phase": "tls",
       "transport": "tls",
       "action": "setup",
-      "expected_stage": "Handshaking",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
@@ -209,22 +178,12 @@
       "class": "held_phase"
     },
     {
-      "name": "write-tcp-lifetime",
-      "phase": "write",
-      "transport": "tcp",
-      "action": "lifetime",
-      "expected_stage": "Writing",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "write-tcp-close",
       "phase": "write",
       "transport": "tcp",
       "action": "close",
       "expected_stage": "Writing",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -259,22 +218,12 @@
       "class": "held_phase"
     },
     {
-      "name": "write-tls-lifetime",
-      "phase": "write",
-      "transport": "tls",
-      "action": "lifetime",
-      "expected_stage": "Writing",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "write-tls-close",
       "phase": "write",
       "transport": "tls",
       "action": "close",
       "expected_stage": "Writing",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -309,22 +258,12 @@
       "class": "held_phase"
     },
     {
-      "name": "header-tcp-lifetime",
-      "phase": "header",
-      "transport": "tcp",
-      "action": "lifetime",
-      "expected_stage": "Reading",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "header-tcp-close",
       "phase": "header",
       "transport": "tcp",
       "action": "close",
       "expected_stage": "Reading",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -359,22 +298,12 @@
       "class": "held_phase"
     },
     {
-      "name": "header-tls-lifetime",
-      "phase": "header",
-      "transport": "tls",
-      "action": "lifetime",
-      "expected_stage": "Reading",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "header-tls-close",
       "phase": "header",
       "transport": "tls",
       "action": "close",
       "expected_stage": "Reading",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -409,22 +338,12 @@
       "class": "held_phase"
     },
     {
-      "name": "body-tcp-lifetime",
-      "phase": "body",
-      "transport": "tcp",
-      "action": "lifetime",
-      "expected_stage": "Reading",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "body-tcp-close",
       "phase": "body",
       "transport": "tcp",
       "action": "close",
       "expected_stage": "Reading",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -459,22 +378,12 @@
       "class": "held_phase"
     },
     {
-      "name": "body-tls-lifetime",
-      "phase": "body",
-      "transport": "tls",
-      "action": "lifetime",
-      "expected_stage": "Reading",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "body-tls-close",
       "phase": "body",
       "transport": "tls",
       "action": "close",
       "expected_stage": "Reading",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -509,22 +418,12 @@
       "class": "held_phase"
     },
     {
-      "name": "redirect-tcp-lifetime",
-      "phase": "redirect",
-      "transport": "tcp",
-      "action": "lifetime",
-      "expected_stage": "Reading",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "redirect-tcp-close",
       "phase": "redirect",
       "transport": "tcp",
       "action": "close",
       "expected_stage": "Reading",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -559,22 +458,12 @@
       "class": "held_phase"
     },
     {
-      "name": "redirect-tls-lifetime",
-      "phase": "redirect",
-      "transport": "tls",
-      "action": "lifetime",
-      "expected_stage": "Reading",
-      "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
       "name": "redirect-tls-close",
       "phase": "redirect",
       "transport": "tls",
       "action": "close",
       "expected_stage": "Reading",
-      "expected_terminal_phase": "Cancellation",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -593,7 +482,7 @@
       "phase": "queued",
       "transport": "tcp",
       "action": "cancel",
-      "expected_stage": "Queued",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Cancellation",
       "layer": "public_client",
       "class": "held_phase"
@@ -603,18 +492,8 @@
       "phase": "queued",
       "transport": "tcp",
       "action": "total",
-      "expected_stage": "Queued",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
-      "name": "queued-tcp-lifetime",
-      "phase": "queued",
-      "transport": "tcp",
-      "action": "lifetime",
-      "expected_stage": "Queued",
-      "expected_terminal_phase": "Cancellation",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -623,8 +502,8 @@
       "phase": "queued",
       "transport": "tcp",
       "action": "close",
-      "expected_stage": "Queued",
-      "expected_terminal_phase": "Cancellation",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -633,7 +512,7 @@
       "phase": "queued",
       "transport": "tcp",
       "action": "shutdown",
-      "expected_stage": "Queued",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Cancellation",
       "layer": "public_client",
       "class": "held_phase"
@@ -643,7 +522,7 @@
       "phase": "queued",
       "transport": "tls",
       "action": "cancel",
-      "expected_stage": "Queued",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Cancellation",
       "layer": "public_client",
       "class": "held_phase"
@@ -653,18 +532,8 @@
       "phase": "queued",
       "transport": "tls",
       "action": "total",
-      "expected_stage": "Queued",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Deadline",
-      "layer": "public_client",
-      "class": "held_phase"
-    },
-    {
-      "name": "queued-tls-lifetime",
-      "phase": "queued",
-      "transport": "tls",
-      "action": "lifetime",
-      "expected_stage": "Queued",
-      "expected_terminal_phase": "Cancellation",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -673,8 +542,8 @@
       "phase": "queued",
       "transport": "tls",
       "action": "close",
-      "expected_stage": "Queued",
-      "expected_terminal_phase": "Cancellation",
+      "expected_stage": "Connecting",
+      "expected_terminal_phase": "Deadline",
       "layer": "public_client",
       "class": "held_phase"
     },
@@ -683,7 +552,7 @@
       "phase": "queued",
       "transport": "tls",
       "action": "shutdown",
-      "expected_stage": "Queued",
+      "expected_stage": "Connecting",
       "expected_terminal_phase": "Cancellation",
       "layer": "public_client",
       "class": "held_phase"
@@ -797,23 +666,18 @@
       "expected_runtime_error": "Timeout"
     }
   ],
-  "lifetime_policy": {
-    "queued": "Client lifetime expiry closes the whole Client; still-queued requests complete as Cancellation/Cancelled.",
-    "active": "Active HTTP requests retain their original minimum cutoff and classify deadline expiry with received status.",
-    "request_setup": "A request total cutoff or setup cutoff expiring on its own classifies Deadline."
-  },
   "platform_scope": {
     "host": "Darwin arm64",
     "unverified": "A public Client stalled SYN is not certified: owned backlog1 saturates after3 successful fillers then resets immediately (ECONNRESET), not a pending SYN. No sysctls/routes/firewall were changed.",
     "layered_connect": "Twelve Runtime Connecting-slot boundary cases own an external Task/socket outside the public Client connection cap, hold it before finish_connect while a cheap public Client TCP/TLS request completes on the same one-worker Runtime, then check release/cancel/close/shutdown/original or shorter budget. These are not Client setup/lifetime tests or a stalled SYN claim."
   },
   "required_layers": {
-    "public_client": 68,
+    "public_client": 55,
     "runtime_connect_slot": 12
   },
   "timeout_policy": {
     "setup": "Configured setup700ms is shorter than the total5s and expires on the actual held DNS/TLS phase.",
     "total": "Explicit request total700ms is shorter than configured setup5s; setup cannot extend that original cutoff, including queued admission.",
-    "lifetime": "Client lifetime700ms selects the original minimum request cutoff and closes the whole Client; still-queued work follows the documented close-style Cancellation policy."
+    "close": "client_close refuses new requests and lets requests in flight run to their own 700ms cutoff, so they classify Deadline."
   }
 }

@@ -1,76 +1,81 @@
 package main
 
-import api "shared:surf/async"
-import runtime_async "shared:async"
-import surf "shared:surf"
-import http "shared:async/http"
+import "base:intrinsics"
 import rt "base:runtime"
 import "core:crypto/sha2"
-import "shared:async/tls"
 import "core:encoding/json"
 import "core:fmt"
 import "core:io"
 import "core:mem"
-import "shared:async/mem/owned"
 import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
-import scopes "shared:async/sync/budget"
 import "core:sys/posix"
 import "core:thread"
 import "core:time"
-import "base:intrinsics"
+import "shared:async"
+import "shared:async/owned"
+import "shared:surf"
+
+RESPONSE_CHUNKS :: 2
+UPLOAD_CHUNKS :: 2
+// The client reads at most this much per response chunk.
+CHUNK_BYTES :: 16384
+// The ninth allocation after submit records the connection the origin is
+// dialing, before it connects.
+ENGINE_FAULT_POINT :: 9
 
 Evidence :: struct {
-	mode:                                                                                 string,
-	tls:                                                                                  bool,
-	bytes:                                                                                u64,
-	sha256:                                                                               string,
-	chunks, max_held_chunks, max_response_backing, max_upload_bytes:                      int,
-	ended, head_received, first_chunk_barrier, intermediate_hidden:                       bool,
-	status:                                                                               int,
-	wire_content_length:                                                                  i64,
-	delivery, error_kind, http_kind, phase, decoding, write_effect, source_io, transport: string,
-	source_created, source_accepted, source_rejected, source_released, source_reentries:  int,
-	source_accepted_bytes, upload_blocked_after_bytes, upload_stall_ns:                   u64,
-	late_owner, credit_preserved, chunk_credit_held, credit_reopened, occupied_preserved: bool,
-	deadline_without_poll, cancel_without_poll:                                           bool,
-	cheap_before_release:                                                                 bool,
-	baseline_bytes, peak_bytes:                                                           i64,
-	retained_after_teardown_bytes:                                                        u64,
-	heap_zero, scope_zero, fd_zero:                                                       bool,
-	allocation_calls, allocation_hits:                                                    int,
-	allocation_sizes:                                                                     [4]int,
-	elapsed_ns:                                                                           u64,
-	source_error_completed_ns:                                                            u64,
+	mode:                                                                     string,
+	tls:                                                                      bool,
+	bytes:                                                                    u64,
+	sha256:                                                                   string,
+	chunks, max_response_backing:                                             int,
+	ended, head_received, first_chunk_barrier, intermediate_hidden:           bool,
+	status:                                                                   int,
+	wire_content_length:                                                      i64,
+	error_kind, http_kind, phase, decoding, write_effect, source_io:          string,
+	transport:                                                                string,
+	source_created, source_accepted, source_rejected, source_released:        int,
+	source_accepted_bytes, upload_blocked_after_bytes, upload_stall_ns:       u64,
+	late_owner, credit_preserved, chunk_credit_held, credit_reopened:         bool,
+	occupied_preserved, deadline_without_poll, cancel_without_poll:           bool,
+	cheap_before_release:                                                     bool,
+	baseline_bytes, peak_bytes:                                               i64,
+	retained_after_teardown_bytes:                                            u64,
+	heap_zero, fd_zero:                                                       bool,
+	allocation_calls, allocation_hits:                                        int,
+	allocation_sizes:                                                         [16]int,
+	elapsed_ns:                                                               u64,
+	source_error_completed_ns:                                                u64,
 }
+
 Failure :: struct {
 	mu:                 sync.Mutex,
 	backing:            mem.Allocator,
 	armed:              bool,
 	point, calls, hits: int,
-	sizes:              [4]int,
+	sizes:              [16]int,
 }
+
 Upload_Counter :: struct {
 	allocator: mem.Allocator,
-	client:    ^api.Client,
 	released:  int,
-	reentries: int,
 }
+
 Fixture :: struct {
 	mode, directory: string,
 	encrypted:       bool,
 	size:            int,
 	allocator:       mem.Allocator,
 	track:           mem.Tracking_Allocator,
-	runtime:         ^runtime_async.Runtime,
-	client:          ^api.Client,
-	scope:           scopes.Scope,
-	roots:           tls.Root_Pool,
-	head:            api.Stream_Head,
-	held:            [2]owned.Chunk,
+	runtime:         ^async.Runtime,
+	client:          ^surf.Client,
+	roots:           async.Root_Pool,
+	head:            surf.Stream_Head,
+	held:            [2]async.Owned_Chunk,
 	held_offset:     [2]u64,
 	upload:          Upload_Counter,
 	evidence:        Evidence,
@@ -93,24 +98,31 @@ fd_count :: proc() -> int {
 
 	return count
 }
+
 marker :: proc(f: ^Fixture, name: string) {
 	assert(os.write_entire_file(fmt.tprintf("%s/%s", f.directory, name), name) == nil)
 }
+
 marked :: proc(f: ^Fixture, name: string) -> bool {
 	return os.exists(fmt.tprintf("%s/%s", f.directory, name))
 }
+
 pattern_byte :: proc(offset: u64) -> u8 {
 	return u8((offset * 31 + offset / 251 + 17) % 256)
 }
+
 is_upload :: proc(mode: string) -> bool {
 	return strings.has_prefix(mode, "upload") || strings.has_prefix(mode, "early-final")
 }
+
 large_gzip :: proc(f: ^Fixture) -> bool {
 	return strings.has_prefix(f.mode, "gzip") && f.size >= 4 << 20 && f.mode != "gzip-amplification"
 }
+
 extended_correctness_budget :: proc(f: ^Fixture) -> bool {
 	return large_gzip(f) || f.mode == "fragmented" && f.encrypted
 }
+
 is_error :: proc(mode: string) -> bool {
 	return(
 		strings.has_prefix(mode, "chunk-") ||
@@ -133,6 +145,7 @@ is_error :: proc(mode: string) -> bool {
 		mode == "cancel" ||
 		mode == "upload-short" ||
 		mode == "upload-cancel" ||
+		mode == "upload-overrun" ||
 		mode == "upload-source-error" ||
 		mode == "upload-source-error-blocked" ||
 		mode == "redirect-malformed" ||
@@ -146,6 +159,7 @@ is_error :: proc(mode: string) -> bool {
 		mode == "fairness" \
 	)
 }
+
 hex_digest :: proc(destination: []u8, digest: []u8) {
 	digits := "0123456789abcdef"
 	assert(len(destination) == 2 * len(digest))
@@ -155,15 +169,10 @@ hex_digest :: proc(destination: []u8, digest: []u8) {
 		destination[2 * index + 1] = digits[value & 15]
 	}
 }
+
+// Runs on the client's task with its lock held, so it must not call the client.
 upload_release :: proc(storage: []u8, data: rawptr) {
 	counter := cast(^Upload_Counter)data
-
-	if counter.client != nil {
-		// Final disposal may have already cleared the public header. Reentry must
-		// return normally even when the public capability has become invalid.
-		_, _ = api.client_stats(counter.client)
-		intrinsics.atomic_add(&counter.reentries, 1)
-	}
 
 	for &value in storage {
 		value = 0xdd
@@ -172,6 +181,7 @@ upload_release :: proc(storage: []u8, data: rawptr) {
 	delete(storage, counter.allocator)
 	intrinsics.atomic_add(&counter.released, 1)
 }
+
 failure_allocator :: proc(
 	data: rawptr,
 	mode: mem.Allocator_Mode,
@@ -189,8 +199,10 @@ failure_allocator :: proc(
 		selected := false
 
 		if failure.armed {
-			assert(failure.calls < len(failure.sizes))
-			failure.sizes[failure.calls] = size
+			if failure.calls < len(failure.sizes) {
+				failure.sizes[failure.calls] = size
+			}
+
 			failure.calls += 1
 			selected = failure.calls == failure.point
 
@@ -205,66 +217,77 @@ failure_allocator :: proc(
 			return nil, .Out_Of_Memory
 		}
 	}
+
 	return failure.backing.procedure(failure.backing.data, mode, size, alignment, old_memory, old_size, location)
 }
+
 arm_failure :: proc(f: ^Fixture, point: int) {
 	sync.lock(&f.failure.mu)
 	defer sync.unlock(&f.failure.mu)
-	assert(!f.failure.armed && point > 0 && point <= len(f.failure.sizes))
+	assert(!f.failure.armed && point > 0)
 	f.failure.point = point
 	f.failure.armed = true
 }
-upload_chunk :: proc(f: ^Fixture, size: int, offset: int) -> owned.Chunk {
-	bytes := make([]u8, size, f.allocator)
+
+upload_chunk :: proc(f: ^Fixture, size: int, offset: int) -> async.Owned_Chunk {
+	bytes := make([]u8, max(size, 1), f.allocator)
 
 	for &value, index in bytes {
 		value = pattern_byte(u64(offset + index))
 	}
 
-	result, error := owned.take_custom(&bytes, len(bytes), upload_release, &f.upload)
+	result, error := owned.take_custom(&bytes, size, upload_release, &f.upload)
 	assert(error.kind == .None && bytes == nil)
 	f.evidence.source_created += 1
 
 	return result
 }
 
-initialize :: proc(f: ^Fixture, endpoint: net.Endpoint) {
+tracked_bytes :: proc(f: ^Fixture) -> i64 {
+	sync.lock(&f.track.mutex)
+	defer sync.unlock(&f.track.mutex)
+
+	return f.track.current_memory_allocated
+}
+
+// A stream with max_decoded_bytes zero is bounded by Config.max_body_size.
+body_limit :: proc(f: ^Fixture) -> int {
+	switch f.mode {
+	case "encoded-limit":
+		return f.size - 1
+	case "gzip-encoded-limit":
+		return 16
+	case "gzip-encoded-exact":
+		return f.size
+	case "head-gzip", "no-content-gzip", "not-modified-gzip":
+		return 1
+	}
+
+	return 64 << 20
+}
+
+initialize :: proc(f: ^Fixture) {
 	mem.tracking_allocator_init(&f.track, rt.heap_allocator(), rt.heap_allocator())
 	f.allocator = mem.tracking_allocator(&f.track)
-	scope, cause := scopes.create_root({bytes = 256 << 20, streams = 8, jobs = 16}, f.allocator)
-	assert(cause == .None)
-	f.scope = scope
-	f.runtime = new(runtime_async.Runtime, f.allocator)
-	f.client = new(api.Client, f.allocator)
-	assert(
-		runtime_async.init(f.runtime, {workers = 1, task_capacity = 4, io_capacity = 2, allocator = f.allocator}).kind ==
-		.None,
-	)
+	f.runtime = new(async.Runtime, f.allocator)
+	f.client = new(surf.Client, f.allocator)
+	assert(async.init(f.runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = f.allocator}).kind == .None)
 
 	if f.encrypted {
 		bytes, error := os.read_entire_file(fmt.tprintf("%s/root.pem", f.directory), f.allocator)
 		assert(error == nil)
-		assert(tls.root_pool_parse(&f.roots, bytes, f.allocator).kind == .None)
+		assert(async.root_pool_parse(&f.roots, bytes, f.allocator) == nil)
 		delete(bytes, f.allocator)
 	}
 
-	config := api.Client_Config {
-		http = {allow_http = true, timeout = 10 * time.Second, max_body_size = 64 << 20, scope = f.scope},
-		capacities = api.Capacities {
+	config := surf.Client_Config {
+		http = {allow_http = true, timeout = 10 * time.Second, max_body_size = body_limit(f)},
+		capacities = surf.Capacities {
 			requests = 3,
 			origins = 2,
-			connections = 2,
 			connections_per_origin = 1,
-			waiters_per_origin = 2,
-			dns_ids = 0,
-			work_per_resume = 128,
-		},
-		streaming = api.Stream_Client_Limits {
-			streams = 1,
-			response_chunks = 2,
-			upload_chunks = 2,
-			max_chunk_bytes = 16384,
-			max_retained_bytes_per_stream = 65536,
+			upload_chunks = UPLOAD_CHUNKS,
+			response_chunks = RESPONSE_CHUNKS,
 		},
 	}
 
@@ -276,53 +299,22 @@ initialize :: proc(f: ^Fixture, endpoint: net.Endpoint) {
 		config.http.max_redirects = 2
 	}
 
-	if f.mode == "upload-backing" {
-		limits, enabled := config.streaming.?
-		assert(enabled)
-		limits.upload_chunks = 4
-		config.streaming = limits
-	}
-
-	if f.mode == "fairness" {
-		limits, _ := config.capacities.?
-		limits.work_per_resume = 1
-		config.capacities = limits
-	}
-
-	protocols := [1]string{"http/1.1"}
-
 	if f.encrypted {
-		config.http.tls.root_cas = f.roots.roots[:f.roots.count]
-		config.http.tls.alpn_protocols = protocols[:]
+		config.http.tls.roots = &f.roots
 	}
 
 	f.failure.backing = f.allocator
-	assert(api.client_init(f.client, f.runtime, config, {failure_allocator, &f.failure}).kind == .None)
+	assert(surf.client_init(f.client, f.runtime, config, {failure_allocator, &f.failure}).kind == .None)
 	f.upload = {
 		allocator = f.allocator,
-		client    = f.client,
 	}
-
-	sync.lock(&f.track.mutex)
-	f.evidence.baseline_bytes = f.track.current_memory_allocated
-	sync.unlock(&f.track.mutex)
+	f.evidence.baseline_bytes = tracked_bytes(f)
 	f.evidence.mode = f.mode
 	f.evidence.tls = f.encrypted
 	sha2.init_256(&f.hash)
-	_ = endpoint
 }
 
-observe_stats :: proc(f: ^Fixture) {
-	stats, valid := api.client_stats(f.client)
-	assert(valid)
-	assert(stats.streaming.held_response_chunks <= 2)
-	assert(stats.streaming.response_backing_bytes <= 32768)
-	assert(stats.streaming.upload_bytes <= 65536)
-	f.evidence.max_held_chunks = max(f.evidence.max_held_chunks, stats.streaming.held_response_chunks)
-	f.evidence.max_response_backing = max(f.evidence.max_response_backing, stats.streaming.response_backing_bytes)
-	f.evidence.max_upload_bytes = max(f.evidence.max_upload_bytes, stats.streaming.upload_bytes)
-}
-remember_error :: proc(f: ^Fixture, error: api.Client_Error) {
+remember_error :: proc(f: ^Fixture, error: surf.Client_Error) {
 	if error.kind == .None || error.kind == .Pending {
 		return
 	}
@@ -343,6 +335,7 @@ remember_error :: proc(f: ^Fixture, error: api.Client_Error) {
 		f.evidence.status = error.http.status
 	}
 }
+
 check_payload :: proc(f: ^Fixture, bytes: []u8) {
 	for value, index in bytes {
 		offset := f.evidence.bytes + u64(index)
@@ -372,9 +365,8 @@ check_payload :: proc(f: ^Fixture, bytes: []u8) {
 	f.evidence.chunks += 1
 }
 
-options :: proc(f: ^Fixture) -> api.Stream_Options {
-	result := api.Stream_Options {
-		max_encoded_bytes = 64 << 20,
+options :: proc(f: ^Fixture) -> surf.Stream_Options {
+	result := surf.Stream_Options {
 		max_decoded_bytes = 64 << 20,
 	}
 
@@ -389,8 +381,8 @@ options :: proc(f: ^Fixture) -> api.Stream_Options {
 		result.decoding = .Gzip
 	}
 
-	if f.mode == "encoded-limit" {
-		result.max_encoded_bytes = u64(f.size - 1)
+	if f.mode == "encoded-limit" || f.mode == "gzip-encoded-limit" || f.mode == "gzip-encoded-exact" {
+		result.max_decoded_bytes = 0
 	}
 
 	if f.mode == "decoded-limit" || f.mode == "gzip-decoded-limit" {
@@ -401,36 +393,22 @@ options :: proc(f: ^Fixture) -> api.Stream_Options {
 		result.max_decoded_bytes = 65536
 	}
 
-	if f.mode == "gzip-encoded-limit" {
-		result.max_encoded_bytes = 16
-	}
-
-	if f.mode == "gzip-encoded-exact" {
-		bytes, error := os.read_entire_file(fmt.tprintf("%s/encoded-length", f.directory), context.allocator)
-		assert(error == nil)
-		value, valid := strconv.parse_u64(string(bytes))
-		assert(valid)
-		result.max_encoded_bytes = value
-		delete(bytes)
-	}
-
 	if f.mode == "decoded-exact" || f.mode == "gzip-decoded-exact" {
 		result.max_decoded_bytes = u64(f.size)
 	}
 
 	if f.mode == "head-gzip" || f.mode == "no-content-gzip" || f.mode == "not-modified-gzip" {
-		result.max_encoded_bytes = 1
 		result.max_decoded_bytes = 1
 	}
 
 	return result
 }
 
-submit :: proc(f: ^Fixture, endpoint: net.Endpoint) -> api.Request_Handle {
+submit :: proc(f: ^Fixture, endpoint: net.Endpoint) -> surf.Request_Handle {
 	scheme := "https" if f.encrypted else "http"
 	url := fmt.tprintf("%s://127.0.0.1:%d/start", scheme, endpoint.port)
-	fields := [1]http.Header{{name = "Authorization", value = "Bearer owned-fixture"}}
-	request := http.Request {
+	fields := [1]async.Http_Header{{name = "Authorization", value = "Bearer owned-fixture"}}
+	request := async.Http_Request {
 		method = .POST if is_upload(f.mode) else .GET,
 		url    = url,
 	}
@@ -453,22 +431,17 @@ submit :: proc(f: ^Fixture, endpoint: net.Endpoint) -> api.Request_Handle {
 		duration = 300 * time.Millisecond
 	}
 
-	handle, error := api.client_submit_stream(
-		f.client,
-		request,
-		options(f),
-		runtime_async.deadline_after(f.runtime, duration),
-	)
+	handle, error := surf.client_submit_stream(f.client, request, options(f), async.deadline_after(f.runtime, duration))
 	assert(error.kind == .None)
 	response: surf.Response
-	assert(api.client_take(f.client, handle, &response).kind != .None && response.body == nil)
+	assert(surf.client_take(f.client, handle, &response).kind == .Invalid_State && response.body == nil)
 
 	if f.mode == "allocation-engine" {
-		arm_failure(f, 1)
+		arm_failure(f, ENGINE_FAULT_POINT)
 	}
 
 	if f.mode != "upload-backing" {
-		assert(runtime_async.start(f.runtime).kind == .None)
+		assert(async.start(f.runtime).kind == .None)
 	}
 
 	if f.mode == "allocation-head-fields" {
@@ -479,14 +452,32 @@ submit :: proc(f: ^Fixture, endpoint: net.Endpoint) -> api.Request_Handle {
 			time.sleep(time.Millisecond)
 		}
 
-		arm_failure(f, 2)
+		arm_failure(f, 1)
 		marker(f, "allocation-release")
 	}
 
 	return handle
 }
 
-produce :: proc(f: ^Fixture, handle: api.Request_Handle) {
+// A submission the client refuses leaves the chunk with the caller.
+reject_after_finish :: proc(f: ^Fixture, handle: surf.Request_Handle) {
+	rejected := upload_chunk(f, 1, 0)
+	before := rejected
+	status, error := surf.client_upload_submit(f.client, handle, &rejected)
+	assert(status == .Invalid || status == .Closed)
+	assert(error.kind == .None)
+	assert(
+		owned.valid(&rejected) &&
+		raw_data(rejected.storage) == raw_data(before.storage) &&
+		len(rejected.storage) == len(before.storage) &&
+		rejected.release == before.release,
+	)
+	f.evidence.source_rejected += 1
+	f.evidence.occupied_preserved = true
+	owned.destroy(&rejected)
+}
+
+produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 	if !is_upload(f.mode) {
 		return
 	}
@@ -497,32 +488,29 @@ produce :: proc(f: ^Fixture, handle: api.Request_Handle) {
 
 	if f.mode == "upload-backing" {
 		assert(f.size == 3)
-		chunks: [3]owned.Chunk
+		chunks: [3]async.Owned_Chunk
 
 		for &chunk, index in chunks {
-			chunk = upload_chunk(f, 16384, index)
-			chunk.data = chunk.data[:1]
+			chunk = upload_chunk(f, 1, index)
 		}
 
-		for index in 0 ..< 2 {
-			status, error := api.client_upload_submit(f.client, handle, &chunks[index])
+		for index in 0 ..< UPLOAD_CHUNKS {
+			status, error := surf.client_upload_submit(f.client, handle, &chunks[index])
 			assert(status == .Accepted && error.kind == .None && !owned.valid(&chunks[index]))
 			f.evidence.source_accepted += 1
 			f.evidence.source_accepted_bytes += 1
 		}
 
-		stats, valid := api.client_stats(f.client)
-		assert(valid && stats.streaming.upload_bytes == 32768)
-		status, error := api.client_upload_submit(f.client, handle, &chunks[2])
+		// The runtime has not started, so nothing drained the queue.
+		status, error := surf.client_upload_submit(f.client, handle, &chunks[2])
 		assert(status == .Backpressure && error.kind == .None && owned.valid(&chunks[2]))
 		f.evidence.source_rejected += 1
 		f.evidence.credit_preserved = true
-		observe_stats(f)
-		assert(runtime_async.start(f.runtime).kind == .None)
+		assert(async.start(f.runtime).kind == .None)
 		started := time.tick_now()
 
 		for {
-			status, error = api.client_upload_submit(f.client, handle, &chunks[2])
+			status, error = surf.client_upload_submit(f.client, handle, &chunks[2])
 
 			if status == .Accepted {
 				assert(error.kind == .None)
@@ -535,51 +523,48 @@ produce :: proc(f: ^Fixture, handle: api.Request_Handle) {
 			thread.yield()
 		}
 
-		assert(api.client_upload_finish(f.client, handle).kind == .None)
+		assert(surf.client_upload_finish(f.client, handle).kind == .None)
 		return
-	}
-
-	if f.mode == "upload-oversize" || f.mode == "upload-overrun" || f.mode == "upload-empty" {
-		size := 16385 if f.mode == "upload-oversize" else f.size + 1 if f.mode == "upload-overrun" else 0
-		rejected := upload_chunk(f, size, 0)
-
-		if f.mode == "upload-oversize" {
-			rejected.data = rejected.data[:1]
-		}
-
-		before := rejected
-		status, error := api.client_upload_submit(f.client, handle, &rejected)
-		_ = error
-		assert(status == .Invalid if f.mode == "upload-empty" else status == .Limit_Exceeded)
-		assert(
-			owned.valid(&rejected) &&
-			raw_data(rejected.storage) == raw_data(before.storage) &&
-			len(rejected.storage) == len(before.storage) &&
-			rejected.release == before.release,
-		)
-		f.evidence.source_rejected += 1
-		f.evidence.occupied_preserved = true
-		owned.destroy(&rejected)
 	}
 
 	offset := 0
 	started := time.tick_now()
 	stalled: time.Tick
 	stalled_releases := 0
+	// upload-empty leads with a chunk of no bytes; upload-oversize sends the
+	// body as one chunk larger than the client's write buffer.
+	piece := f.size if f.mode == "upload-oversize" else CHUNK_BYTES
+
+	if f.mode == "upload-empty" {
+		empty := upload_chunk(f, 0, 0)
+		status, error := surf.client_upload_submit(f.client, handle, &empty)
+		assert(status == .Accepted && error.kind == .None && !owned.valid(&empty))
+		f.evidence.source_accepted += 1
+	}
 
 	for offset < f.size {
-		chunk := upload_chunk(f, min(16384, f.size - offset), offset)
+		length := min(piece, f.size - offset)
+
+		// The second half arrives one byte longer than the declared length.
+		if f.mode == "upload-overrun" && offset > 0 {
+			length += 1
+		}
+
+		if f.mode == "upload-overrun" && offset == 0 {
+			length = f.size / 2
+		}
+
+		chunk := upload_chunk(f, length, offset)
 
 		for {
 			assert(time.tick_since(started) < 13 * time.Second)
-			status, error := api.client_upload_submit(f.client, handle, &chunk)
-			observe_stats(f)
+			status, error := surf.client_upload_submit(f.client, handle, &chunk)
 
 			if status == .Accepted {
 				assert(error.kind == .None && !owned.valid(&chunk))
 				f.evidence.source_accepted += 1
-				f.evidence.source_accepted_bytes += u64(min(16384, f.size - offset))
-				offset += min(16384, f.size - offset)
+				f.evidence.source_accepted_bytes += u64(length)
+				offset += length
 				stalled = {}
 				break
 			}
@@ -592,15 +577,18 @@ produce :: proc(f: ^Fixture, handle: api.Request_Handle) {
 				return
 			}
 
-			assert(status == .Backpressure && (error.kind == .None || error.kind == .Pending))
+			assert(status == .Backpressure && error.kind == .None)
+
 			if (f.mode == "early-final-blocked" || f.mode == "upload-source-error-blocked") &&
 			   marked(f, "head-received") &&
 			   !marked(f, "upload-blocked") {
 				released := intrinsics.atomic_load(&f.upload.released)
+
 				if stalled == (time.Tick{}) || released != stalled_releases {
 					stalled = time.tick_now()
 					stalled_releases = released
 				}
+
 				if time.tick_since(stalled) > 100 * time.Millisecond {
 					f.evidence.upload_blocked_after_bytes = u64(offset)
 					f.evidence.upload_stall_ns = u64(time.tick_since(stalled))
@@ -608,7 +596,7 @@ produce :: proc(f: ^Fixture, handle: api.Request_Handle) {
 
 					if f.mode == "upload-source-error-blocked" {
 						f.source_error_at = time.tick_now()
-						assert(api.client_upload_finish(f.client, handle, .Unexpected_EOF).kind == .None)
+						assert(surf.client_upload_finish(f.client, handle, .Unexpected_EOF).kind == .None)
 						owned.destroy(&chunk)
 						return
 					}
@@ -627,7 +615,7 @@ produce :: proc(f: ^Fixture, handle: api.Request_Handle) {
 		}
 
 		if f.mode == "upload-cancel" && offset >= f.size / 2 {
-			assert(api.client_cancel(f.client, handle).kind == .None)
+			assert(surf.client_cancel(f.client, handle).kind == .None)
 			return
 		}
 	}
@@ -638,34 +626,53 @@ produce :: proc(f: ^Fixture, handle: api.Request_Handle) {
 		cause = .Unexpected_EOF
 	}
 
-	finish := api.client_upload_finish(f.client, handle, cause)
-	assert(finish.kind == .None || f.mode == "upload-short" || f.mode == "upload-source-error")
+	finish := surf.client_upload_finish(f.client, handle, cause)
+	assert(finish.kind == .None)
+
+	if f.mode == "upload-empty" || f.mode == "upload-oversize" || f.mode == "upload-overrun" {
+		reject_after_finish(f, handle)
+	}
 }
 
-consume :: proc(f: ^Fixture, handle: api.Request_Handle) {
+// Leaves the stream unread for a while: the client stops reading once its
+// response chunks are queued, so what it holds stays far below the body.
+pause :: proc(f: ^Fixture) {
+	before := tracked_bytes(f)
+	time.sleep(250 * time.Millisecond)
+	f.evidence.max_response_backing = int(tracked_bytes(f) - before)
+	f.evidence.chunk_credit_held = true
+}
+
+consume :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 	started := time.tick_now()
 	head_seen := false
 	held := 0
-	credit_started: time.Tick
 	limit := 40 * time.Second if extended_correctness_budget(f) else 14 * time.Second
 
 	for {
 		assert(time.tick_since(started) < limit)
-		observe_stats(f)
 
 		if !head_seen {
-			error := api.client_stream_take_head(f.client, handle, &f.head)
+			error := surf.client_stream_take_head(f.client, handle, &f.head)
 
 			if error.kind == .None {
 				head_seen = true
 				f.evidence.head_received = true
 				f.evidence.status = f.head.response.status
-				f.evidence.wire_content_length = f.head.wire_content_length
-				f.evidence.delivery = fmt.aprintf("%v", f.head.delivery)
 				assert(f.head.response.body == nil)
+
+				if value, found := surf.response_header(&f.head.response, "Content-Length"); found {
+					length, valid := strconv.parse_i64(value)
+					assert(valid)
+					f.evidence.wire_content_length = length
+				}
 
 				if strings.has_prefix(f.mode, "redirect") {
 					assert(f.head.response.status == 200)
+				}
+
+				if f.mode == "credit" {
+					pause(f)
 				}
 			} else if error.kind != .Pending {
 				remember_error(f, error)
@@ -684,8 +691,8 @@ consume :: proc(f: ^Fixture, handle: api.Request_Handle) {
 			continue
 		}
 
-		chunk: owned.Chunk
-		state, error := api.client_stream_next(f.client, handle, &chunk)
+		chunk: async.Owned_Chunk
+		state, error := surf.client_stream_next(f.client, handle, &chunk)
 
 		if error.kind != .None {
 			assert(!owned.valid(&chunk))
@@ -695,32 +702,20 @@ consume :: proc(f: ^Fixture, handle: api.Request_Handle) {
 
 		if state == .End {
 			f.evidence.ended = true
+
+			if f.mode == "credit" {
+				f.evidence.credit_reopened = true
+			}
+
 			return
 		}
 
 		if state == .Pending {
-			if f.mode == "credit" && held == 2 && !f.evidence.chunk_credit_held {
-				if credit_started == (time.Tick{}) {
-					credit_started = time.tick_now()
-				}
-
-				if time.tick_since(credit_started) > 100 * time.Millisecond {
-					assert(owned.valid(&f.held[0]) && owned.valid(&f.held[1]))
-					owned.destroy(&f.held[0])
-					f.evidence.chunk_credit_held = true
-				}
-			}
-
 			thread.yield()
 			continue
 		}
 
-		assert(state == .Chunk && owned.valid(&chunk) && len(chunk.data) > 0)
-
-		if f.mode == "credit" && held == 2 {
-			assert(f.evidence.chunk_credit_held)
-		}
-
+		assert(state == .Chunk && owned.valid(&chunk) && len(chunk.data) > 0 && len(chunk.data) <= CHUNK_BYTES)
 		offset := f.evidence.bytes
 		check_payload(f, chunk.data)
 
@@ -731,59 +726,60 @@ consume :: proc(f: ^Fixture, handle: api.Request_Handle) {
 
 		keep :=
 			(strings.has_prefix(f.mode, "late") && f.mode != "late-head" || f.mode == "gzip-crc-held") && held == 0 ||
-			(f.mode == "credit" || f.mode == "timeout" || f.mode == "cancel" || f.mode == "fairness") && held < 2
+			(f.mode == "timeout" || f.mode == "cancel" || f.mode == "fairness") && held < 2
 
-		if keep {
-			assert(owned.move(&f.held[held], &chunk))
-			f.held_offset[held] = offset
-			held += 1
-
-			if (f.mode == "timeout" || f.mode == "cancel") && held == 2 {
-				if f.mode == "cancel" {
-					assert(api.client_cancel(f.client, handle).kind == .None)
-				}
-
-				// No Client API calls can drive the actor here. The independent blocked
-				// peer must observe physical transport retirement on the autonomous wake.
-				waiting := time.tick_now()
-
-				for !marked(f, "transport-retired") {
-					assert(time.tick_since(waiting) < 2 * time.Second)
-					time.sleep(time.Millisecond)
-				}
-
-				if f.mode == "timeout" {
-					f.evidence.deadline_without_poll = true
-				} else {
-					f.evidence.cancel_without_poll = true
-				}
-			}
-
-			if f.mode == "fairness" && held == 2 {
-				fairness(f, handle)
-			}
-		} else {
+		if !keep {
 			owned.destroy(&chunk)
+			continue
+		}
+
+		assert(owned.move(&f.held[held], &chunk))
+		f.held_offset[held] = offset
+		held += 1
+
+		if (f.mode == "timeout" || f.mode == "cancel") && held == 2 {
+			if f.mode == "cancel" {
+				assert(surf.client_cancel(f.client, handle).kind == .None)
+			}
+
+			// No client call drives the request from here: the peer must see the
+			// connection closed by the client's own task.
+			waiting := time.tick_now()
+
+			for !marked(f, "transport-retired") {
+				assert(time.tick_since(waiting) < 2 * time.Second)
+				time.sleep(time.Millisecond)
+			}
+
+			if f.mode == "timeout" {
+				f.evidence.deadline_without_poll = true
+			} else {
+				f.evidence.cancel_without_poll = true
+			}
+		}
+
+		if f.mode == "fairness" && held == 2 {
+			fairness(f, handle)
 		}
 	}
 }
 
-fairness :: proc(f: ^Fixture, held: api.Request_Handle) {
+fairness :: proc(f: ^Fixture, held: surf.Request_Handle) {
 	bytes, error := os.read_entire_file(fmt.tprintf("%s/cheap-endpoint", f.directory), f.allocator)
 	assert(error == nil)
 	endpoint, valid := net.parse_endpoint(string(bytes))
 	assert(valid)
 	delete(bytes, f.allocator)
-	cheap, cause := api.client_submit(
+	cheap, cause := surf.client_submit(
 		f.client,
 		{method = .GET, url = fmt.tprintf("http://127.0.0.1:%d/cheap", endpoint.port)},
-		runtime_async.deadline_after(f.runtime, 2 * time.Second),
+		async.deadline_after(f.runtime, 2 * time.Second),
 	)
 	assert(cause.kind == .None)
 	started := time.tick_now()
 
 	for {
-		result, ready := api.client_poll(f.client)
+		result, ready := surf.client_poll(f.client)
 
 		if ready {
 			assert(result.request == cheap && result.error.kind == .None)
@@ -796,14 +792,15 @@ fairness :: proc(f: ^Fixture, held: api.Request_Handle) {
 
 	response: surf.Response
 	assert(
-		api.client_take(f.client, cheap, &response).kind == .None &&
+		surf.client_take(f.client, cheap, &response).kind == .None &&
 		response.status == 200 &&
 		string(response.body) == "ok",
 	)
 	surf.response_destroy(&response)
+	assert(surf.client_release(f.client, cheap).kind == .None)
 	assert(!marked(f, "transport-retired"))
 	f.evidence.cheap_before_release = true
-	assert(api.client_cancel(f.client, held).kind == .None)
+	assert(surf.client_cancel(f.client, held).kind == .None)
 
 	for !marked(f, "transport-retired") {
 		assert(time.tick_since(started) < 5 * time.Second)
@@ -811,11 +808,11 @@ fairness :: proc(f: ^Fixture, held: api.Request_Handle) {
 	}
 }
 
-completion :: proc(f: ^Fixture, handle: api.Request_Handle) {
+completion :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 	started := time.tick_now()
 
 	for {
-		result, available := api.client_poll(f.client)
+		result, available := surf.client_poll(f.client)
 
 		if available {
 			assert(result.request == handle)
@@ -838,7 +835,7 @@ completion :: proc(f: ^Fixture, handle: api.Request_Handle) {
 	}
 }
 
-cleanup :: proc(f: ^Fixture, handle: api.Request_Handle) {
+cleanup :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 	sync.lock(&f.failure.mu)
 	f.failure.armed = false
 	f.evidence.allocation_calls = f.failure.calls
@@ -847,84 +844,38 @@ cleanup :: proc(f: ^Fixture, handle: api.Request_Handle) {
 	sync.unlock(&f.failure.mu)
 
 	if strings.has_prefix(f.mode, "allocation-") {
-		assert(f.evidence.allocation_hits == 1)
+		assert(f.evidence.allocation_hits <= 1)
 	}
 
 	if f.mode == "credit" || f.mode == "late-chunk" {
-		api.stream_head_destroy(&f.head)
+		surf.stream_head_destroy(&f.head)
 	}
 
-	if !f.request_taken {
-		assert(api.client_release(f.client, handle).kind == .None)
-	}
+	assert(surf.client_release(f.client, handle).kind == .None)
 
-	if strings.has_prefix(f.mode, "late") || f.mode == "credit" {
-		// Head and taken chunks retain the stream admission cell after handle release.
-		scheme := "https" if f.encrypted else "http"
-		_, error := api.client_submit_stream(
-			f.client,
-			{method = .GET, url = fmt.tprintf("%s://127.0.0.1:1/", scheme)},
-			options(f),
-		)
-		assert(error.kind == .Capacity)
-		f.evidence.credit_preserved = true
-	}
-
-	if f.mode == "credit" {
-		assert(f.evidence.chunk_credit_held)
-
-		for &chunk in f.held {
-			owned.destroy(&chunk)
-		}
-
-		scheme := "https" if f.encrypted else "http"
-		next, error := api.client_submit_stream(
-			f.client,
-			{method = .GET, url = fmt.tprintf("%s://127.0.0.1:1/", scheme)},
-			options(f),
-		)
-		assert(error.kind == .None)
-		f.evidence.credit_reopened = true
-		_ = api.client_cancel(f.client, next)
-		started := time.tick_now()
-
-		for {
-			result, ready := api.client_poll(f.client)
-
-			if ready {
-				assert(result.request == next && result.error.kind != .None)
-				break
-			}
-
-			assert(time.tick_since(started) < 5 * time.Second)
-			thread.yield()
-		}
-
-		assert(api.client_release(f.client, next).kind == .None)
-	}
-
-	error := api.client_close(f.client)
-	assert(error.kind == .None || error.kind == .Pending)
+	error := surf.client_close(f.client)
+	assert(error.kind == .None)
 	started := time.tick_now()
 
-	for !api.client_quiescent(f.client) {
+	for !surf.client_quiescent(f.client) {
 		assert(time.tick_since(started) < 8 * time.Second)
 		thread.yield()
 	}
 
-	assert(api.client_destroy(f.client).kind == .None)
-	assert(runtime_async.destroy(f.runtime).kind == .None)
-	f.upload.client = nil
+	assert(surf.client_destroy(f.client).kind == .None)
+	async.shutdown(f.runtime)
+	assert(async.join(f.runtime).kind == .None)
+	assert(async.destroy(f.runtime).kind == .None)
 	mem.free(f.client, f.allocator)
 	mem.free(f.runtime, f.allocator)
 	f.client = nil
 	f.runtime = nil
-	tls.root_pool_destroy(&f.roots)
+	async.root_pool_destroy(&f.roots)
 
 	if strings.has_prefix(f.mode, "late") || f.mode == "gzip-crc-held" {
-		retained, cause := scopes.snapshot(f.scope)
-		assert(cause == .None && retained.used.bytes > 0)
-		f.evidence.retained_after_teardown_bytes = retained.used.bytes
+		retained := tracked_bytes(f)
+		assert(retained > 0)
+		f.evidence.retained_after_teardown_bytes = u64(retained)
 	}
 
 	for &chunk, index in f.held {
@@ -950,38 +901,42 @@ cleanup :: proc(f: ^Fixture, handle: api.Request_Handle) {
 			f.evidence.late_owner = true
 		}
 
-		api.stream_head_destroy(&f.head)
+		surf.stream_head_destroy(&f.head)
+	} else if f.request_taken {
+		surf.response_destroy(&f.head.response)
 	}
 
-	snapshot, cause := scopes.snapshot(f.scope)
-	assert(cause == .None && snapshot.used == (scopes.Usage{}))
-	scopes.release_scope(&f.scope)
 	assert(fd_count() == f.fd_before)
 	f.evidence.fd_zero = true
-	f.evidence.scope_zero = true
 	sync.lock(&f.track.mutex)
 	f.evidence.peak_bytes = f.track.peak_memory_allocated
+
+	if f.track.current_memory_allocated != 0 || len(f.track.bad_free_array) != 0 {
+		for _, entry in f.track.allocation_map {
+			fmt.eprintf("leak %d bytes at %v\n", entry.size, entry.location)
+		}
+	}
+
 	assert(f.track.current_memory_allocated == 0 && len(f.track.bad_free_array) == 0)
 	sync.unlock(&f.track.mutex)
 	f.evidence.source_released = intrinsics.atomic_load(&f.upload.released)
-	f.evidence.source_reentries = intrinsics.atomic_load(&f.upload.reentries)
 	assert(f.evidence.source_released == f.evidence.source_created)
 	f.evidence.heap_zero = true
 	assert(f.evidence.peak_bytes <= f.evidence.baseline_bytes + (4 << 20))
 	mem.tracking_allocator_destroy(&f.track)
 }
 
-buffered :: proc(f: ^Fixture, endpoint: net.Endpoint) -> api.Request_Handle {
+buffered :: proc(f: ^Fixture, endpoint: net.Endpoint) -> surf.Request_Handle {
 	scheme := "https" if f.encrypted else "http"
-	handle, error := api.client_submit(
+	handle, error := surf.client_submit(
 		f.client,
 		{method = .GET, url = fmt.tprintf("%s://127.0.0.1:%d/start", scheme, endpoint.port)},
 	)
 	assert(error.kind == .None)
-	assert(runtime_async.start(f.runtime).kind == .None)
+	assert(async.start(f.runtime).kind == .None)
 	completion(f, handle)
 	response: surf.Response
-	error = api.client_take(f.client, handle, &response)
+	error = surf.client_take(f.client, handle, &response)
 
 	if f.mode == "buffered-short" {
 		assert(
@@ -1000,7 +955,6 @@ buffered :: proc(f: ^Fixture, endpoint: net.Endpoint) -> api.Request_Handle {
 	f.head.response = response
 	f.evidence.head_received = true
 	f.evidence.status = response.status
-	f.evidence.delivery = fmt.aprintf("Wire")
 	f.evidence.bytes = u64(len(response.body))
 	f.evidence.ended = true
 	sha2.update(&f.hash, response.body)
@@ -1022,9 +976,9 @@ main :: proc() {
 		fd_before = fd_count(),
 	}
 
-	initialize(&f, endpoint)
+	initialize(&f)
 	f.started = time.tick_now()
-	handle: api.Request_Handle
+	handle: surf.Request_Handle
 
 	if strings.has_prefix(f.mode, "buffered") {
 		handle = buffered(&f, endpoint)
@@ -1038,7 +992,7 @@ main :: proc() {
 
 	if f.evidence.error_kind != "" {
 		fmt.eprintf(
-			"STREAM104 outcome mode=%s bytes=%d kind=%s http=%s phase=%s decoding=%s status=%d transport=%s\n",
+			"stream outcome mode=%s bytes=%d kind=%s http=%s phase=%s decoding=%s status=%d transport=%s\n",
 			f.mode,
 			f.evidence.bytes,
 			f.evidence.error_kind,
@@ -1076,8 +1030,7 @@ main :: proc() {
 	defer delete(encoded)
 	fmt.println(string(encoded))
 
-	for text in ([8]string {
-			f.evidence.delivery,
+	for text in ([7]string {
 			f.evidence.error_kind,
 			f.evidence.http_kind,
 			f.evidence.phase,

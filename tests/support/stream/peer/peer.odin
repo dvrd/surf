@@ -290,7 +290,7 @@ bit_counts :: proc(h: ^Huffman, count: int, max_bits: i32) -> []i32 {
 		}
 		l.needed -= 1
 		if l.needed == 0 {
-			if l.level == max_bits {
+			if l.level == limit {
 				break
 			}
 			levels[int(l.level) + 1].next_pair_freq = prev_freq + l.last_freq
@@ -2489,7 +2489,7 @@ upload :: proc(f: ^Fixture, link: ^Link, rd: ^Reader, head: Request) {
 	f.upload_bytes = n
 	f.upload_sha_n = finish_sha(&ctx, f.upload_sha[:])
 	f.upload_complete = !bad && n == head.length
-	if f.mode == "upload-short" || f.mode == "upload-cancel" || f.mode == "upload-source-error" {
+	if f.mode == "upload-short" || f.mode == "upload-cancel" || f.mode == "upload-source-error" || f.mode == "upload-overrun" {
 		require(bad, "abandoned upload completed")
 		return
 	}
@@ -2799,9 +2799,8 @@ emit_line :: proc(text: string) {
 	if _, err := os.write(os.stdout, nl[:]); err != nil {
 		fail("stdout")
 	}
-	if os.flush(os.stdout) != nil {
-		fail("stdout")
-	}
+	// os.write is unbuffered. flush is fsync, which a pipe rejects on Darwin.
+	_ = os.flush(os.stdout)
 }
 
 emit_json :: proc(f: ^Fixture) {
@@ -2979,16 +2978,13 @@ main :: proc() {
 		emit_json(&f)
 		return
 	}
-	link := accept_link(&f, f.listener, f.encrypted)
-	defer close_link(&link)
 	if f.mode == "allocation-engine" {
-		one: [1]u8
-		if read_one(&link, one[:]) != 0 {
-			fail("failed engine emitted HTTP bytes")
-		}
+		await_quiet(f.listener, time.Second, "failed engine connected", "engine observation")
 		emit_json(&f)
 		return
 	}
+	link := accept_link(&f, f.listener, f.encrypted)
+	defer close_link(&link)
 	storage: [dynamic]u8
 	defer delete(storage)
 	rd, head := take(&f, &link, &storage)

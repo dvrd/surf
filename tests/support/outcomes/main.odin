@@ -1,7 +1,7 @@
 package main
 
-import surf "shared:surf"
-import "shared:async/tls"
+import "shared:async"
+import "shared:surf"
 import "core:fmt"
 import "core:os"
 import "core:net"
@@ -88,7 +88,7 @@ main :: proc() {
 	fmt.printf("REFUSED kind=%v phase=%v effect=%v status=%d provider=%d network=%v transport=%v\n",
 		curl_refused.error.kind, curl_refused.error.phase, curl_refused.error.write_effect,
 		curl_refused.status, curl_refused.error.provider_code, curl_refused.error.network,
-		curl_refused.error.transport.kind)
+		curl_refused.error.transport)
 	os.flush(os.stdout)
 	assert((curl_refused.error.phase == .Connect || curl_refused.error.phase == .Deadline) &&
 		curl_refused.error.write_effect == .Not_Sent)
@@ -98,12 +98,12 @@ main :: proc() {
 	_, status_result := surf.buffered_http_execute("POST", status_url, nil, nil, "", allow_http = true)
 	assert(status_result.transport_ok && !status_result.ok && status_result.status == 503 && status_result.error.kind == .None)
 
-	pool := new(tls.Root_Pool)
+	pool := new(async.Root_Pool)
 	defer free(pool)
-	defer tls.root_pool_destroy(pool)
-	assert(tls.root_pool_load_file(pool, wrong_root).kind == .None)
+	defer async.root_pool_destroy(pool)
+	assert(async.root_pool_load_file(pool, wrong_root) == nil)
 
-	tls_config := surf.Config{tls = {root_cas = pool.roots[:pool.count], handshake_timeout = time.Second}}
+	tls_config := surf.Config{tls = {roots = pool}, setup_timeout = time.Second}
 	tls_response, tls_error := surf.execute({method = .POST, url = tls_url}, tls_config)
 	surf.response_destroy(&tls_response)
 	assert(tls_error.kind == .TLS_Failed && tls_error.phase == .TLS && tls_error.write_effect == .Not_Sent)

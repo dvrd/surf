@@ -55,6 +55,7 @@ mu: sync.Mutex
 events: [8]Event
 event_n: int
 cheap_before_release: bool
+redirect_reused: bool
 
 dns_ids: [MAX_DNS]u16
 dns_names: [MAX_DNS][64]u8
@@ -317,7 +318,7 @@ held_loop :: proc() {
 	}
 	for id in 1 ..= limit {
 		fd := accept_one(held_fd, "held accept")
-		if !serve_held(fd, id) {
+		if !serve_held(fd, id) || redirect_reused {
 			return
 		}
 	}
@@ -379,10 +380,21 @@ serve_held :: proc(fd: net.TCP_Socket, id: int) -> bool {
 			}
 			ev.response_bytes = len(text)
 			push_event(&ev)
-			if !quiet_close(fd, &conn, secure) {
-				fail("old redirect stream replay or no close")
+			// The client may send the redirected request on this kept-alive
+			// connection or close it and dial again.
+			next := read_request(fd, &conn, secure)
+			if !next.ok {
+				return true
 			}
-			return true
+			redirect_reused = true
+			ev = Event{id = 2, tls = ev.tls, alpn = ev.alpn, alpn_n = ev.alpn_n}
+			ev.method_n = copy(ev.method[:], next.method[:next.method_n])
+			ev.path_n = copy(ev.path[:], next.path[:next.path_n])
+			ev.content_length = next.length
+			ev.request_bytes = next.request_bytes
+			if string(ev.path[:ev.path_n]) != "/redirected" {
+				fail("redirect replayed the old request")
+			}
 		}
 		if phase == "body" || phase == "queued" {
 			text := "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nhe"

@@ -1,7 +1,7 @@
 package main
 
-import surf "shared:surf"
-import "shared:async/tls"
+import "shared:async"
+import "shared:surf"
 import "core:fmt"
 import "core:mem"
 import "core:net"
@@ -33,12 +33,12 @@ main :: proc() {
 	mode := os.args[1]
 	port, parsed := strconv.parse_int(os.args[2])
 	assert(parsed)
-	roots := new(tls.Root_Pool)
+	roots := new(async.Root_Pool)
 	defer free(roots)
-	defer tls.root_pool_destroy(roots)
+	defer async.root_pool_destroy(roots)
 
 	if strings.has_prefix(mode, "tls") {
-		assert(tls.root_pool_load_file(roots, os.args[3]).kind == .None)
+		assert(async.root_pool_load_file(roots, os.args[3]) == nil)
 	}
 
 	assert(nbio.acquire_thread_event_loop() == nil)
@@ -56,9 +56,7 @@ main :: proc() {
 	for iteration in 0 ..< 8 {
 		budget := time.time_add(time.now(), 40 * time.Millisecond)
 
-		if strings.has_prefix(mode, "tls-finished") || strings.has_prefix(mode, "tls-clear") {
-			slow_tls_handshake(mode, port, roots)
-		} else if mode == "dns" || mode == "dns-tiny" {
+		if mode == "dns" || mode == "dns-tiny" {
 			if mode == "dns-tiny" {
 				budget = time.time_add(time.now(), 1)
 			}
@@ -111,7 +109,7 @@ main :: proc() {
 		} else {
 			config := surf.Config {
 				timeout = 40 * time.Millisecond,
-				tls = {root_cas = roots.roots[:roots.count], handshake_timeout = time.Second},
+				tls = {roots = roots},
 			}
 
 			if mode == "tls-setup" {
@@ -119,9 +117,11 @@ main :: proc() {
 				config.setup_timeout = 40 * time.Millisecond
 			}
 
-			if mode == "tls-handshake" {
-				config.timeout = time.Second
-				config.tls.handshake_timeout = 40 * time.Millisecond
+			// The peer finishes the handshake and then stays silent, so the
+			// request is written and only the total deadline can end it.
+			if mode == "tls-complete" {
+				config.timeout = 150 * time.Millisecond
+				config.setup_timeout = 40 * time.Millisecond
 			}
 
 			if mode == "tls-dns" {
@@ -151,8 +151,16 @@ main :: proc() {
 				url = fmt.aprintf("https://fixture.invalid:%d/", port)
 			}
 
+			attempt := time.now()
 			response, error := surf.execute({method = .POST, url = url}, config)
-			assert(error.phase == .Deadline && error.write_effect == .Not_Sent)
+
+			if mode == "tls-complete" {
+				assert(error.phase == .Deadline && error.write_effect == .Unknown)
+				assert(time.diff(attempt, time.now()) >= 120 * time.Millisecond)
+			} else {
+				assert(error.phase == .Deadline && error.write_effect == .Not_Sent)
+			}
+
 			surf.response_destroy(&response)
 			delete(url)
 		}
@@ -180,97 +188,4 @@ main :: proc() {
 		"fd_delta",
 		count_fds() - before,
 	)
-}
-
-Slow_TLS_Transport :: struct {
-	stream:  net.Connection,
-	mode:    string,
-	delayed: bool,
-}
-slow_tls_read :: proc(data: rawptr, dst: []u8) -> (int, net.Connection_Error) {
-	s := cast(^Slow_TLS_Transport)data
-
-	return s.stream.read(s.stream.data, dst)
-}
-slow_tls_write :: proc(data: rawptr, src: []u8) -> (int, net.Connection_Error) {
-	s := cast(^Slow_TLS_Transport)data
-	n, error := s.stream.write(s.stream.data, src)
-
-	if strings.has_prefix(s.mode, "tls-finished") && !s.delayed && n > 0 && src[0] == 23 {
-		s.delayed = true
-		time.sleep(120 * time.Millisecond)
-	}
-
-	return n, error
-}
-slow_tls_close :: proc(data: rawptr) -> net.Connection_Error {
-	s := cast(^Slow_TLS_Transport)data
-
-	return s.stream.close(s.stream.data)
-}
-slow_tls_read_deadline :: proc(data: rawptr, deadline: time.Time) -> net.Connection_Error {
-	s := cast(^Slow_TLS_Transport)data
-	error := s.stream.set_read_deadline(s.stream.data, deadline)
-
-	if strings.has_prefix(s.mode, "tls-clear") && !s.delayed && deadline == (time.Time{}) {
-		s.delayed = true
-		time.sleep(120 * time.Millisecond)
-	}
-
-	return error
-}
-slow_tls_write_deadline :: proc(data: rawptr, deadline: time.Time) -> net.Connection_Error {
-	s := cast(^Slow_TLS_Transport)data
-
-	return s.stream.set_write_deadline(s.stream.data, deadline)
-}
-slow_tls_handshake :: proc(mode: string, port: int, roots: ^tls.Root_Pool) {
-	socket, error := net.dial_tcp_until(
-		{address = net.IP4_Address{127, 0, 0, 1}, port = port},
-		time.time_add(time.now(), time.Second),
-	)
-	assert(error == nil)
-	tcp := net.TCP_Connection {
-		socket = socket,
-	}
-
-	adapter := Slow_TLS_Transport {
-		stream = net.tcp_connection(&tcp),
-		mode   = mode,
-	}
-
-	conn := new(tls.Conn)
-	defer free(conn)
-	settings := tls.Config {
-		server_name = "localhost",
-		root_cas    = roots.roots[:roots.count],
-	}
-
-	budget := 100 * time.Millisecond
-
-	if strings.has_suffix(mode, "-configured") {
-		settings.handshake_timeout = 100 * time.Millisecond
-		budget = time.Second
-	}
-
-	assert(
-		tls.client(
-			conn,
-			{
-				data = &adapter,
-				read = slow_tls_read,
-				write = slow_tls_write,
-				close = slow_tls_close,
-				set_read_deadline = slow_tls_read_deadline,
-				set_write_deadline = slow_tls_write_deadline,
-			},
-			settings,
-		) ==
-		.None,
-	)
-	defer tls.abort(conn)
-	failure := tls.handshake_until(conn, time.time_add(time.now(), budget))
-	assert(adapter.delayed)
-	assert(failure.kind == .Deadline_Failed && failure.transport.kind == .Timeout)
-	assert(!conn.handshake_complete && conn.phase == .Failed)
 }

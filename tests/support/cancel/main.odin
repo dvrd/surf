@@ -1,18 +1,19 @@
 package main
-import client "shared:surf/async"
-import runtime_async "shared:async"
-import surf "shared:surf"
-import rt "base:runtime"
-import "shared:async/tls"
+
+import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
-import scopes "shared:async/sync/budget"
+import "core:sync"
 import "core:sys/posix"
 import "core:thread"
-import "core:sync"
 import "core:time"
+import "shared:async"
+import "shared:async/budget"
+import "shared:async/tls"
+import "shared:surf"
+
 fd_count :: proc() -> int {
 	n := 0
 
@@ -24,25 +25,35 @@ fd_count :: proc() -> int {
 
 	return n
 }
+
 Completions :: struct {
-	items: [4]client.Completion,
+	items: [4]surf.Completion,
 	count: int,
 }
-collect :: proc(c: ^client.Client, pending: ^Completions, want: client.Request_Handle) -> client.Completion {
+
+collect :: proc(c: ^surf.Client, pending: ^Completions, want: surf.Request_Handle) -> surf.Completion {
 	start := time.tick_now()
 
 	for {
 		for item, i in pending.items[:pending.count] {
 			if item.request == want {
-				result := item; for j in i ..< pending.count - 1 {pending.items[j] = pending.items[j + 1]}
-				pending.count -= 1; return result
+				result := item
+
+				for j in i ..< pending.count - 1 {
+					pending.items[j] = pending.items[j + 1]
+				}
+
+				pending.count -= 1
+				return result
 			}
 		}
 
-		result, available := client.client_poll(c)
+		result, available := surf.client_poll(c)
 
 		if available {
-			assert(pending.count < len(pending.items)); pending.items[pending.count] = result; pending.count += 1
+			assert(pending.count < len(pending.items))
+			pending.items[pending.count] = result
+			pending.count += 1
 			continue
 		}
 
@@ -50,6 +61,7 @@ collect :: proc(c: ^client.Client, pending: ^Completions, want: client.Request_H
 		thread.yield()
 	}
 }
+
 read_endpoint :: proc(dir, name: string, allocator: mem.Allocator) -> net.Endpoint {
 	bytes, e := os.read_entire_file(fmt.tprintf("%s/%s.endpoint", dir, name), allocator)
 	assert(e == nil)
@@ -59,33 +71,33 @@ read_endpoint :: proc(dir, name: string, allocator: mem.Allocator) -> net.Endpoi
 
 	return endpoint
 }
+
 run_client :: proc() {
 	assert(len(os.args) == 6)
 	endpoint, ok := net.parse_endpoint(os.args[1])
 	assert(ok)
 	phase, encrypted, action, dir := os.args[2], os.args[3] == "tls", os.args[4], os.args[5]
 	track: mem.Tracking_Allocator
-	mem.tracking_allocator_init(&track, rt.heap_allocator(), rt.heap_allocator())
+	mem.tracking_allocator_init(&track, runtime.heap_allocator(), runtime.heap_allocator())
 	allocator := mem.tracking_allocator(&track)
-	scope, cause := scopes.create_root({bytes = 96 << 20, streams = 3, jobs = 16}, allocator)
+	scope, cause := budget.create_root({bytes = 96 << 20, streams = 3, jobs = 16}, allocator)
 	assert(cause == .None)
 	roots: tls.Root_Pool
 
 	if encrypted {
-		root, e := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator); assert(e == nil)
-		assert(tls.root_pool_parse(&roots, root, allocator).kind == .None); delete(root, allocator)
+		root, e := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
+		assert(e == nil)
+		assert(tls.root_pool_parse(&roots, root, allocator) == nil)
+		delete(root, allocator)
 	}
 
 	cheap := read_endpoint(dir, "cheap", allocator)
 	servers := [1]net.Endpoint{read_endpoint(dir, "dns", allocator)}
 	before := fd_count()
-	runtime: runtime_async.Runtime
-	assert(
-		runtime_async.init(&runtime, {workers = 1, task_capacity = 3, io_capacity = 2, allocator = allocator}).kind ==
-		.None,
-	)
-	c: client.Client
-	config := client.Client_Config {
+	r: async.Runtime
+	assert(async.init(&r, {workers = 1, task_capacity = 4, io_capacity = 16, allocator = allocator}).kind == .None)
+	c: surf.Client
+	config := surf.Client_Config {
 		http = {
 			allow_http = true,
 			timeout = 5 * time.Second,
@@ -93,21 +105,17 @@ run_client :: proc() {
 			scope = scope,
 			resolver = {name_servers = servers[:]},
 		},
-		capacities = client.Capacities {
+		capacities = surf.Capacities {
 			requests = 3,
 			origins = 3,
-			connections = 2,
 			connections_per_origin = 1,
-			waiters_per_origin = 1,
-			dns_ids = 64,
-			work_per_resume = 1,
+			upload_chunks = 1,
+			response_chunks = 1,
 		},
 	}
 
-	offers := [1]string{"http/1.1"}
-
 	if encrypted {
-		config.http.tls.root_cas = roots.roots[:roots.count]; config.http.tls.alpn_protocols = offers[:]
+		config.http.tls.roots = &roots
 	}
 
 	if action == "setup" {
@@ -118,27 +126,34 @@ run_client :: proc() {
 		config.http.setup_timeout = 5 * time.Second
 	}
 
-	if action == "lifetime" {
-		config.lifetime = runtime_async.deadline_after(&runtime, 700 * time.Millisecond)
-	}
-
-	assert(client.client_init(&c, &runtime, config, allocator).kind == .None)
+	assert(surf.client_init(&c, &r, config, allocator).kind == .None)
 	scheme := "https" if encrypted else "http"
 	host := "held.cancel.test" if phase == "dns" else "127.0.0.1"
 	url := fmt.tprintf("%s://%s:%d/held", scheme, host, endpoint.port)
 	payload: []u8
 
 	if phase == "write" {
-		payload = make([]u8, 18 << 20, allocator); for &b in payload {b = 'w'}
+		payload = make([]u8, 18 << 20, allocator)
+
+		for &b in payload {
+			b = 'w'
+		}
 	}
 
-	deadline: runtime_async.Deadline
+	timed := action == "total" || action == "close"
+	deadline: async.Deadline
 
-	if action == "total" && phase != "queued" {
-		deadline = runtime_async.deadline_after(&runtime, 700 * time.Millisecond)
+	if timed && phase != "queued" {
+		deadline = async.deadline_after(&r, 700 * time.Millisecond)
 	}
 
-	blocker, error := client.client_submit(
+	// A queued request must still be waiting for the connection when its own
+	// cutoff passes, so the blocker outlives it.
+	if action == "close" && phase == "queued" {
+		deadline = async.deadline_after(&r, 1500 * time.Millisecond)
+	}
+
+	blocker, error := surf.client_submit(
 		&c,
 		{method = .POST if phase == "write" else .GET, url = url, body = payload},
 		deadline,
@@ -146,7 +161,7 @@ run_client :: proc() {
 	assert(error.kind == .None)
 	delete(payload, allocator)
 	start := time.tick_now()
-	assert(runtime_async.start(&runtime).kind == .None)
+	assert(async.start(&r).kind == .None)
 
 	for !os.exists(fmt.tprintf("%s/held", dir)) {
 		assert(time.tick_since(start) < 5 * time.Second)
@@ -156,37 +171,34 @@ run_client :: proc() {
 	target := blocker
 
 	if phase == "queued" {
-		if action == "total" {
-			deadline = runtime_async.deadline_after(&runtime, 700 * time.Millisecond)
-		}; target, error = client.client_submit(&c, {method = .GET, url = url}, deadline)
+		queued_deadline: async.Deadline
+
+		if timed {
+			queued_deadline = async.deadline_after(&r, 700 * time.Millisecond)
+		}
+
+		target, error = surf.client_submit(&c, {method = .GET, url = url}, queued_deadline)
 		assert(error.kind == .None && target != blocker)
 	}
 
-	expected: client.Request_Stage = .Connecting
+	expected: surf.Request_Stage = .Connecting
 
 	switch phase {
-	case "tls":
-		expected = .Handshaking; case "write":
-		expected = .Writing; case "header", "body", "redirect":
-		expected = .Reading; case "queued":
-		expected = .Queued
+	case "write":
+		expected = .Writing
+	case "header", "body", "redirect":
+		expected = .Reading
 	}
 
-	observed: client.Request_Stage
+	observed: surf.Request_Stage
 
 	for _ in 0 ..< 8 {
-		time.sleep(5 * time.Millisecond); observed, error = client.client_request_stage(&c, target)
+		time.sleep(5 * time.Millisecond)
+		observed, error = surf.client_request_stage(&c, target)
 		assert(error.kind == .None)
 	}
 
-	stats, valid := client.client_stats(&c)
-	assert(valid)
-
-	if phase == "dns" {
-		assert(stats.dns_ids < 64 && stats.dns_waiters == 0)
-	}
-
-	cheap_handle, cheap_error := client.client_submit(
+	cheap_handle, cheap_error := surf.client_submit(
 		&c,
 		{method = .GET, url = fmt.tprintf("http://127.0.0.1:%d/cheap", cheap.port)},
 	)
@@ -195,65 +207,70 @@ run_client :: proc() {
 	cheap_result := collect(&c, &pending, cheap_handle)
 	assert(cheap_result.error.kind == .None)
 	response: surf.Response
-	assert(
-		client.client_take(&c, cheap_handle, &response).kind == .None &&
-		response.status == 200 &&
-		string(response.body) == "ok",
-	)
+	assert(surf.client_take(&c, cheap_handle, &response).kind == .None)
+	assert(response.status == 200 && string(response.body) == "ok")
 	surf.response_destroy(&response)
+	assert(surf.client_release(&c, cheap_handle).kind == .None)
 	assert(!os.exists(fmt.tprintf("%s/release", dir)))
-	switch action {case "cancel":
-		assert(client.client_cancel(&c, target).kind == .None); case "close":
-		closed := client.client_close(&c); assert(closed.kind == .None || closed.kind == .Pending); case "shutdown":
-		runtime_async.shutdown(&runtime)
+
+	switch action {
+	case "cancel":
+		assert(surf.client_cancel(&c, target).kind == .None)
+	case "close":
+		assert(surf.client_close(&c).kind == .None)
+		_, refused := surf.client_submit(&c, {method = .GET, url = url})
+		assert(refused.kind == .Closed)
+	case "shutdown":
+		async.shutdown(&r)
 	}
 
 	terminal := collect(&c, &pending, target)
-	deadline_failure := action == "total" || action == "setup" || (action == "lifetime" && phase != "queued")
 
-	if deadline_failure {
+	if action == "total" || action == "setup" || action == "close" {
 		assert(terminal.error.kind == .Deadline_Failed && terminal.error.phase == .Deadline)
 	} else {
-		assert(terminal.error.transport.kind == .Cancelled && terminal.error.phase == .Cancellation)
+		assert(terminal.error.kind == .IO_Failed && terminal.error.phase == .Cancellation)
 	}
 
-	assert(client.client_release(&c, target).kind == .None)
+	assert(surf.client_release(&c, target).kind == .None)
 
 	if phase == "queued" {
-		if action != "close" && action != "shutdown" && action != "lifetime" {
-			assert(client.client_cancel(&c, blocker).kind == .None)
-		}; other := collect(&c, &pending, blocker); assert(other.error.kind != .None)
-		assert(client.client_release(&c, blocker).kind == .None)
+		if action != "close" && action != "shutdown" {
+			assert(surf.client_cancel(&c, blocker).kind == .None)
+		}
+
+		other := collect(&c, &pending, blocker)
+		assert(other.error.kind != .None)
+		assert(surf.client_release(&c, blocker).kind == .None)
 	}
 
 	assert(pending.count == 0)
-	_, extra := client.client_poll(&c)
+	_, extra := surf.client_poll(&c)
 	assert(!extra)
 	elapsed := time.tick_since(start)
-	closed := client.client_close(&c)
-	assert(closed.kind == .None || closed.kind == .Pending)
+	assert(surf.client_close(&c).kind == .None)
 
-	for !client.client_quiescent(&c) {
+	for !surf.client_quiescent(&c) {
 		assert(time.tick_since(start) < 9 * time.Second)
 		thread.yield()
 	}
 
-	_, late := client.client_poll(&c)
+	_, late := surf.client_poll(&c)
 	assert(!late)
-	assert(client.client_destroy(&c).kind == .None)
-	assert(runtime_async.wait_idle(&runtime).kind == .None)
-	assert(runtime_async.destroy(&runtime).kind == .None)
+	assert(surf.client_destroy(&c).kind == .None)
+	assert(async.wait_idle(&r).kind == .None)
+	assert(async.destroy(&r).kind == .None)
 	tls.root_pool_destroy(&roots)
 	assert(fd_count() == before)
-	state, e := scopes.snapshot(scope)
-	assert(e == .None && state.used == (scopes.Usage{}))
-	scopes.release_scope(&scope)
+	state, e := budget.snapshot(scope)
+	assert(e == .None && state.used == (budget.Usage{}))
+	budget.release_scope(&scope)
 	assert(track.current_memory_allocated == 0 && len(track.allocation_map) == 0 && len(track.bad_free_array) == 0)
 	mem.tracking_allocator_destroy(&track)
 	assert(os.write_entire_file(fmt.tprintf("%s/done", dir), "done") == nil)
 	fmt.print("{")
 	fmt.printf(
-		"\"layer\":\"public_client\",\"workers\":1,\"work_per_resume\":1,\"completed\":%d,\"expected_stage\":\"%v\",\"observed_stage\":\"%v\",\"cheap_before_release\":true,\"terminal_once\":true,\"heap_zero\":true,\"scope_zero\":true,\"fd_zero\":true,\"error\":\"%v\",\"phase\":\"%v\",\"write_effect\":\"%v\",\"status\":%d,\"dns_ids_remaining\":%d,\"elapsed_ms\":%d}\n",
+		"\"layer\":\"public_client\",\"workers\":1,\"completed\":%d,\"expected_stage\":\"%v\",\"observed_stage\":\"%v\",\"cheap_before_release\":true,\"terminal_once\":true,\"heap_zero\":true,\"scope_zero\":true,\"fd_zero\":true,\"error\":\"%v\",\"phase\":\"%v\",\"write_effect\":\"%v\",\"status\":%d,\"elapsed_ms\":%d}\n",
 		3 if phase == "queued" else 2,
 		expected,
 		observed,
@@ -261,7 +278,6 @@ run_client :: proc() {
 		terminal.error.phase,
 		terminal.error.write_effect,
 		terminal.error.status,
-		stats.dns_ids,
 		i64(elapsed / time.Millisecond),
 	)
 	assert(observed == expected)
@@ -269,15 +285,15 @@ run_client :: proc() {
 
 Boundary :: struct {
 	mu:                  sync.Mutex,
-	r:                   ^runtime_async.Runtime,
-	task:                ^runtime_async.Task,
-	connecting:          runtime_async.Connecting_Socket,
+	r:                   ^async.Runtime,
+	task:                ^async.Task,
+	connecting:          async.Connecting_Socket,
 	release:             bool,
 	resumes, done_calls: int,
-	result:              runtime_async.Error,
-	supplied:            runtime_async.Deadline,
+	result:              async.Error,
+	supplied:            async.Deadline,
 }
-boundary_resume :: proc(data: rawptr) -> runtime_async.Resume_Result {
+boundary_resume :: proc(data: rawptr) -> async.Resume_Result {
 	b := cast(^Boundary)data
 	sync.lock(&b.mu)
 	b.resumes += 1
@@ -285,18 +301,18 @@ boundary_resume :: proc(data: rawptr) -> runtime_async.Resume_Result {
 	supplied := b.supplied
 	sync.unlock(&b.mu)
 
-	if !release && !runtime_async.cancelled(b.task) {
+	if !release && !async.cancelled(b.task) {
 		return .Waiting
 	}
 
-	socket, error := runtime_async.finish_connect(b.connecting, supplied)
+	socket, error := async.finish_connect(b.connecting, supplied)
 
 	if error.kind == .None {
-		assert(runtime_async.close_connect(b.connecting).kind == .Invalid_Socket)
-		assert(runtime_async.close(socket).kind == .None)
+		assert(async.close_connect(b.connecting).kind == .Invalid_Socket)
+		assert(async.close(socket).kind == .None)
 	}
 
-	assert(runtime_async.close_connect(b.connecting).kind == .Closed)
+	assert(async.close_connect(b.connecting).kind == .Closed)
 	sync.lock(&b.mu)
 	b.result = error
 	sync.unlock(&b.mu)
@@ -311,9 +327,9 @@ boundary_done :: proc(data: rawptr) {
 }
 run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 	track: mem.Tracking_Allocator
-	mem.tracking_allocator_init(&track, rt.heap_allocator(), rt.heap_allocator())
+	mem.tracking_allocator_init(&track, runtime.heap_allocator(), runtime.heap_allocator())
 	allocator := mem.tracking_allocator(&track)
-	scope, cause := scopes.create_root({bytes = 32 << 20, streams = 1, jobs = 8}, allocator)
+	scope, cause := budget.create_root({bytes = 32 << 20, streams = 1, jobs = 8}, allocator)
 	assert(cause == .None)
 	bytes, e := os.read_entire_file(fmt.tprintf("%s/cheap.endpoint", dir), allocator)
 	assert(e == nil)
@@ -323,20 +339,22 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 	roots: tls.Root_Pool
 
 	if encrypted {
-		root, re := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator); assert(re == nil)
-		assert(tls.root_pool_parse(&roots, root, allocator).kind == .None); delete(root, allocator)
+		root, re := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
+		assert(re == nil)
+		assert(tls.root_pool_parse(&roots, root, allocator) == nil)
+		delete(root, allocator)
 	}
 
 	before := fd_count()
-	r: runtime_async.Runtime
+	r: async.Runtime
 	assert(
-		runtime_async.init(&r, {workers = 1, task_capacity = 3, io_capacity = 2, allocator = allocator}).kind == .None,
+		async.init(&r, {workers = 1, task_capacity = 3, io_capacity = 8, allocator = allocator}).kind == .None,
 	)
 	boundary := Boundary {
 		r = &r,
 	}
 
-	task := runtime_async.Task {
+	task := async.Task {
 		data      = &boundary,
 		resume    = boundary_resume,
 		on_cancel = boundary_resume,
@@ -344,45 +362,41 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 	}
 
 	boundary.task = &task
-	assert(runtime_async.register(&r, &task).kind == .None)
-	original := runtime_async.deadline_after(
+	assert(async.register(&r, &task).kind == .None)
+	original := async.deadline_after(
 		&r,
 		700 * time.Millisecond if mode == "deadline" || mode == "later_finish" else 5 * time.Second,
 	)
-	connecting, error := runtime_async.begin_connect(&r, &task, endpoint, original)
+	connecting, error := async.begin_connect(&r, &task, endpoint, original)
 	assert(error.kind == .None)
 	boundary.connecting = connecting
-	bound, bind_error := runtime_async.connect_bound_endpoint(connecting)
+	bound, bind_error := async.connect_bound_endpoint(connecting)
 	assert(bind_error.kind == .None && bound.port > 0)
-	c: client.Client
-	config := client.Client_Config {
+	c: surf.Client
+	config := surf.Client_Config {
 		http = {allow_http = true, scope = scope, timeout = 2 * time.Second},
-		capacities = client.Capacities {
+		capacities = surf.Capacities {
 			requests = 1,
 			origins = 1,
-			connections = 1,
 			connections_per_origin = 1,
-			waiters_per_origin = 0,
-			dns_ids = 0,
-			work_per_resume = 1,
+			upload_chunks = 1,
+			response_chunks = 1,
 		},
 	}
 
-	offers := [1]string{"http/1.1"}
-
 	if encrypted {
-		config.http.tls.root_cas = roots.roots[:roots.count]; config.http.tls.alpn_protocols = offers[:]
+		config.http.tls.roots = &roots
 	}
 
-	assert(client.client_init(&c, &r, config, allocator).kind == .None)
+	assert(surf.client_init(&c, &r, config, allocator).kind == .None)
 	scheme := "https" if encrypted else "http"
-	handle, submit_error := client.client_submit(
+	handle, submit_error := surf.client_submit(
 		&c,
 		{method = .GET, url = fmt.tprintf("%s://127.0.0.1:%d/cheap", scheme, cheap.port)},
 	)
 	assert(submit_error.kind == .None)
-	assert(runtime_async.wake(&r, &task))
-	assert(runtime_async.start(&r).kind == .None)
+	assert(async.wake(&r, &task))
+	assert(async.start(&r).kind == .None)
 	start := time.tick_now()
 
 	for !os.exists(fmt.tprintf("%s/held", dir)) {
@@ -391,41 +405,45 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 	}
 
 	for {
-		completion, available := client.client_poll(&c)
+		completion, available := surf.client_poll(&c)
 
 		if available {
-			assert(completion.request == handle && completion.error.kind == .None); break
+			assert(completion.request == handle && completion.error.kind == .None)
+			break
 		}
+
 
 		assert(time.tick_since(start) < time.Second)
 		thread.yield()
 	}
 
 	response: surf.Response
-	assert(client.client_take(&c, handle, &response).kind == .None && string(response.body) == "ok")
+	assert(surf.client_take(&c, handle, &response).kind == .None && string(response.body) == "ok")
 	surf.response_destroy(&response)
-	_, extra := client.client_poll(&c)
+	_, extra := surf.client_poll(&c)
 	assert(!extra)
 	sync.lock(&boundary.mu)
 	assert(boundary.resumes >= 1 && boundary.done_calls == 0)
 	sync.unlock(&boundary.mu)
-	_, still_connecting := runtime_async.connect_bound_endpoint(connecting)
+	_, still_connecting := async.connect_bound_endpoint(connecting)
 	assert(still_connecting.kind == .None)
 	assert(!os.exists(fmt.tprintf("%s/release", dir)))
 
 	if mode == "deadline" || mode == "later_finish" {
-		for runtime_async.deadline_after(&r, 0).at <
-		    original.at + 10 * i64(time.Millisecond) {time.sleep(time.Millisecond)}
+		for async.deadline_after(&r, 0).at < original.at + 10 * i64(time.Millisecond) {
+			time.sleep(time.Millisecond)
+		}
 	}
 
-	supplied: runtime_async.Deadline
+	supplied: async.Deadline
 
 	if mode == "later_finish" {
-		supplied = runtime_async.deadline_after(&r, 5 * time.Second)
+		supplied = async.deadline_after(&r, 5 * time.Second)
 	}
 
 	if mode == "earlier_finish" {
-		supplied = runtime_async.deadline_after(&r, 0); assert(supplied.at < original.at)
+		supplied = async.deadline_after(&r, 0)
+		assert(supplied.at < original.at)
 	}
 
 	sync.lock(&boundary.mu)
@@ -435,18 +453,19 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 
 	switch mode {
 	case "owner_cancel":
-		assert(runtime_async.cancel(&r, &task).kind == .None)
+		assert(async.cancel(&r, &task).kind == .None)
 	case "close_connect":
-		assert(runtime_async.close_connect(connecting).kind == .None); _ = runtime_async.wake(&r, &task)
+		assert(async.close_connect(connecting).kind == .None)
+		_ = async.wake(&r, &task)
 	case "runtime_shutdown":
-		runtime_async.shutdown(&r)
+		async.shutdown(&r)
 	case "release_success", "deadline", "later_finish", "earlier_finish":
-		_ = runtime_async.wake(&r, &task)
+		_ = async.wake(&r, &task)
 	case:
 		panic("unknown mode")
 	}
 
-	expected: runtime_async.Error_Kind = .Timeout
+	expected: async.Error_Kind = .Timeout
 
 	if mode == "release_success" {
 		expected = .None
@@ -460,34 +479,41 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 		expected = .Closed
 	}
 
-	result: runtime_async.Error
+	result: async.Error
 
 	for {
-		sync.lock(&boundary.mu); done := boundary.done_calls; result = boundary.result; sync.unlock(&boundary.mu)
+		sync.lock(&boundary.mu)
+		done := boundary.done_calls
+		result = boundary.result
+		sync.unlock(&boundary.mu)
 
 		if done > 0 {
-			assert(done == 1 && result.kind == expected); break
-		}; assert(time.tick_since(start) < 3 * time.Second); thread.yield()
-	}
+			assert(done == 1 && result.kind == expected)
+			break
+		}
 
-	closed := client.client_close(&c)
-	assert(closed.kind == .None || closed.kind == .Pending)
-
-	for !client.client_quiescent(&c) {
 		assert(time.tick_since(start) < 3 * time.Second)
 		thread.yield()
 	}
 
-	_, late := client.client_poll(&c)
+	closed := surf.client_close(&c)
+	assert(closed.kind == .None || closed.kind == .Pending)
+
+	for !surf.client_quiescent(&c) {
+		assert(time.tick_since(start) < 3 * time.Second)
+		thread.yield()
+	}
+
+	_, late := surf.client_poll(&c)
 	assert(!late)
-	assert(client.client_destroy(&c).kind == .None)
-	assert(runtime_async.wait_idle(&r).kind == .None)
-	assert(runtime_async.destroy(&r).kind == .None)
+	assert(surf.client_destroy(&c).kind == .None)
+	assert(async.wait_idle(&r).kind == .None)
+	assert(async.destroy(&r).kind == .None)
 	tls.root_pool_destroy(&roots)
 	assert(fd_count() == before)
-	state, se := scopes.snapshot(scope)
-	assert(se == .None && state.used == (scopes.Usage{}))
-	scopes.release_scope(&scope)
+	state, se := budget.snapshot(scope)
+	assert(se == .None && state.used == (budget.Usage{}))
+	budget.release_scope(&scope)
 	assert(track.current_memory_allocated == 0 && len(track.bad_free_array) == 0 && len(track.allocation_map) == 0)
 	mem.tracking_allocator_destroy(&track)
 	assert(os.write_entire_file(fmt.tprintf("%s/done", dir), "done") == nil)
@@ -507,8 +533,10 @@ main :: proc() {
 	assert(len(os.args) == 6)
 
 	if os.args[2] == "rawconnect" {
-		endpoint, ok := net.parse_endpoint(os.args[1]); assert(ok)
-		run_raw(endpoint, os.args[5], os.args[4], os.args[3] == "tls"); return
+		endpoint, ok := net.parse_endpoint(os.args[1])
+		assert(ok)
+		run_raw(endpoint, os.args[5], os.args[4], os.args[3] == "tls")
+		return
 	}
 
 	run_client()

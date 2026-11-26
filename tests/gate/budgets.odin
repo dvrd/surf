@@ -1,6 +1,6 @@
 // Owned HTTP/1 peer for the budget fixture. TLS 1.3 is tests/support/loopback.
-// tls-deny is a client budget rejection during the handshake: the warm
-// GET still completes, and the denied attempt must not become a request.
+// tls-deny refuses the response under the request scope after a completed
+// handshake, so every handshake the peer sees must succeed.
 
 package main
 
@@ -16,15 +16,13 @@ import "core:thread"
 import "core:time"
 
 budgets_Peer :: struct {
-	listener:           net.TCP_Socket,
-	encrypted:          bool,
-	allow_handshake_fail: bool,
-	size:               int,
-	stop:               bool,
-	requests:           int,
-	handshake_failures: int,
-	mu:                 sync.Mutex,
-	errors:             [dynamic]string,
+	listener:  net.TCP_Socket,
+	encrypted: bool,
+	size:      int,
+	stop:      bool,
+	requests:  int,
+	mu:        sync.Mutex,
+	errors:    [dynamic]string,
 }
 
 Receipt :: struct {
@@ -83,7 +81,7 @@ run_budgets :: proc() {
 		{"tls", "tls-deny", 1024},
 	}
 	for item in cases {
-		peer := budgets_start_peer(item.size, item.mode == "tls", item.scenario == "tls-deny")
+		peer := budgets_start_peer(item.size, item.mode == "tls")
 		url := fmt.aprintf("%s://127.0.0.1:%d/budget", "https" if item.mode == "tls" else "http", port_of(peer.listener))
 		defer delete(url)
 		command := make([dynamic]string)
@@ -104,8 +102,7 @@ run_budgets :: proc() {
 		if receipt.calls != peer.requests || receipt.peak > receipt.limit {
 			fail(fmt.tprintf("%s calls %d peer %d", item.scenario, receipt.calls, peer.requests))
 		}
-		want_fail := 1 if item.scenario == "tls-deny" else 0
-		if peer.handshake_failures != want_fail || len(peer.errors) != 0 {
+		if len(peer.errors) != 0 {
 			fail(item.scenario)
 		}
 		append(&report.checks, Check{mode = item.mode, scenario = item.scenario, calls = receipt.calls, peak = receipt.peak, limit = receipt.limit})
@@ -124,7 +121,7 @@ run_budgets :: proc() {
 	fmt.printf(`{{"passed":%t,"checks":%d}}` + "\n", report.passed, len(report.checks))
 }
 
-budgets_start_peer :: proc(size: int, encrypted, allow_fail: bool) -> ^budgets_Peer {
+budgets_start_peer :: proc(size: int, encrypted: bool) -> ^budgets_Peer {
 	socket, err := net.listen_tcp({address = net.IP4_Loopback, port = 0})
 	if err != nil {
 		fail("listen")
@@ -132,7 +129,6 @@ budgets_start_peer :: proc(size: int, encrypted, allow_fail: bool) -> ^budgets_P
 	peer := new(budgets_Peer)
 	peer.listener = socket
 	peer.encrypted = encrypted
-	peer.allow_handshake_fail = allow_fail
 	peer.size = size
 	worker := thread.create_and_start_with_poly_data(peer, budgets_serve)
 	if worker == nil {
@@ -164,14 +160,8 @@ budgets_handle :: proc(peer: ^budgets_Peer, fd: net.TCP_Socket) {
 	// branch ends, which is before the request is read.
 	defer loopback.conn_wipe(&conn)
 	if peer.encrypted {
-		ok := loopback.handshake(&conn, .HTTP1)
-		if !ok {
-			if !peer.allow_handshake_fail {
-				budgets_note(peer, "handshake")
-			}
-			sync.lock(&peer.mu)
-			peer.handshake_failures += 1
-			sync.unlock(&peer.mu)
+		if !loopback.handshake(&conn, .HTTP1) {
+			budgets_note(peer, "handshake")
 			return
 		}
 	}

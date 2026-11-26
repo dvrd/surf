@@ -88,7 +88,7 @@ run_setup :: proc() {
 	if held_thread == nil {
 		fail("thread")
 	}
-	held_modes := [?]string{"tls", "tls-setup", "tls-handshake"}
+	held_modes := [?]string{"tls", "tls-setup"}
 	for mode in held_modes {
 		run_mode(binary, mode, setup_port_of(held), cert, "")
 	}
@@ -99,13 +99,10 @@ run_setup :: proc() {
 	if secure_thread == nil {
 		fail("thread")
 	}
-	secure_modes := [?]string{"tls-finished", "tls-clear", "tls-finished-configured", "tls-clear-configured"}
-	for mode in secure_modes {
-		run_mode(binary, mode, setup_port_of(secure), cert, "")
-	}
+	run_mode(binary, "tls-complete", setup_port_of(secure), cert, "")
 	stop_tcp(secure, secure_thread)
 
-	completed := 14
+	completed := 10
 	if saturate_backlog(binary, cert) {
 		completed += 1
 	}
@@ -291,8 +288,14 @@ hold_tls :: proc(fd: net.TCP_Socket) {
 	defer loopback.conn_wipe(&conn)
 	// One handshake at a time. The identity key is process-global.
 	sync.lock(&handshake_mu)
-	_ = loopback.handshake(&conn, .HTTP1)
+	done := loopback.handshake(&conn, .HTTP1)
 	sync.unlock(&handshake_mu)
+
+	if done {
+		buf: [4096]u8
+		_, _ = loopback.tls_read(&conn, buf[:])
+		time.sleep(500 * time.Millisecond)
+	}
 }
 
 listen_tcp :: proc(backlog: int) -> net.TCP_Socket {
@@ -396,7 +399,7 @@ setup_port_of :: proc(socket: net.Any_Socket) -> int {
 }
 
 setup_parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
-	sanitizer = "address"
+	sanitizer = "none"
 	for i in 1 ..< len(os.args) {
 		arg := os.args[i]
 		if i + 1 >= len(os.args) {

@@ -1,47 +1,37 @@
 package tests
 
-import surf "shared:surf"
-import http "shared:async/http"
-import "shared:async/tls"
-import "core:net"
-import "core:mem"
+import "../../support/loopback"
 import "base:runtime"
+import "core:fmt"
+import "core:mem"
+import "core:net"
+import "core:strings"
 import "core:testing"
+import "core:time"
+import "shared:async"
+import "shared:async/tls"
+import "shared:surf"
 
-Fault_Stream :: struct {
-	wire:        string,
-	at:          int,
-	write_error: net.Network_Error,
-	read_error:  net.Network_Error,
-	writes:      int,
+Outcome_Peer :: struct {
+	server: loopback.Server,
+	url:    string,
 }
-fault_read :: proc(data: rawptr, dst: []u8) -> (int, net.Network_Error) {
-	state := cast(^Fault_Stream)data
 
-	if state.at == len(state.wire) {
-		return 0, state.read_error
+outcome_start :: proc(t: ^testing.T, peer: ^Outcome_Peer, answer: loopback.Answer) -> bool {
+	peer.server.answer = answer
+
+	if !testing.expect(t, loopback.server_start(&peer.server)) {
+		return false
 	}
 
-	n := copy(dst, state.wire[state.at:])
-	state.at += n
+	peer.url = fmt.aprintf("http://127.0.0.1:%d/", peer.server.port)
 
-	return n, nil
+	return true
 }
-fault_write :: proc(data: rawptr, src: []u8) -> (int, net.Network_Error) {
-	state := cast(^Fault_Stream)data
-	state.writes += 1
 
-	if state.write_error != nil {
-		return 0, state.write_error
-	}
-
-	return len(src), nil
-}
-fault_close :: proc(data: rawptr) -> net.Network_Error {
-	return nil
-}
-fault_connection :: proc(state: ^Fault_Stream) -> net.Connection {
-	return {data = state, read = fault_read, write = fault_write, close = fault_close}
+outcome_stop :: proc(peer: ^Outcome_Peer) {
+	loopback.server_stop(&peer.server)
+	delete(peer.url)
 }
 
 @(test)
@@ -64,36 +54,85 @@ zero_legacy_outcomes_do_not_claim_no_write :: proc(t: ^testing.T) {
 	testing.expect_value(t, result.error.write_effect, .Not_Sent)
 }
 
+// Each failure after the request reached the peer keeps the write effect
+// unknown, and the POST is never sent a second time.
 @(test)
-public_exchange_distinguishes_write_read_timeout_and_cancel :: proc(t: ^testing.T) {
-	request := http.Request {
-		method = .POST,
-		url    = "https://fixture.test/",
-	}
-
+public_execute_distinguishes_read_and_timeout_after_the_write :: proc(t: ^testing.T) {
 	for sample in ([]struct {
-			write, read: net.Network_Error,
-			expected:    surf.HTTP_Phase,
+			action:  loopback.Action,
+			kind:    async.Http_Error_Kind,
+			phase:   surf.HTTP_Phase,
 		} {
-			{net.TCP_Send_Error.Connection_Closed, nil, .Write},
-			{nil, net.TCP_Recv_Error.Connection_Closed, .Read},
-			{nil, net.TCP_Recv_Error.Timeout, .Deadline},
-			{nil, net.Connection_Error.Cancelled, .Cancellation},
+			{.Close, .Unexpected_EOF, .Read},
+			{.Reset, .IO_Failed, .Read},
+			{.Silent, .Deadline_Failed, .Deadline},
 		}) {
-		state := Fault_Stream {
-			write_error = sample.write,
-			read_error  = sample.read,
+		peer: Outcome_Peer
+
+		if !outcome_start(t, &peer, {action = sample.action}) {
+			return
 		}
-		_, error := surf.exchange(fault_connection(&state), request)
-		testing.expect_value(t, error.kind, .IO_Failed)
-		testing.expect_value(t, error.phase, sample.expected)
+
+		_, error := surf.execute(
+			{method = .POST, url = peer.url, body = transmute([]u8)string("payload")},
+			{allow_http = true, timeout = 500 * time.Millisecond},
+		)
+		testing.expect_value(t, error.kind, sample.kind)
+		testing.expect_value(t, error.phase, sample.phase)
 		testing.expect_value(t, error.write_effect, .Unknown)
-		testing.expect_value(t, state.writes, 1) // No hidden retry after an ambiguous POST.
+		testing.expect_value(t, error.status, 0)
+		testing.expect_value(t, loopback.server_requests(&peer.server), 1)
+		outcome_stop(&peer)
 	}
 }
 
 @(test)
-public_exchange_retains_observed_status_after_body_failure :: proc(t: ^testing.T) {
+public_client_cancel_after_the_write_is_cancellation :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 10 * time.Second)
+	peer: Outcome_Peer
+
+	if !outcome_start(t, &peer, {action = .Silent}) {
+		return
+	}
+	defer outcome_stop(&peer)
+
+	c: surf.Client
+
+	if !testing.expect_value(t, surf.client_start(&c, {http = {allow_http = true, timeout = 5 * time.Second}}).kind, .None) {
+		return
+	}
+	defer surf.client_destroy(&c)
+
+	handle, submitted := surf.client_submit(&c, {method = .POST, url = peer.url, body = transmute([]u8)string("x")})
+
+	if !testing.expect_value(t, submitted.kind, .None) {
+		return
+	}
+
+	for loopback.server_requests(&peer.server) == 0 {
+		time.sleep(5 * time.Millisecond)
+	}
+
+	testing.expect_value(t, surf.client_cancel(&c, handle).kind, .None)
+	completion: surf.Completion
+	done := false
+
+	for !done {
+		completion, done = surf.client_poll(&c)
+		if !done {
+			time.sleep(5 * time.Millisecond)
+		}
+	}
+
+	testing.expect(t, completion.request == handle)
+	testing.expect_value(t, completion.error.phase, .Cancellation)
+	testing.expect_value(t, completion.error.write_effect, .Unknown)
+	testing.expect_value(t, surf.client_release(&c, handle).kind, .None)
+	testing.expect_value(t, loopback.server_requests(&peer.server), 1)
+}
+
+@(test)
+public_execute_retains_observed_status_after_body_failure :: proc(t: ^testing.T) {
 	for sample in ([]struct {
 			wire:   string,
 			limit:  int,
@@ -106,19 +145,22 @@ public_exchange_retains_observed_status_after_body_failure :: proc(t: ^testing.T
 			{"HTTP/1.1 200 OK\r\nBrokenHeader\r\n\r\n", 8, .Protocol, 0},
 			{"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nContent-Length: 1\r\n\r\n", 8, .Protocol, 200},
 		}) {
-		state := Fault_Stream {
-			wire = sample.wire,
-			read_error = net.Connection_Error.Peer_Closed,
+		peer: Outcome_Peer
+
+		if !outcome_start(t, &peer, {wire = sample.wire, close = true}) {
+			return
 		}
-		response, error := surf.exchange(
-			fault_connection(&state),
-			{method = .POST, url = "https://fixture.test/"},
-			sample.limit,
+
+		response, error := surf.execute(
+			{method = .POST, url = peer.url},
+			{allow_http = true, max_body_size = sample.limit, timeout = 2 * time.Second},
 		)
-		defer surf.response_destroy(&response)
-		testing.expect_value(t, error.phase, sample.phase)
-		testing.expect_value(t, error.status, sample.status)
-		testing.expect_value(t, error.write_effect, sample.status == 0 ? .Unknown : .Response_Received)
+		surf.response_destroy(&response)
+		testing.expectf(t, error.phase == sample.phase, "%q: phase %v", sample.wire, error.phase)
+		testing.expectf(t, error.status == sample.status, "%q: status %v", sample.wire, error.status)
+		effect: surf.HTTP_Write_Effect = sample.status == 0 ? .Unknown : .Response_Received
+		testing.expectf(t, error.write_effect == effect, "%q: effect %v", sample.wire, error.write_effect)
+		outcome_stop(&peer)
 	}
 }
 
@@ -134,14 +176,17 @@ native_dns_failure_classifies_as_dns :: proc(t: ^testing.T) {
 
 @(test)
 validated_status_survives_response_allocation_failure :: proc(t: ^testing.T) {
-	state := Fault_Stream {
-		wire = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
-	}
+	peer: Outcome_Peer
 
-	response, error := surf.exchange(
-		fault_connection(&state),
-		{method = .POST, url = "https://fixture.test/"},
-		allocator = runtime.nil_allocator(),
+	if !outcome_start(t, &peer, {wire = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n"}) {
+		return
+	}
+	defer outcome_stop(&peer)
+
+	response, error := surf.execute(
+		{method = .POST, url = peer.url},
+		{allow_http = true, timeout = 2 * time.Second},
+		runtime.nil_allocator(),
 	)
 	defer surf.response_destroy(&response)
 	testing.expect_value(t, error.kind, .Allocation_Failed)
@@ -169,12 +214,19 @@ tls_record_failures_preserve_tls_but_transport_causes_remain_specific :: proc(t:
 		.Unknown,
 	)
 	testing.expect_value(t, timed_out.phase, .Deadline)
+	cancelled := surf.http_error_classify(
+		{kind = .TLS_Failed, tls_error = async.TLS_General_Error.Cancelled},
+		.TLS,
+		.Not_Sent,
+	)
+	testing.expect_value(t, cancelled.phase, .Cancellation)
 }
 
 Outcome_Failing_Allocator :: struct {
 	backing:        mem.Allocator,
 	count, fail_at: int,
 }
+
 outcome_fail_allocate :: proc(
 	data: rawptr,
 	mode: mem.Allocator_Mode,
@@ -194,11 +246,24 @@ outcome_fail_allocate :: proc(
 			return nil, .Out_Of_Memory
 		}
 	}
+
 	return state.backing.procedure(state.backing.data, mode, size, alignment, old_memory, old_size, location)
 }
 
 @(test)
 partial_response_allocation_failures_release_all_owned_storage :: proc(t: ^testing.T) {
+	peer: Outcome_Peer
+	body := strings.repeat("x", 40000, context.temp_allocator)
+
+	if !outcome_start(
+		t,
+		&peer,
+		{wire = fmt.tprintf("HTTP/1.1 503 Service Unavailable\r\nX-A: 1\r\nContent-Length: %d\r\n\r\n%s", len(body), body)},
+	) {
+		return
+	}
+	defer outcome_stop(&peer)
+
 	for fail_at in 1 ..= 4 {
 		tracker: mem.Tracking_Allocator
 		mem.tracking_allocator_init(&tracker, context.allocator)
@@ -208,17 +273,12 @@ partial_response_allocation_failures_release_all_owned_storage :: proc(t: ^testi
 			fail_at = fail_at,
 		}
 
-		state := Fault_Stream {
-			wire = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\n\r\nx",
-			read_error = net.Connection_Error.Peer_Closed,
-		}
-
-		response, error := surf.exchange(
-			fault_connection(&state),
-			{method = .POST, url = "https://fixture.test/"},
-			allocator = {procedure = outcome_fail_allocate, data = &allocation},
+		response, error := surf.execute(
+			{method = .POST, url = peer.url},
+			{allow_http = true, timeout = 2 * time.Second},
+			{procedure = outcome_fail_allocate, data = &allocation},
 		)
-		testing.expect(t, error.kind != .None)
+		testing.expectf(t, error.kind == .Allocation_Failed, "fail_at %d: %v", fail_at, error.kind)
 		testing.expect_value(t, error.status, 503)
 		testing.expect_value(t, error.write_effect, .Response_Received)
 		testing.expect(
@@ -234,8 +294,10 @@ partial_response_allocation_failures_release_all_owned_storage :: proc(t: ^testi
 	}
 }
 
+// The legacy entry point copies its header lines with the temporary allocator
+// before anything is dialed.
 @(test)
-legacy_cstring_allocation_failure_is_typed_and_stops_setup :: proc(t: ^testing.T) {
+legacy_header_allocation_failure_is_typed_and_stops_setup :: proc(t: ^testing.T) {
 	previous := context.temp_allocator
 	state := Outcome_Failing_Allocator {
 		backing = previous,
@@ -248,7 +310,8 @@ legacy_cstring_allocation_failure_is_typed_and_stops_setup :: proc(t: ^testing.T
 	}
 
 	defer context.temp_allocator = previous
-	_, result := surf.buffered_http_execute("POST", "http://127.0.0.1/", nil, nil, "", allow_http = true)
+	headers := []string{"X-Trace: 1"}
+	_, result := surf.buffered_http_execute("POST", "http://127.0.0.1/", nil, headers, "", allow_http = true)
 	testing.expect_value(t, result.error.kind, .Allocation_Failed)
 	testing.expect_value(t, result.error.allocation, .Out_Of_Memory)
 	testing.expect_value(t, result.error.phase, .Configuration)

@@ -1,34 +1,30 @@
 package main
 
-import surf "shared:surf"
-import http "shared:async/http"
+import "shared:async"
+import "shared:surf"
 import rt "base:runtime"
-import tls "shared:async/tls"
 import "core:fmt"
 import "core:mem"
-import charged "shared:async/mem/budget"
-import owned "shared:async/mem/owned"
 import "core:os"
-import scopes "shared:async/sync/budget"
 import "core:sys/posix"
 import "core:time"
 
 Context :: struct {
-	root, connection, a, b: scopes.Scope,
+	root, connection, a, b: async.Budget_Scope,
 }
 Record :: struct {
 	calls, descriptors_before, descriptors_after: int,
 	limit, peak:                                  u64,
 }
-roots: tls.Root_Pool
+roots: async.Root_Pool
 main :: proc() {
 	assert(len(os.args) == 4 || len(os.args) == 5)
 
 	if len(os.args) == 5 {
-		assert(tls.root_pool_load_file(&roots, os.args[4]).kind == .None)
+		assert(async.root_pool_load_file(&roots, os.args[4]) == nil)
 	}
 
-	defer tls.root_pool_destroy(&roots)
+	defer async.root_pool_destroy(&roots)
 	mode, url, scenario := os.args[1], os.args[2], os.args[3]
 	warm, error := perform(mode, url, {}, rt.heap_allocator(), scenario)
 
@@ -92,35 +88,35 @@ count_fds :: proc() -> int {
 
 	return count
 }
-usage :: proc(scope: scopes.Scope) -> scopes.Snapshot {
-	snapshot, error := scopes.snapshot(scope)
+usage :: proc(scope: async.Budget_Scope) -> async.Budget_Snapshot {
+	snapshot, error := async.budget_snapshot(scope)
 	assert(error == .None)
 
 	return snapshot
 }
 context_create :: proc(limit: u64, allocator: mem.Allocator) -> Context {
 	ctx: Context
-	root, re := scopes.create_root({bytes = limit, streams = 2}, allocator)
+	root, re := async.budget_create_root({bytes = limit, streams = 2}, allocator)
 	assert(re == .None)
-	conn, ce := scopes.create_child(root, {bytes = limit, streams = 2})
+	conn, ce := async.budget_create_child(root, {bytes = limit, streams = 2})
 	assert(ce == .None)
-	a, ae := scopes.create_child(conn, {bytes = limit, streams = 1})
+	a, ae := async.budget_create_child(conn, {bytes = limit, streams = 1})
 	assert(ae == .None)
-	b, be := scopes.create_child(conn, {bytes = limit, streams = 1})
+	b, be := async.budget_create_child(conn, {bytes = limit, streams = 1})
 	assert(be == .None)
 	ctx = {root, conn, a, b}
 
 	return ctx
 }
 context_destroy :: proc(ctx: ^Context) {
-	scopes.release_scope(&ctx.a)
-	scopes.release_scope(&ctx.b)
-	scopes.release_scope(&ctx.connection)
-	scopes.release_scope(&ctx.root)
+	async.budget_release_scope(&ctx.a)
+	async.budget_release_scope(&ctx.b)
+	async.budget_release_scope(&ctx.connection)
+	async.budget_release_scope(&ctx.root)
 }
 perform :: proc(
 	mode, url: string,
-	scope: scopes.Scope,
+	scope: async.Budget_Scope,
 	allocator: mem.Allocator,
 	scenario: string = "retained",
 ) -> (
@@ -148,27 +144,30 @@ perform :: proc(
 			max_body_size = 1024,
 			timeout = 3 * time.Second,
 			scope = scope,
-			tls = {root_cas = roots.roots[:roots.count]},
+			tls = {roots = &roots},
 		},
 		allocator,
 	)
 }
-retained_limit :: proc(mode: string) -> u64 {
-	body, _ := charged.allocation_cost(1024, 1)
+// One response under a roomy scope: what it retains and the scope's peak.
+calibrate :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) -> (retained, peak: u64) {
+	ctx := context_create(16 * 1024 * 1024, allocator)
+	response, error := perform(mode, url, ctx.a, allocator)
+	record.calls += 1
+	assert(error.kind == .None && len(response.body) == 1024)
+	retained = usage(ctx.root).used.bytes
+	surf.response_destroy(&response)
+	peak = usage(ctx.root).peak.bytes
+	assert(retained > 0 && peak >= retained && usage(ctx.root).used.bytes == 0)
+	context_destroy(&ctx)
 
-	if mode == "curl" {
-		setup, _ := charged.allocation_cost(1024, mem.DEFAULT_ALIGNMENT)
-		return 65536 + setup + body + body / 2
-	}
-
-	head, _ := charged.allocation_cost(len("HTTP/1.1 200 OK\r\nContent-Length: 1024\r\n\r\n"), 1)
-	table, _ := charged.allocation_cost(size_of(http.Header), align_of(http.Header))
-	total := body + head + table
-
-	return total + total / 2
+	return
 }
+
 retained :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) {
-	ctx := context_create(retained_limit(mode), allocator)
+	// One request fits alone. A second cannot fit while the first is retained.
+	held, peak := calibrate(mode, url, allocator, record)
+	ctx := context_create(peak + held / 2, allocator)
 	first, accepted := perform(mode, url, ctx.a, allocator)
 	record.calls += 1
 	assert(accepted.kind == .None && len(first.body) == 1024)
@@ -181,15 +180,15 @@ retained :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) {
 	assert(usage(ctx.root).used.streams == 0 && usage(ctx.root).rejected > 0)
 	chunk, transferred := surf.response_take_body(&first)
 	assert(transferred.kind == .None)
-	info, known := charged.allocation_info(chunk.allocator, raw_data(chunk.storage))
+	info, known := async.budget_allocation_info(chunk.allocator, raw_data(chunk.storage))
 	assert(known)
-	scopes.release_scope(&ctx.a)
+	async.budget_release_scope(&ctx.a)
 	surf.response_destroy(&first)
 	assert(usage(ctx.root).used.bytes == info.backing_bytes)
 	for byte in chunk.data {
 		assert(byte == 'B')
 	}
-	owned.destroy(&chunk)
+	async.owned_destroy(&chunk)
 	assert(usage(ctx.root).used.bytes == 0)
 	recovered, retry := perform(mode, url, ctx.b, allocator)
 	record.calls += 1
@@ -212,11 +211,11 @@ oversize :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) {
 	context_destroy(&ctx)
 }
 legacy :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
-	block, _ := charged.allocation_cost(4096, mem.DEFAULT_ALIGNMENT)
+	block := block_cost(allocator)
 	ctx := context_create(65536 + block + 512, allocator)
-	binding, created := charged.create(ctx.a, {backing = allocator, metadata_allocator = allocator})
+	binding, created := async.budget_binding_create(ctx.a, {backing = allocator, metadata_allocator = allocator})
 	assert(created.kind == .None)
-	managed := charged.allocator(binding)
+	managed := async.budget_allocator(binding)
 	arena: mem.Dynamic_Arena
 	mem.dynamic_arena_init(
 		&arena,
@@ -275,14 +274,32 @@ legacy :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 	assert(usage(ctx.root).used.bytes == 0 && usage(ctx.root).used.streams == 0)
 	record.limit, record.peak = usage(ctx.root).limits.bytes, usage(ctx.root).peak.bytes
 	assert(record.peak <= record.limit)
-	charged.release(&binding)
+	async.budget_binding_release(&binding)
 	context_destroy(&ctx)
 }
+
+// What one 4 KiB arena block charges, as a scope observes it.
+block_cost :: proc(allocator: mem.Allocator) -> u64 {
+	ctx := context_create(1024 * 1024, allocator)
+	defer context_destroy(&ctx)
+	binding, created := async.budget_binding_create(ctx.a, {backing = allocator, metadata_allocator = allocator})
+	assert(created.kind == .None)
+	defer async.budget_binding_release(&binding)
+	managed := async.budget_allocator(binding)
+	before := usage(ctx.root).used.bytes
+	block, error := mem.alloc(4096, mem.DEFAULT_ALIGNMENT, managed)
+	assert(error == nil)
+	cost := usage(ctx.root).used.bytes - before
+	assert(mem.free(block, managed) == nil)
+
+	return cost
+}
+
 legacy_retry :: proc(
 	url: string,
 	arena: ^mem.Dynamic_Arena,
 	managed: mem.Allocator,
-	scope: scopes.Scope,
+	scope: async.Budget_Scope,
 	record: ^Record,
 ) {
 	mem.dynamic_arena_init(
@@ -322,27 +339,29 @@ empty :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 	chunk, taken := surf.response_take_body(&response)
 	assert(taken.kind == .None)
 	surf.response_destroy(&response)
-	owned.destroy(&chunk)
-	owned.destroy(&chunk)
+	async.owned_destroy(&chunk)
+	async.owned_destroy(&chunk)
 }
 
+// TLS state belongs to the connection, not to the request scope. A denied
+// request has had its handshake and been sent; only its response is refused.
 tls_budget :: proc(url: string, denied: bool, allocator: mem.Allocator, record: ^Record) {
-	conn, _ := charged.allocation_cost(size_of(tls.Conn), align_of(tls.Conn))
-	flight, _ := charged.allocation_cost(tls.MAX_SERVER_FLIGHT_SIZE, 1)
 	limit := u64(4 * 1024 * 1024)
-	if denied {
-		limit = conn + flight - 1
-	}
-	ctx := context_create(limit, allocator)
-	response, error := perform("tls", url, ctx.a, allocator)
 
 	if denied {
-		assert(error.kind != .None && error.write_effect == .Not_Sent)
+		limit = 512
+	}
+
+	ctx := context_create(limit, allocator)
+	response, error := perform("tls", url, ctx.a, allocator)
+	record.calls += 1
+
+	if denied {
+		assert(error.kind == .Allocation_Failed && error.write_effect == .Response_Received)
 		assert(usage(ctx.root).rejected > 0)
 	} else {
 		assert(error.kind == .None && len(response.body) == 1024)
-		assert(usage(ctx.root).peak.bytes >= conn + flight)
-		record.calls += 1
+		assert(usage(ctx.root).peak.bytes >= 1024)
 	}
 
 	surf.response_destroy(&response)

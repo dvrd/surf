@@ -1,7 +1,6 @@
 package main
-import client "shared:surf/async"
-import async "shared:async"
-import surf "shared:surf"
+import "shared:async"
+import "shared:surf"
 import rt "base:runtime"
 import "base:intrinsics"
 import "shared:async/tls"
@@ -11,19 +10,19 @@ import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:sync"
-import scopes "shared:async/sync/budget"
+import "shared:async/budget"
 import "core:sys/posix"
 import "core:thread"
 import "core:time"
 
 Record :: struct {
-	handle:         client.Request_Handle,
-	accepted, done: bool,
+	handle:                  surf.Request_Handle,
+	accepted, claimed, done: bool,
 	connection:     int,
 	error:          surf.HTTP_Error,
 }
 State :: struct {
-	client:                                  client.Client,
+	client:                                  surf.Client,
 	runtime:                                 async.Runtime,
 	mu:                                      sync.Mutex,
 	records:                                 [64]Record,
@@ -70,7 +69,7 @@ produce :: proc(p: ^Producer) {
 		started := time.tick_now()
 
 		for {
-			h, error := client.client_submit(
+			h, error := surf.client_submit(
 				&s.client,
 				{method = .POST, url = url, headers = {{name = "X-Id", value = body}}, body = transmute([]u8)body},
 				cutoff,
@@ -87,7 +86,7 @@ produce :: proc(p: ^Producer) {
 			}
 
 			original, unchanged := strconv.parse_int(body)
-			assert(unchanged && original == id && h == (client.Request_Handle{}))
+			assert(unchanged && original == id && h == (surf.Request_Handle{}))
 
 			if error.kind == .Closed && s.shutdown {
 				intrinsics.atomic_add(&s.rejected, 1)
@@ -95,7 +94,7 @@ produce :: proc(p: ^Producer) {
 				return
 			}
 
-			assert(error.kind == .Capacity || error.kind == .Budget_Rejected)
+			assert(error.kind == .Capacity)
 			intrinsics.atomic_add(&s.rejected, 1)
 			assert(time.tick_since(started) < 8 * time.Second)
 			time.sleep(100 * time.Microsecond)
@@ -104,7 +103,7 @@ produce :: proc(p: ^Producer) {
 
 	intrinsics.atomic_add(&s.producers, 1)
 }
-find :: proc(s: ^State, h: client.Request_Handle) -> int {
+find :: proc(s: ^State, h: surf.Request_Handle) -> int {
 	started := time.tick_now()
 
 	for {
@@ -138,12 +137,7 @@ finish :: proc(s: ^State, id: int, response: ^surf.Response, error: surf.HTTP_Er
 
 		assert(connection > 0)
 	} else {
-		assert(
-			s.shutdown &&
-			error.kind == .IO_Failed &&
-			error.phase == .Cancellation &&
-			error.transport.kind == .Cancelled,
-		)
+		assert(s.shutdown && error.kind == .IO_Failed && error.phase == .Cancellation)
 	}
 
 	sync.lock(&s.mu)
@@ -161,33 +155,31 @@ finish :: proc(s: ^State, id: int, response: ^surf.Response, error: surf.HTTP_Er
 	surf.response_destroy(response)
 	intrinsics.atomic_add(&s.finished, 1)
 }
-take :: proc(s: ^State, h: client.Request_Handle, id: int) {
+// client_take on a handle already taken hands out an empty Response, so the
+// two consumers claim a record before either takes it.
+take :: proc(s: ^State, h: surf.Request_Handle, id: int) {
+	sync.lock(&s.mu)
+
+	if s.records[id].claimed {
+		sync.unlock(&s.mu)
+		return
+	}
+
+	s.records[id].claimed = true
+	sync.unlock(&s.mu)
 	response: surf.Response
-	error := client.client_take(&s.client, h, &response)
+	error := surf.client_take(&s.client, h, &response)
 
-	if error.kind == .None {
-		finish(s, id, &response, {})
+	if error.kind == .Pending {
+		sync.lock(&s.mu)
+		s.records[id].claimed = false
+		sync.unlock(&s.mu)
 		return
 	}
 
-	if error.kind == .Pending || error.kind == .Invalid_Handle {
-		return
-	}
-
-	assert(error.kind == .Request_Error && s.shutdown)
-	released := client.client_release(&s.client, h)
-
-	if released.kind == .None {
-		finish(s, id, &response, error.http)
-	} else {
-		// Another consumer can own Returning while physical disposal is in flight.
-		// Only the successful release records completion; the loser owns nothing.
-		if released.kind != .Pending && released.kind != .Invalid_Handle {
-			fmt.eprintf("Unexpected racing release kind=%v\n", released.kind)
-		}
-
-		assert(released.kind == .Pending || released.kind == .Invalid_Handle)
-	}
+	assert(error.kind == .None || error.kind == .Request_Error && s.shutdown)
+	assert(surf.client_release(&s.client, h).kind == .None)
+	finish(s, id, &response, error.http)
 }
 consume :: proc(c: ^Consumer) {
 	s := c.state
@@ -196,7 +188,7 @@ consume :: proc(c: ^Consumer) {
 	    intrinsics.atomic_load(&s.finished) < intrinsics.atomic_load(&s.accepted) {
 		assert(time.tick_since(started) < 15 * time.Second)
 		if c.poll {
-			completion, ready := client.client_poll(&s.client)
+			completion, ready := surf.client_poll(&s.client)
 
 			if ready {
 				take(s, completion.request, find(s, completion.request))
@@ -224,14 +216,14 @@ main :: proc() {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, rt.heap_allocator(), rt.heap_allocator())
 	allocator := mem.tracking_allocator(&track)
-	scope, error := scopes.create_root({bytes = 64 << 20, streams = 8, jobs = 8}, allocator)
+	scope, error := budget.create_root({bytes = 64 << 20, streams = 8, jobs = 8}, allocator)
 	assert(error == .None)
 	roots: tls.Root_Pool
 
 	if encrypted {
 		pem, read_error := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
 		assert(read_error == nil)
-		assert(tls.root_pool_parse(&roots, pem, allocator).kind == .None)
+		assert(tls.root_pool_parse(&roots, pem, allocator) == nil)
 		delete(pem, allocator)
 	}
 
@@ -243,30 +235,25 @@ main :: proc() {
 	}
 
 	assert(
-		async.init(&s.runtime, {workers = 1, task_capacity = 3, io_capacity = 2, allocator = allocator}).kind == .None,
+		async.init(&s.runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind == .None,
 	)
-	config := client.Client_Config {
+	config := surf.Client_Config {
 		http = {allow_http = true, timeout = 10 * time.Second, scope = scope},
-		capacities = client.Capacities {
+		capacities = surf.Capacities {
 			requests = 8,
 			origins = 1,
-			connections = 2,
 			connections_per_origin = 2,
-			waiters_per_origin = 8,
-			dns_ids = 0,
-			work_per_resume = 1,
+			upload_chunks = 1,
+			response_chunks = 1,
 		},
 	}
 
-	protocols := [1]string{"http/1.1"}
-
 	if encrypted {
-		config.http.tls.root_cas = roots.roots[:roots.count]
-		config.http.tls.alpn_protocols = protocols[:]
+		config.http.tls.roots = &roots
 	}
 
 	assert(
-		client.client_init(&s.client, &s.runtime, config, allocator).kind == .None &&
+		surf.client_init(&s.client, &s.runtime, config, allocator).kind == .None &&
 		async.start(&s.runtime).kind == .None,
 	)
 	producers: [4]Producer
@@ -295,7 +282,7 @@ main :: proc() {
 		}
 
 		async.shutdown(&s.runtime)
-		closed := client.client_close(&s.client)
+		closed := surf.client_close(&s.client)
 		assert(closed.kind == .None || closed.kind == .Pending)
 
 		for worker in producer_threads {
@@ -331,21 +318,21 @@ main :: proc() {
 		}
 
 		assert(item.done)
-		assert(client.client_release(&s.client, item.handle).kind == .Invalid_Handle)
+		assert(surf.client_release(&s.client, item.handle).kind == .Invalid_Handle)
 	}
 
 	accepted := intrinsics.atomic_load(&s.accepted)
 	finished := intrinsics.atomic_load(&s.finished)
 	assert(accepted == finished && (s.shutdown && accepted > 0 && accepted <= 8 || !s.shutdown && accepted == 64))
-	_, phantom := client.client_poll(&s.client)
+	_, phantom := surf.client_poll(&s.client)
 	assert(!phantom)
 
 	if !s.shutdown {
-		closed := client.client_close(&s.client)
+		closed := surf.client_close(&s.client)
 		assert(closed.kind == .None || closed.kind == .Pending)
 		started := time.tick_now()
 
-		for !client.client_quiescent(&s.client) {
+		for !surf.client_quiescent(&s.client) {
 			assert(time.tick_since(started) < 10 * time.Second)
 			thread.yield()
 		}
@@ -353,19 +340,18 @@ main :: proc() {
 		assert(async.wait_idle(&s.runtime).kind == .None && async.destroy(&s.runtime).kind == .None)
 	}
 
-	assert(client.client_quiescent(&s.client) && client.client_destroy(&s.client).kind == .None)
+	assert(surf.client_quiescent(&s.client) && surf.client_destroy(&s.client).kind == .None)
 	tls.root_pool_destroy(&roots)
 	assert(fd_count() == before)
 
 	if !s.shutdown {
-		snapshot, _ := scopes.snapshot(scope)
-		assert(snapshot.used.bytes > 0 && snapshot.used.streams == 0 && string(s.retained.body) == "63")
+		assert(string(s.retained.body) == "63")
 		surf.response_destroy(&s.retained)
 	}
 
-	snapshot, cause := scopes.snapshot(scope)
-	assert(cause == .None && snapshot.used == (scopes.Usage{}))
-	scopes.release_scope(&scope)
+	snapshot, cause := budget.snapshot(scope)
+	assert(cause == .None && snapshot.used == (budget.Usage{}))
+	budget.release_scope(&scope)
 	assert(track.current_memory_allocated == 0 && len(track.bad_free_array) == 0)
 	mem.tracking_allocator_destroy(&track)
 	assert(os.write_entire_file(fmt.tprintf("%s/done", dir), "done") == nil)
@@ -396,7 +382,7 @@ main :: proc() {
 			item.error.phase,
 			item.error.write_effect,
 			item.error.status,
-			item.error.transport.kind,
+			item.error.transport,
 		)
 	}
 

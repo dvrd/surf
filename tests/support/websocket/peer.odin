@@ -35,13 +35,14 @@ main :: proc() {
 	fmt.println(endpoint.port)
 	_ = os.flush(os.stdout)
 
-	for i in 0 ..< 2 {
+	// Echo by endpoint, wrong host, echo by name, platform roots.
+	for i in 0 ..< 4 {
 		fd, _, accept_error := net.accept_tcp(listener)
 		if accept_error != nil {
 			fmt.eprintf("accept\n")
 			return
 		}
-		handle(fd, i == 0)
+		handle(fd, i == 0 || i == 2)
 	}
 }
 

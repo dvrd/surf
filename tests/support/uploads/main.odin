@@ -1,8 +1,7 @@
 package main
 
-import surf "shared:surf"
-import http "shared:async/http"
-import "shared:async/tls"
+import "shared:async"
+import "shared:surf"
 import "core:fmt"
 import "core:mem"
 import "core:os"
@@ -12,7 +11,7 @@ import "core:time"
 perform :: proc(
 	base, path, file_path: string,
 	length: i64,
-	method: http.Method,
+	method: async.Http_Method,
 	config: surf.Config,
 	expected_status: int = 200,
 ) -> i64 {
@@ -32,7 +31,8 @@ perform :: proc(
 		config,
 	)
 	if path == "/short" {
-		assert(error.kind == .Unexpected_EOF && error.phase == .Write && error.write_effect == .Unknown)
+		assert(error.kind == .IO_Failed && error.source_io == .Unexpected_EOF)
+		assert(error.phase == .Write && error.write_effect == .Unknown)
 	} else if path == "/stall" {
 		assert(error.phase == .Deadline && error.write_effect == .Unknown)
 	} else {
@@ -84,12 +84,12 @@ main :: proc() {
 	stall := plain
 	stall.timeout = 100 * time.Millisecond
 	perform(http_url, "/stall", file_path, large, .PUT, stall)
-	pool := new(tls.Root_Pool)
+	pool := new(async.Root_Pool)
 	defer free(pool)
-	defer tls.root_pool_destroy(pool)
-	assert(tls.root_pool_load_file(pool, root_path).kind == .None)
+	defer async.root_pool_destroy(pool)
+	assert(async.root_pool_load_file(pool, root_path) == nil)
 	secure := surf.Config {
-		tls = {root_cas = pool.roots[:pool.count]},
+		tls = {roots = pool},
 		max_body_size = 8,
 		timeout = 20 * time.Second,
 	}

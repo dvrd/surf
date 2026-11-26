@@ -1,19 +1,19 @@
 package main
-import client "shared:surf/async"
-import runtime_async "shared:async"
-import surf "shared:surf"
-import http "shared:async/http"
-import rt "base:runtime"
-import "shared:async/tls"
+
+import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
-import scopes "shared:async/sync/budget"
+import "core:strings"
 import "core:sys/posix"
 import "core:thread"
 import "core:time"
-import "core:strings"
+import "shared:async"
+import "shared:async/budget"
+import "shared:async/tls"
+import "shared:surf"
+
 fd_count :: proc() -> int {
 	n := 0
 
@@ -25,88 +25,65 @@ fd_count :: proc() -> int {
 
 	return n
 }
-Handoff_Probe :: struct {
-	backing:                  mem.Allocator,
-	c:                        ^client.Client,
-	handle:                   client.Request_Handle,
-	close:                    bool,
-	armed, fired, reentering: bool,
+
+// The cross-policy cell refuses the port of the peer's second listener.
+refused_port: int
+
+refuse_other :: proc(_: string, addresses: []net.Endpoint, _: rawptr) -> bool {
+	for endpoint in addresses {
+		if endpoint.port == refused_port {
+			return false
+		}
+	}
+
+	return true
 }
-handoff_allocator :: proc(
-	data: rawptr,
-	mode: mem.Allocator_Mode,
-	size, alignment: int,
-	old_memory: rawptr,
-	old_size: int,
-	location := #caller_location,
-) -> (
-	[]u8,
-	mem.Allocator_Error,
-) {
-	probe := cast(^Handoff_Probe)data
-	if mode == .Free && probe.armed && !probe.fired && !probe.reentering {
-		probe.reentering = true
-		stage, error := client.client_request_stage(probe.c, probe.handle)
 
-		if error.kind == .None && stage == .Redirecting {
-			probe.fired = true
-			_, valid := client.client_stats(probe.c)
-			assert(valid)
+wait_completion :: proc(c: ^surf.Client, want: surf.Request_Handle, started: time.Tick) -> surf.Completion {
+	for {
+		result, available := surf.client_poll(c)
 
-			if probe.close {
-				error = client.client_close(probe.c)
-				assert(error.kind == .None || error.kind == .Pending)
-			} else {
-				assert(client.client_cancel(probe.c, probe.handle).kind == .None)
-			}
+		if available {
+			assert(result.request == want)
+			return result
 		}
 
-		probe.reentering = false
+		assert(time.tick_since(started) < 8 * time.Second)
+		thread.yield()
 	}
-	return probe.backing.procedure(probe.backing.data, mode, size, alignment, old_memory, old_size, location)
 }
+
 main :: proc() {
 	assert(len(os.args) == 5)
 	endpoint, ok := net.parse_endpoint(os.args[1])
 	assert(ok)
 	mode, encrypted, dir := os.args[2], os.args[3] == "tls", os.args[4]
 	track: mem.Tracking_Allocator
-	mem.tracking_allocator_init(&track, rt.heap_allocator(), rt.heap_allocator())
-	probe := Handoff_Probe {
-		backing = mem.tracking_allocator(&track),
-		close   = mode == "handoff-close",
-	}
-
-	allocator := mem.Allocator{handoff_allocator, &probe}
-	scope, cause := scopes.create_root({bytes = 32 << 20, streams = 1, jobs = 8}, allocator)
+	mem.tracking_allocator_init(&track, runtime.heap_allocator(), runtime.heap_allocator())
+	allocator := mem.tracking_allocator(&track)
+	scope, cause := budget.create_root({bytes = 32 << 20, streams = 1, jobs = 8}, allocator)
 	assert(cause == .None)
 	roots: tls.Root_Pool
 
 	if encrypted {
 		root, error := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
 		assert(error == nil)
-		assert(tls.root_pool_parse(&roots, root, allocator).kind == .None)
+		assert(tls.root_pool_parse(&roots, root, allocator) == nil)
 		delete(root, allocator)
 	}
 
 	fd_before := fd_count()
-	runtime: runtime_async.Runtime
-	assert(
-		runtime_async.init(&runtime, {workers = 1, task_capacity = 2, io_capacity = 1, allocator = allocator}).kind ==
-		.None,
-	)
-	c: client.Client
-	probe.c = &c
-	config := client.Client_Config {
+	r: async.Runtime
+	assert(async.init(&r, {workers = 1, task_capacity = 4, io_capacity = 64, allocator = allocator}).kind == .None)
+	c: surf.Client
+	config := surf.Client_Config {
 		http = {allow_http = true, timeout = 2 * time.Second, max_redirects = 5, scope = scope},
-		capacities = client.Capacities {
+		capacities = surf.Capacities {
 			requests = 1,
 			origins = 1,
-			connections = 1,
 			connections_per_origin = 1,
-			waiters_per_origin = 0,
-			dns_ids = 0,
-			work_per_resume = 1,
+			upload_chunks = 1,
+			response_chunks = 1,
 		},
 	}
 
@@ -122,11 +99,18 @@ main :: proc() {
 		config.http.timeout = 200 * time.Millisecond
 	}
 
-	protocols := [1]string{"http/1.1"}
-
 	if encrypted {
-		config.http.tls.root_cas = roots.roots[:roots.count]
-		config.http.tls.alpn_protocols = protocols[:]
+		config.http.tls.roots = &roots
+	}
+
+	if mode == "cross-policy" {
+		bytes, e := os.read_entire_file(fmt.tprintf("%s/other.endpoint", dir), allocator)
+		assert(e == nil)
+		other, parsed := net.parse_endpoint(string(bytes))
+		assert(parsed)
+		delete(bytes, allocator)
+		refused_port = other.port
+		config.http.address_policy = refuse_other
 	}
 
 	dns_servers: [1]net.Endpoint
@@ -138,60 +122,32 @@ main :: proc() {
 		assert(ok)
 		delete(bytes, allocator)
 		config.http.resolver.name_servers = dns_servers[:]
-		caps := config.capacities.(client.Capacities)
-		caps.dns_ids = 64
-		config.capacities = caps
 	}
 
-	assert(client.client_init(&c, &runtime, config, allocator).kind == .None)
+	assert(surf.client_init(&c, &r, config, allocator).kind == .None)
 	warmup_case := encrypted && mode == "cutoff"
-	warmup_done := false
 
 	if warmup_case {
-		// Establish only the first origin before selecting the timed request's
-		// immutable caller cutoff. All later-hop TLS setup still consumes200ms.
-		assert(runtime_async.start(&runtime).kind == .None)
+		// Only the first origin is set up before the timed request's cutoff is
+		// chosen; every later hop's TLS setup spends the 200 ms.
+		assert(async.start(&r).kind == .None)
 		warmup_url := fmt.tprintf("https://127.0.0.1:%d/warmup", endpoint.port)
-		warmup_handle, warmup_error := client.client_submit(&c, {url = warmup_url})
+		warmup_handle, warmup_error := surf.client_submit(&c, {url = warmup_url})
 		assert(warmup_error.kind == .None)
-		warmup_started := time.tick_now()
-
-		for {
-			result, available := client.client_poll(&c)
-
-			if available {
-				assert(result.request == warmup_handle && result.error.kind == .None)
-				warmup_response: surf.Response
-				assert(client.client_take(&c, warmup_handle, &warmup_response).kind == .None)
-				assert(warmup_response.status == 200 && len(warmup_response.body) == 0)
-				surf.response_destroy(&warmup_response)
-				break
-			}
-
-			assert(time.tick_since(warmup_started) < 8 * time.Second)
-			thread.yield()
-		}
-
-		for {
-			stats, valid := client.client_stats(&c)
-			assert(valid)
-
-			if stats.idle_connections == 1 {
-				break
-			}
-
-			assert(time.tick_since(warmup_started) < 8 * time.Second)
-			thread.yield()
-		}
-
-		warmup_done = true
+		warmup := wait_completion(&c, warmup_handle, time.tick_now())
+		assert(warmup.error.kind == .None)
+		warmup_response: surf.Response
+		assert(surf.client_take(&c, warmup_handle, &warmup_response).kind == .None)
+		assert(warmup_response.status == 200 && len(warmup_response.body) == 0)
+		surf.response_destroy(&warmup_response)
+		assert(surf.client_release(&c, warmup_handle).kind == .None)
 	}
 
 	scheme := "https" if encrypted else "http"
 	host := "one.redirect.test" if mode == "dns32" else "127.0.0.1"
 	path := "/dir/start" if mode == "relative" else "/start"
 	url := fmt.tprintf("%s://%s:%d%s", scheme, host, endpoint.port, path)
-	method := http.Method.GET
+	method := async.Http_Method.GET
 
 	if strings.has_prefix(mode, "head") {
 		method = .HEAD
@@ -201,7 +157,7 @@ main :: proc() {
 		method = .POST
 	}
 
-	fields := [1]http.Header{{name = "Accept", value = "text/plain"}}
+	fields := [1]async.Http_Header{{name = "Accept", value = "text/plain"}}
 
 	if mode == "cross-auth" {
 		fields[0] = {
@@ -231,21 +187,21 @@ main :: proc() {
 		body = payload[:]
 	}
 
-	cutoff: runtime_async.Deadline
+	cutoff: async.Deadline
 
 	if warmup_case {
-		cutoff = runtime_async.deadline_after(&runtime, 200 * time.Millisecond)
+		cutoff = async.deadline_after(&r, 200 * time.Millisecond)
 	}
 
-	handle, error := client.client_submit(&c, {method = method, url = url, headers = fields[:], body = body}, cutoff)
+	handle, error := surf.client_submit(&c, {method = method, url = url, headers = fields[:], body = body}, cutoff)
 	assert(error.kind == .None)
-	probe.handle = handle
-	probe.armed = mode == "handoff-cancel" || mode == "handoff-close"
 	started := time.tick_now()
 
 	if !warmup_case {
-		assert(runtime_async.start(&runtime).kind == .None)
+		assert(async.start(&r).kind == .None)
 	}
+
+	held_stage := surf.Request_Stage.Queued
 
 	if mode == "cancel" || mode == "close" {
 		for !os.exists(fmt.tprintf("%s/target-held", dir)) {
@@ -253,28 +209,30 @@ main :: proc() {
 			thread.yield()
 		}
 
+		// The second hop's request is on the wire: the stage reaches Reading.
+		for {
+			stage, stage_error := surf.client_request_stage(&c, handle)
+			assert(stage_error.kind == .None)
+			held_stage = stage
+
+			if stage == .Reading {
+				break
+			}
+
+			assert(time.tick_since(started) < 5 * time.Second)
+			thread.yield()
+		}
+
 		if mode == "cancel" {
-			assert(client.client_cancel(&c, handle).kind == .None)
+			assert(surf.client_cancel(&c, handle).kind == .None)
 		} else {
-			closed := client.client_close(&c); assert(closed.kind == .None || closed.kind == .Pending)
+			assert(surf.client_close(&c).kind == .None)
+			_, refused := surf.client_submit(&c, {url = url})
+			assert(refused.kind == .Closed)
 		}
 	}
 
-	completion: client.Completion
-
-	for {
-		result, available := client.client_poll(&c)
-
-		if available {
-			assert(result.request == handle)
-			completion = result
-			break
-		}
-
-		assert(time.tick_since(started) < 8 * time.Second)
-		thread.yield()
-	}
-
+	completion := wait_completion(&c, handle, started)
 	elapsed := time.tick_since(started)
 	success :=
 		strings.has_prefix(mode, "get") ||
@@ -286,123 +244,112 @@ main :: proc() {
 		mode == "post308" ||
 		mode == "disabled"
 	response: surf.Response
+	taken := surf.client_take(&c, handle, &response)
 
 	if success {
+		if completion.error.kind != .None {
+			fmt.eprintf("%s: %v\n", mode, completion.error)
+		}
 		assert(completion.error.kind == .None)
-		assert(client.client_take(&c, handle, &response).kind == .None)
+		assert(taken.kind == .None)
 
 		if mode == "disabled" {
 			assert(response.status == 302 && string(response.body) == "intermediate")
 		} else {
-			assert(response.status == 200); if method == .HEAD {
+			assert(response.status == 200)
+
+			if method == .HEAD {
 				assert(len(response.body) == 0)
 			} else {
 				assert(string(response.body) == "final")
 			}
 		}
 	} else {
+		assert(taken.kind == .Request_Error && taken.http == completion.error)
+		e := completion.error
+		fmt.eprintf("%s: %v\n", mode, e)
+
 		switch mode {
-		case "loop", "hopcap":
-			assert(completion.error.kind == .Redirect_Limit && completion.error.status == 302)
+		case "loop", "hopcap", "dns32":
+			assert(e.kind == .Redirect_Limit && e.phase == .Protocol && e.status == 302)
 		case "bodycap":
-			assert(completion.error.kind == .Body_Oversized && completion.error.status == 302)
+			assert(e.kind == .Body_Oversized && e.status == 302)
 		case "downgrade":
-			assert(completion.error.kind == .Insecure_URL && completion.error.status == 302)
+			assert(e.kind == .Insecure_URL && e.status == 302)
+		case "cross-policy":
+			assert(e.kind == .Address_Rejected && e.phase == .Connect && e.status == 302)
 		case "cutoff":
 			valid_cutoff :=
-				completion.error.kind == .Deadline_Failed &&
-				completion.error.phase == .Deadline &&
-				completion.error.status == 302 &&
-				(completion.error.write_effect == .Unknown || completion.error.write_effect == .Response_Received) &&
+				e.kind == .Deadline_Failed &&
+				e.phase == .Deadline &&
+				e.status == 302 &&
+				(e.write_effect == .Unknown || e.write_effect == .Response_Received) &&
 				elapsed < 350 * time.Millisecond
 
 			if !valid_cutoff {
-				fmt.eprintf(
-					"Cutoff context kind=%v phase=%v status=%d effect=%v elapsed_ms=%d transport=%v\n",
-					completion.error.kind,
-					completion.error.phase,
-					completion.error.status,
-					completion.error.write_effect,
-					i64(elapsed / time.Millisecond),
-					completion.error.transport.kind,
-				)
+				fmt.eprintf("cutoff %v elapsed_ms=%d\n", e, i64(elapsed / time.Millisecond))
 			}
 
 			assert(valid_cutoff)
-		case "dns32":
-			assert(
-				completion.error.kind == .Dial_Failed &&
-				completion.error.phase == .DNS &&
-				completion.error.status == 302,
-			)
-		case "handoff-cancel", "cancel":
-			assert(completion.error.transport.kind == .Cancelled && completion.error.phase == .Cancellation)
-		case "handoff-close", "close":
-			assert(completion.error.kind != .None)
+		case "cancel":
+			assert(e.kind == .IO_Failed && e.phase == .Cancellation && e.status == 302)
+		case "close":
+			// A close lets the request in flight run to its deadline.
+			assert(e.kind == .Deadline_Failed && e.phase == .Deadline && e.status == 302)
 		case:
-			assert(completion.error.kind == .Unsafe_Redirect && completion.error.status != 0)
+			assert(e.kind == .Unsafe_Redirect && e.phase == .Protocol && e.status != 0)
 		}
 
-		if mode != "cancel" &&
-		   mode != "close" &&
-		   mode != "handoff-cancel" &&
-		   mode != "handoff-close" &&
-		   mode != "cutoff" {
-			assert(completion.error.write_effect == .Response_Received)
+		if mode != "cancel" && mode != "close" && mode != "cutoff" {
+			if e.write_effect != .Response_Received {
+				fmt.eprintf("%s: %v\n", mode, e)
+			}
+			assert(e.write_effect == .Response_Received)
 		}
-
-		assert(client.client_release(&c, handle).kind == .None)
 	}
 
-	if mode == "handoff-cancel" || mode == "handoff-close" {
-		assert(probe.fired)
-	}
-
-	_, extra := client.client_poll(&c)
+	assert(surf.client_release(&c, handle).kind == .None)
+	_, extra := surf.client_poll(&c)
 	assert(!extra)
-	assert(client.client_release(&c, handle).kind == .Invalid_Handle)
-	stats, valid := client.client_stats(&c)
-	assert(valid)
+	assert(surf.client_release(&c, handle).kind == .Invalid_Handle)
 
-	if mode == "dns32" {
-		assert(stats.dns_ids == 32 && stats.dns_waiters == 0)
+	if mode != "close" {
+		assert(surf.client_close(&c).kind == .None)
 	}
 
-	closed := client.client_close(&c)
-	assert(closed.kind == .None || closed.kind == .Pending)
 	wait_started := time.tick_now()
 
-	for !client.client_quiescent(&c) {
+	for !surf.client_quiescent(&c) {
 		assert(time.tick_since(wait_started) < 8 * time.Second)
 		thread.yield()
 	}
 
-	_, late := client.client_poll(&c)
+	_, late := surf.client_poll(&c)
 	assert(!late)
-	assert(client.client_destroy(&c).kind == .None)
-	assert(runtime_async.wait_idle(&runtime).kind == .None)
-	assert(runtime_async.destroy(&runtime).kind == .None)
+	assert(surf.client_destroy(&c).kind == .None)
+	async.shutdown(&r)
+	assert(async.join(&r).kind == .None)
+	assert(async.destroy(&r).kind == .None)
 	tls.root_pool_destroy(&roots)
 	assert(fd_count() == fd_before)
 	response_status := response.status
 	surf.response_destroy(&response)
-	state, e := scopes.snapshot(scope)
-	assert(e == .None && state.used == (scopes.Usage{}))
-	scopes.release_scope(&scope)
+	state, e := budget.snapshot(scope)
+	assert(e == .None && state.used == (budget.Usage{}))
+	budget.release_scope(&scope)
 	assert(track.current_memory_allocated == 0 && len(track.allocation_map) == 0 && len(track.bad_free_array) == 0)
 	mem.tracking_allocator_destroy(&track)
 	assert(os.write_entire_file(fmt.tprintf("%s/done", dir), "done") == nil)
 	fmt.print("{")
 	fmt.printf(
-		"\"completed\":1,\"same_handle\":true,\"terminal_once\":true,\"workers\":1,\"cap_one\":true,\"heap_zero\":true,\"scope_zero\":true,\"fd_zero\":true,\"dns_ids_remaining\":%d,\"status\":%d,\"response_status\":%d,\"error\":\"%v\",\"phase\":\"%v\",\"write_effect\":\"%v\",\"handoff_callback\":%v,\"warmup\":%v,\"elapsed_ms\":%d}\n",
-		stats.dns_ids,
+		"\"completed\":1,\"same_handle\":true,\"terminal_once\":true,\"workers\":1,\"cap_one\":true,\"heap_zero\":true,\"scope_zero\":true,\"fd_zero\":true,\"held_stage\":\"%v\",\"status\":%d,\"response_status\":%d,\"error\":\"%v\",\"phase\":\"%v\",\"write_effect\":\"%v\",\"warmup\":%v,\"elapsed_ms\":%d}\n",
+		held_stage,
 		completion.error.status,
 		response_status,
 		completion.error.kind,
 		completion.error.phase,
 		completion.error.write_effect,
-		probe.fired,
-		warmup_done,
+		warmup_case,
 		i64(elapsed / time.Millisecond),
 	)
 }

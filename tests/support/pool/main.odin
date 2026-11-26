@@ -1,7 +1,6 @@
 package main
-import client "shared:surf/async"
 import runtime_async "shared:async"
-import surf "shared:surf"
+import "shared:surf"
 import http "shared:async/http"
 import rt "base:runtime"
 import "shared:async/tls"
@@ -9,7 +8,7 @@ import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
-import scopes "shared:async/sync/budget"
+import "shared:async/budget"
 import "core:strconv"
 import "core:sys/posix"
 import "core:thread"
@@ -33,11 +32,11 @@ field :: proc(r: ^surf.Response, name: string) -> string {
 		}
 	}; return ""
 }
-wait :: proc(c: ^client.Client, h: client.Request_Handle) -> client.Completion {
+wait :: proc(c: ^surf.Client, h: surf.Request_Handle) -> surf.Completion {
 	start := time.tick_now()
 
 	for {
-		result, available := client.client_poll(c)
+		result, available := surf.client_poll(c)
 
 		if available {
 			assert(result.request == h); return result
@@ -47,26 +46,11 @@ wait :: proc(c: ^client.Client, h: client.Request_Handle) -> client.Completion {
 		thread.yield()
 	}
 }
-// Rejected Capacity owns no handle or wire attempt. Wait for the previous
-// physical Origin/Session retirement, retaining one caller cutoff for admission.
-submit :: proc(c: ^client.Client, r: ^runtime_async.Runtime, request: http.Request) -> client.Request_Handle {
-	deadline := runtime_async.deadline_after(r, 3 * time.Second)
+submit :: proc(c: ^surf.Client, r: ^runtime_async.Runtime, request: http.Request) -> surf.Request_Handle {
+	h, error := surf.client_submit(c, request, runtime_async.deadline_after(r, 3 * time.Second))
+	assert(error.kind == .None)
 
-	for {
-		h, error := client.client_submit(c, request, deadline)
-
-		if error.kind == .None {
-			return h
-		}
-
-		if error.kind != .Capacity {
-			fmt.eprintf("submit failed %v\n", error)
-		}
-
-		assert(error.kind == .Capacity && h == (client.Request_Handle{}))
-		assert(runtime_async.deadline_after(r, 0).at < deadline.at)
-		time.sleep(time.Millisecond)
-	}
+	return h
 }
 main :: proc() {
 	assert(len(os.args) == 5)
@@ -77,54 +61,44 @@ main :: proc() {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, rt.heap_allocator(), rt.heap_allocator())
 	allocator := mem.tracking_allocator(&track)
-	scope, cause := scopes.create_root({bytes = 32 << 20, streams = 2, jobs = 8}, allocator)
+	scope, cause := budget.create_root({bytes = 32 << 20, streams = 2, jobs = 8}, allocator)
 	assert(cause == .None)
 	roots: tls.Root_Pool
 
 	if encrypted {
 		raw, error := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator); assert(error == nil)
-		assert(tls.root_pool_parse(&roots, raw, allocator).kind == .None); delete(raw, allocator)
+		assert(tls.root_pool_parse(&roots, raw, allocator) == nil); delete(raw, allocator)
 	}
 
 	before := fd_count()
 	r: runtime_async.Runtime
 	assert(
-		runtime_async.init(&r, {workers = 1, task_capacity = 6, io_capacity = 4, allocator = allocator}).kind == .None,
+		runtime_async.init(&r, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind == .None,
 	)
-	c: client.Client
-	config := client.Client_Config {
+	c: surf.Client
+	config := surf.Client_Config {
 		http = {allow_http = true, timeout = 3 * time.Second, scope = scope},
-		capacities = client.Capacities {
+		capacities = surf.Capacities {
 			requests = 4,
 			origins = 4,
-			connections = 2,
 			connections_per_origin = 1,
-			waiters_per_origin = 2,
-			dns_ids = 0,
-			work_per_resume = 1,
+			upload_chunks = 1,
+			response_chunks = 1,
 		},
 	}
 
-	protocols := [1]string{"http/1.1"}
-
 	if framing {
-		config.capacities = client.Capacities {
+		config.capacities = surf.Capacities {
 			requests               = 2,
 			origins                = 1,
-			connections            = 1,
 			connections_per_origin = 1,
-			waiters_per_origin     = 1,
-			dns_ids                = 0,
-			work_per_resume        = 1,
+			upload_chunks          = 1,
+			response_chunks        = 1,
 		}
 	}
 
 	if mode == "idle" {
-		config.idle_timeout = 50 * time.Millisecond; config.max_age = 10 * time.Second
-	}
-
-	if mode == "maxage" {
-		config.idle_timeout = 10 * time.Second; config.max_age = 100 * time.Millisecond
+		config.idle_timeout = 50 * time.Millisecond
 	}
 
 	dns_servers: [1]net.Endpoint
@@ -136,17 +110,13 @@ main :: proc() {
 		assert(valid)
 		delete(bytes, allocator)
 		config.http.resolver.name_servers = dns_servers[:]
-		caps, ok := config.capacities.?
-		assert(ok)
-		caps.dns_ids = 64
-		config.capacities = caps
 	}
 
 	if encrypted {
-		config.http.tls.root_cas = roots.roots[:roots.count]; config.http.tls.alpn_protocols = protocols[:]
+		config.http.tls.roots = &roots
 	}
 
-	assert(client.client_init(&c, &r, config, allocator).kind == .None)
+	assert(surf.client_init(&c, &r, config, allocator).kind == .None)
 	assert(runtime_async.start(&r).kind == .None)
 	result := Mode_Result{}
 
@@ -205,7 +175,7 @@ main :: proc() {
 
 			if item.failure == .None {
 				response: surf.Response
-				assert(client.client_take(&c, h, &response).kind == .None)
+				assert(surf.client_take(&c, h, &response).kind == .None)
 				assert(response.status == item.status && string(response.body) == item.body)
 				connection, ok := strconv.parse_int(field(&response, "X-Connection"))
 				assert(ok && connection > 0)
@@ -224,9 +194,9 @@ main :: proc() {
 
 				previous = connection
 				surf.response_destroy(&response)
-			} else {
-				assert(client.client_release(&c, h).kind == .None)
 			}
+
+			assert(surf.client_release(&c, h).kind == .None)
 		}
 
 		result = {
@@ -238,23 +208,23 @@ main :: proc() {
 		result = run_mode(&c, &r, config, endpoint, encrypted, mode, dir, allocator)
 	}
 
-	close := client.client_close(&c)
+	close := surf.client_close(&c)
 	assert(close.kind == .None || close.kind == .Pending)
 	start := time.tick_now()
 
-	for !client.client_quiescent(&c) {
+	for !surf.client_quiescent(&c) {
 		assert(time.tick_since(start) < 8 * time.Second)
 		thread.yield()
 	}
 
-	assert(client.client_destroy(&c).kind == .None)
+	assert(surf.client_destroy(&c).kind == .None)
 	assert(runtime_async.wait_idle(&r).kind == .None)
 	assert(runtime_async.destroy(&r).kind == .None)
 	tls.root_pool_destroy(&roots)
 	assert(fd_count() == before)
-	usage, _ := scopes.snapshot(scope)
-	assert(usage.used == (scopes.Usage{}))
-	scopes.release_scope(&scope)
+	usage, _ := budget.snapshot(scope)
+	assert(usage.used == (budget.Usage{}))
+	budget.release_scope(&scope)
 	assert(track.current_memory_allocated == 0 && len(track.bad_free_array) == 0)
 	mem.tracking_allocator_destroy(&track)
 	assert(os.write_entire_file(fmt.tprintf("%s/done", dir), "done") == nil)
@@ -277,17 +247,18 @@ Mode_Result :: struct {
 	completed, failures, rejected, first, second, third: int,
 	timer_ns:                                            i64,
 }
-fetch :: proc(c: ^client.Client, r: ^runtime_async.Runtime, url: string) -> (int, surf.HTTP_Error) {
+fetch :: proc(c: ^surf.Client, r: ^runtime_async.Runtime, url: string) -> (int, surf.HTTP_Error) {
 	h := submit(c, r, {method = .GET, url = url})
 	completion := wait(c, h)
 
 	if completion.error.kind != .None {
-		assert(client.client_release(c, h).kind == .None)
+		assert(surf.client_release(c, h).kind == .None)
 		return 0, completion.error
 	}
 
 	response: surf.Response
-	assert(client.client_take(c, h, &response).kind == .None)
+	assert(surf.client_take(c, h, &response).kind == .None)
+	assert(surf.client_release(c, h).kind == .None)
 	assert(response.status == 200 && string(response.body) == "ok")
 	id, ok := strconv.parse_int(field(&response, "X-Connection"))
 	assert(ok && id > 0)
@@ -296,9 +267,9 @@ fetch :: proc(c: ^client.Client, r: ^runtime_async.Runtime, url: string) -> (int
 	return id, {}
 }
 run_mode :: proc(
-	c: ^client.Client,
+	c: ^surf.Client,
 	r: ^runtime_async.Runtime,
-	config: client.Client_Config,
+	config: surf.Client_Config,
 	endpoint: net.Endpoint,
 	encrypted: bool,
 	mode, dir: string,
@@ -312,17 +283,10 @@ run_mode :: proc(
 	assert(error.kind == .None)
 	result.first = first
 	result.completed = 1
-	if mode == "idle" || mode == "maxage" {
+	if mode == "idle" {
 		start := time.tick_now()
 
-		for {
-			stats, valid := client.client_stats(c)
-			assert(valid)
-
-			if stats.close_count > 0 {
-				break
-			}
-
+		for !os.exists(fmt.tprintf("%s/closed-%d", dir, first)) {
 			assert(time.tick_since(start) < time.Second)
 			time.sleep(time.Millisecond)
 		}
@@ -343,12 +307,12 @@ run_mode :: proc(
 			time.sleep(time.Millisecond)
 		}
 
-		_, cause := fetch(c, r, fmt.tprintf("%s://127.0.0.1:%d/B", scheme, endpoint.port))
-		assert(cause.kind != .None && cause.write_effect == .Not_Sent)
+		second, cause := fetch(c, r, fmt.tprintf("%s://127.0.0.1:%d/B", scheme, endpoint.port))
+		assert(cause.kind == .None && second != first)
 		third, success := fetch(c, r, fmt.tprintf("%s://127.0.0.1:%d/C", scheme, endpoint.port))
-		assert(success.kind == .None && third != first)
+		assert(success.kind == .None && third == second)
 		result.completed = 3
-		result.failures = 1
+		result.second = second
 		result.third = third
 		return result
 	}
@@ -397,49 +361,38 @@ run_mode :: proc(
 		result.third = third
 		return result
 	}
-	if mode == "clients" || mode == "trust" || mode == "alpn" {
-		b: client.Client
+	if mode == "clients" || mode == "trust" {
+		b: surf.Client
 		other := config
 		wrong: tls.Root_Pool
-		offers := [1]string{"h3"}
 
 		if mode == "trust" {
 			raw, cause := os.read_entire_file(fmt.tprintf("%s/wrong.pem", dir), allocator); assert(cause == nil)
-			assert(tls.root_pool_parse(&wrong, raw, allocator).kind == .None); delete(raw, allocator)
-			other.http.tls.root_cas = wrong.roots[:wrong.count]
+			assert(tls.root_pool_parse(&wrong, raw, allocator) == nil); delete(raw, allocator)
+			other.http.tls.roots = &wrong
 		}
 
-		if mode == "alpn" {
-			other.http.tls.alpn_protocols = offers[:]
-		}
+		assert(surf.client_init(&b, r, other, allocator).kind == .None)
+		second, cause := fetch(&b, r, fmt.tprintf("%s://127.0.0.1:%d/B", scheme, endpoint.port))
 
-		init := client.client_init(&b, r, other, allocator)
-
-		if mode == "alpn" {
-			assert(init.kind == .Invalid_Config); result.rejected = 1
+		if mode == "trust" {
+			assert(cause.kind == .TLS_Failed); result.failures = 1
 		} else {
-			assert(init.kind == .None)
-			second, cause := fetch(&b, r, fmt.tprintf("%s://127.0.0.1:%d/B", scheme, endpoint.port))
-
-			if mode == "trust" {
-				assert(cause.kind == .TLS_Failed); result.failures = 1
-			} else {
-				assert(cause.kind == .None && second != first)
-			}
-
-			result.second = second
-			result.completed += 1
-			closed := client.client_close(&b)
-			assert(closed.kind == .None || closed.kind == .Pending)
-			start := time.tick_now()
-
-			for !client.client_quiescent(&b) {
-				assert(time.tick_since(start) < 5 * time.Second)
-				thread.yield()
-			}
-
-			assert(client.client_destroy(&b).kind == .None)
+			assert(cause.kind == .None && second != first)
 		}
+
+		result.second = second
+		result.completed += 1
+		closed := surf.client_close(&b)
+		assert(closed.kind == .None || closed.kind == .Pending)
+		start := time.tick_now()
+
+		for !surf.client_quiescent(&b) {
+			assert(time.tick_since(start) < 5 * time.Second)
+			thread.yield()
+		}
+
+		assert(surf.client_destroy(&b).kind == .None)
 
 		tls.root_pool_destroy(&wrong)
 		third, success := fetch(c, r, fmt.tprintf("%s://127.0.0.1:%d/C", scheme, endpoint.port))

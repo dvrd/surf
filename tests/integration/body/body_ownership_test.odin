@@ -1,11 +1,33 @@
 package tests
 
-import surf "shared:surf"
-import "../../support/http_fixture"
-import owned "shared:async/mem/owned"
+import "../../support/loopback"
+import "core:fmt"
 import "core:mem"
-import "core:net"
 import "core:testing"
+import "core:time"
+import "shared:async"
+import "shared:surf"
+
+body_fetch :: proc(t: ^testing.T, wire: string, allocator: mem.Allocator) -> (surf.Response, bool) {
+	peer := loopback.Server {
+		answer = {wire = wire},
+	}
+
+	if !testing.expect(t, loopback.server_start(&peer)) {
+		return {}, false
+	}
+	defer loopback.server_stop(&peer)
+
+	url := fmt.tprintf("http://127.0.0.1:%d/", peer.port)
+	response, error := surf.execute({method = .GET, url = url}, {allow_http = true, timeout = 5 * time.Second}, allocator)
+
+	if !testing.expect_value(t, error.kind, .None) {
+		surf.response_destroy(&response)
+		return {}, false
+	}
+
+	return response, true
+}
 
 @(test)
 response_body_transfer_survives_response_destroy :: proc(t: ^testing.T) {
@@ -13,28 +35,19 @@ response_body_transfer_survives_response_destroy :: proc(t: ^testing.T) {
 	mem.tracking_allocator_init(&tracker, context.allocator)
 	defer mem.tracking_allocator_destroy(&tracker)
 	allocator := mem.tracking_allocator(&tracker)
-	fixture := http_fixture.Fixture {
-		wire = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nX-Fixture: yes\r\n\r\nbody",
-	}
+	response, ok := body_fetch(t, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nX-Fixture: yes\r\n\r\nbody", allocator)
 
-	stream := net.Connection {
-		data  = &fixture,
-		read = http_fixture.read,
-		write = http_fixture.write,
-		close = http_fixture.close,
-	}
-
-	response, request_error := surf.exchange(stream, {method = .GET, url = "https://example.com/"}, 64, allocator)
-
-	if !testing.expect_value(t, request_error.kind, .None) {
+	if !ok {
 		return
 	}
 
 	defer surf.response_destroy(&response)
+	value, found := surf.response_header(&response, "x-fixture")
+	testing.expect(t, found && value == "yes")
 	original := raw_data(response.body)
 	capacity := cap(response.body_storage)
 	chunk, transfer_error := surf.response_take_body(&response)
-	defer owned.destroy(&chunk)
+	defer async.owned_destroy(&chunk)
 	testing.expect_value(t, transfer_error.kind, .None)
 	testing.expect(t, raw_data(chunk.data) == original && string(chunk.data) == "body")
 	testing.expect_value(t, len(chunk.storage), capacity)
@@ -44,10 +57,10 @@ response_body_transfer_survives_response_destroy :: proc(t: ^testing.T) {
 	surf.response_destroy(&response)
 	testing.expect_value(t, string(chunk.data), "body")
 	testing.expect_value(t, tracker.current_memory_allocated, i64(capacity))
-	owned.destroy(&chunk)
+	async.owned_destroy(&chunk)
 	testing.expect_value(t, tracker.current_memory_allocated, 0)
 	frees := tracker.total_free_count
-	owned.destroy(&chunk)
+	async.owned_destroy(&chunk)
 	surf.response_destroy(&response)
 	testing.expect_value(t, tracker.total_free_count, frees)
 }
@@ -78,30 +91,19 @@ response_body_rejection_preserves_original_response :: proc(t: ^testing.T) {
 }
 
 @(test)
-empty_exchange_body_can_transfer_as_an_owned_zero_byte_chunk :: proc(t: ^testing.T) {
-	fixture := http_fixture.Fixture {
-		wire = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
-	}
+empty_body_can_transfer_as_an_owned_zero_byte_chunk :: proc(t: ^testing.T) {
+	response, ok := body_fetch(t, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", context.allocator)
 
-	stream := net.Connection {
-		data  = &fixture,
-		read = http_fixture.read,
-		write = http_fixture.write,
-		close = http_fixture.close,
-	}
-
-	response, request_error := surf.exchange(stream, {method = .GET, url = "https://example.com/"}, 64)
-
-	if !testing.expect_value(t, request_error.kind, .None) {
+	if !ok {
 		return
 	}
 
 	defer surf.response_destroy(&response)
 	capacity := cap(response.body_storage)
 	chunk, error := surf.response_take_body(&response)
-	defer owned.destroy(&chunk)
+	defer async.owned_destroy(&chunk)
 	testing.expect_value(t, error.kind, .None)
-	testing.expect(t, owned.valid(&chunk) && len(chunk.data) == 0 && len(chunk.storage) == capacity)
+	testing.expect(t, async.owned_valid(&chunk) && len(chunk.data) == 0 && len(chunk.storage) == capacity)
 	surf.response_destroy(&response)
-	owned.destroy(&chunk)
+	async.owned_destroy(&chunk)
 }

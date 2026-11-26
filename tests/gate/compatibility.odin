@@ -41,6 +41,8 @@ Request :: struct {
 	custom_ca: bool,
 	headers:   []string,
 	wire:      compatibility_Wire,
+	// Refused before sending, with this HTTP_Error kind.
+	refused:   string,
 }
 
 compatibility_Record :: struct {
@@ -118,11 +120,17 @@ run_compatibility :: proc() {
 		}
 		delete(env)
 	}
-	for method in ([?]string{"GET", "get", "POST", "PUT", "DELETE", "PATCH", "PROPFIND", "HEAD"}) {
+	for method in ([?]string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"}) {
 		req := base_request(fmt.tprintf("method-%s", method), method)
 		must(&g, binary, env[:], req)
 	}
-	for method in ([?]string{"PUT", "POST", "DELETE", "PROPFIND"}) {
+	// Methods outside HTTP's registered set, in any case, are refused.
+	for method in ([?]string{"get", "PROPFIND"}) {
+		req := base_request(fmt.tprintf("refused-%s", method), method)
+		req.refused, req.wire = "Invalid_Method", .Forbidden
+		must(&g, binary, env[:], req)
+	}
+	for method in ([?]string{"PUT", "POST", "DELETE"}) {
 		req := base_request(fmt.tprintf("file-%s", method), method)
 		req.file = true
 		must(&g, binary, env[:], req)
@@ -137,7 +145,7 @@ run_compatibility :: proc() {
 	must(&g, binary, env[:], short)
 	{
 		headers := [?]string{
-			"Host: override.test", "X-Duplicate: one", "X-Duplicate: two",
+			"X-Duplicate: one", "X-Duplicate: two",
 			"Accept:", "X-Suppress:", "X-Empty;", "bare",
 		}
 		req := base_request("headers", "GET")
@@ -151,9 +159,11 @@ run_compatibility :: proc() {
 		must(&g, binary, env[:], req)
 	}
 	{
+		// The URL always supplies Host.
 		headers := [?]string{"Host: first.test", "Host: second.test"}
 		req := base_request("host-duplicate", "POST")
 		req.headers = headers[:]
+		req.refused, req.wire = "Reserved_Header", .Forbidden
 		must(&g, binary, env[:], req)
 	}
 	{
@@ -172,6 +182,7 @@ run_compatibility :: proc() {
 		headers := [?]string{"Content-Length: 4"}
 		req := base_request("length-override", "POST")
 		req.headers = headers[:]
+		req.wire = .Forbidden
 		must(&g, binary, env[:], req)
 	}
 	for method in ([?]string{"PUT", "POST"}) {
@@ -220,7 +231,7 @@ run_compatibility :: proc() {
 	if server_error != "" {
 		abort(&g, server_error)
 	}
-	if cells != 41 {
+	if cells != 40 {
 		abort(&g, "matrix")
 	}
 	text := fmt.aprintf("{{\"passed\":true,\"cells\":%d}}\n", cells)
@@ -317,6 +328,17 @@ execute :: proc(binary: string, env: []string, req: Request) -> (native: json.Va
 }
 
 expect_case :: proc(req: Request, native: json.Value, hit: Hit) -> string {
+	if req.refused != "" {
+		if support.is_true(native, "transport_ok") ||
+		   hit.present ||
+		   !support.eq_string(native, "kind", req.refused) ||
+		   !support.eq_string(native, "effect", "Not_Sent") {
+			return "refused"
+		}
+
+		return ""
+	}
+
 	if strings.has_prefix(req.name, "method-") {
 		want := ""
 		if req.method == "PUT" || req.method == "POST" {
@@ -345,11 +367,26 @@ expect_case :: proc(req: Request, native: json.Value, hit: Hit) -> string {
 		}
 	}
 	if req.name == "headers" {
-		want := [?]string{"Host: override.test", "X-Duplicate: one", "X-Duplicate: two", "X-Empty:"}
-		if !hit.present || !headers_match(hit.headers, want[:]) {
+		want := [?]string{
+			"X-Duplicate: one", "X-Duplicate: two", "X-Empty:",
+		}
+		if !hit.present || !headers_match(application_headers(hit.headers), want[:]) {
 			return "headers"
 		}
 	}
+
+	if req.name == "length-override" {
+		if support.is_true(native, "transport_ok") || hit.present {
+			return "length"
+		}
+
+		if !support.eq_string(native, "kind", "Reserved_Header") ||
+		   !support.eq_string(native, "phase", "Configuration") ||
+		   !support.eq_string(native, "effect", "Not_Sent") {
+			return "length"
+		}
+	}
+
 	if strings.has_prefix(req.name, "response-") {
 		return expect_response(req, native)
 	}
@@ -392,8 +429,9 @@ expect_response :: proc(req: Request, native: json.Value) -> string {
 		ok, status, length = true, 307, 0
 	case "/reset", "/malformed", "/slow":
 		ok, status, length = false, 0, 0
+	// A HEAD response has no body: it completes at its head.
 	case "/head-wait":
-		ok, status, length = false, 200, 0
+		ok, status, length = true, 200, 0
 	case:
 		return "response"
 	}
@@ -409,7 +447,7 @@ expect_response :: proc(req: Request, native: json.Value) -> string {
 			}
 		}
 	}
-	if req.target == "/slow" || req.target == "/head-wait" {
+	if req.target == "/slow" {
 		elapsed, elapsed_ok := support.f64_field(native, "elapsed_ms")
 		if !support.eq_string(native, "phase", "Deadline") || !elapsed_ok || elapsed < 50 || elapsed >= 1000 {
 			return "deadline"
@@ -930,4 +968,25 @@ compatibility_bytes_index :: proc(buf: []u8, needle: string) -> int {
 		}
 	}
 	return -1
+}
+
+// The caller's fields in wire order, without the ones the client manages.
+application_headers :: proc(lines: [dynamic]string) -> [dynamic]string {
+	managed := [?]string{"host", "connection", "accept-encoding", "content-length", "te"}
+	result := make([dynamic]string, 0, len(lines), context.temp_allocator)
+
+	outer: for line in lines {
+		colon := strings.index_byte(line, ':')
+		name := line[:colon] if colon >= 0 else line
+
+		for m in managed {
+			if strings.equal_fold(name, m) {
+				continue outer
+			}
+		}
+
+		append(&result, strings.trim_right_space(line))
+	}
+
+	return result
 }

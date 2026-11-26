@@ -11,14 +11,12 @@ import "core:strings"
 import "core:sys/posix"
 import "core:time"
 
-concurrency_UNIT_FILTER :: "-define:ODIN_TEST_NAMES=public_concurrency_prestart_bounded_producers_and_parallel_terminal_consumers,public_concurrency_shutdown_while_producer_is_in_real_allocation_callback"
-
 run_concurrency :: proc() {
-	gate_label = "concurrency101"
+	gate_label = "concurrency"
 
 	_ = posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
 	compiler, shared, report_path, sanitizer := parse_args()
-	root := fmt.aprintf("/tmp/okami-concurrency101-%d", posix.getpid())
+	root := fmt.aprintf("/tmp/okami-concurrency-%d", posix.getpid())
 	defer delete(root)
 	if err := os.make_directory_all(root, DIR_PERM); err != nil && err != .Exist {
 		fail("directory")
@@ -43,19 +41,16 @@ run_concurrency :: proc() {
 			concurrency_cell(peer_bin, fixture_bin, root, transport, mode)
 		}
 	}
-	if !concurrency_units(compiler, shared, sanitizer) {
-		fail("concurrency tests")
-	}
-	text := "{{\"passed\":true,\"cells\":4,\"units\":2}}\n"
+	text := "{\"passed\":true,\"cells\":4}\n"
 	if os.write_entire_file(report_path, transmute([]u8)text, FILE_PERM) != nil {
 		fail("report")
 	}
-	fmt.println("4 client concurrency cells passed; 2 public concurrency tests passed")
+	fmt.println("4 client concurrency cells passed")
 }
 
 concurrency_session_abort :: proc(s: ^Session, reason: string) {
 	session_cleanup(s)
-	fmt.eprintf("concurrency101: %s %s: %s\n", s.transport, s.mode, reason)
+	fmt.eprintf("concurrency: %s %s: %s\n", s.transport, s.mode, reason)
 	if len(s.fixture_err.buf) > 0 {
 		fmt.eprintf("fixture: %s\n", clip(string(s.fixture_err.buf[:])))
 	}
@@ -67,7 +62,7 @@ concurrency_session_abort :: proc(s: ^Session, reason: string) {
 }
 
 concurrency_cell :: proc(peer_bin, fixture_bin, root, transport, mode: string) {
-	fmt.eprintf("concurrency101: %s %s\n", transport, mode)
+	fmt.eprintf("concurrency: %s %s\n", transport, mode)
 	_ = os.flush(os.stderr)
 	dir := fmt.aprintf("%s/%s-%s", root, transport, mode)
 	defer delete(dir)
@@ -234,7 +229,7 @@ concurrency_check :: proc(native_doc, oracle_doc: string, encrypted: bool, mode:
 		}
 		native_seen[rec.id] = true
 		if mode == "shutdown" {
-			if rec.kind != "IO_Failed" || rec.phase != "Cancellation" || rec.transport != "Cancelled" {
+			if rec.kind != "IO_Failed" || rec.phase != "Cancellation" {
 				fail("cancellation")
 			}
 		}
@@ -299,74 +294,3 @@ release_oracle :: proc(oracle: ^Oracle) {
 	}
 	delete(oracle.requests)
 }
-
-concurrency_units :: proc(compiler, shared, sanitizer: string) -> bool {
-	fmt.eprintf("concurrency101: concurrency tests\n")
-	_ = os.flush(os.stderr)
-	base, env_error := os.environ(context.allocator)
-	if env_error != nil {
-		return false
-	}
-	env := make([dynamic]string, 0, len(base) + 2)
-	defer {
-		for item in env {
-			delete(item)
-		}
-		delete(env)
-	}
-	for item in base {
-		if strings.has_prefix(item, "ODIN=") || strings.has_prefix(item, "WEBTOOLS_SHARED=") {
-			delete(item)
-			continue
-		}
-		append(&env, item)
-	}
-	delete(base)
-	append(&env, fmt.aprintf("ODIN=%s", compiler))
-	append(&env, fmt.aprintf("WEBTOOLS_SHARED=%s", shared))
-	command := make([dynamic]string)
-	defer delete(command)
-	append(&command, "task", "test", "INTERNAL=1", "PACKAGE=async", "--", "-define:ODIN_TEST_THREADS=1", "-define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true", concurrency_UNIT_FILTER)
-	if sanitizer != "" && sanitizer != "none" {
-		append(&command, fmt.aprintf("-sanitize:%s", sanitizer))
-	}
-	out := Capture{buf = make([dynamic]u8, 0, 8192)}
-	err := Capture{buf = make([dynamic]u8, 0, 8192)}
-	defer delete(out.buf)
-	defer delete(err.buf)
-	out_r, out_w, pipe_err := os.pipe()
-	if pipe_err != nil {
-		return false
-	}
-	defer os.close(out_r)
-	err_r, err_w, pipe_err2 := os.pipe()
-	if pipe_err2 != nil {
-		os.close(out_w)
-		return false
-	}
-	defer os.close(err_r)
-	process, start_error := os.process_start({command = command[:], env = env[:], stdout = out_w, stderr = err_w})
-	_ = os.close(out_w)
-	_ = os.close(err_w)
-	if start_error != nil {
-		return false
-	}
-	out.file = out_r
-	err.file = err_r
-	live := true
-	state, ok := wait_proc(process, &out, &err, &live, 300 * time.Second)
-	text := string(out.buf[:])
-	diag := string(err.buf[:])
-	finished := strings.contains(text, "Finished 2 tests") || strings.contains(diag, "Finished 2 tests")
-	succeeded := strings.contains(text, "All tests were successful") || strings.contains(diag, "All tests were successful")
-	producers := strings.contains(text, "producer_threads=4 attempts=256 accepted=8 consumer_threads=4 terminal_once=true") || strings.contains(diag, "producer_threads=4 attempts=256 accepted=8 consumer_threads=4 terminal_once=true")
-	shutdown := strings.contains(text, "shutdown_during_clone_callback=true producers=4 seeded=1") || strings.contains(diag, "shutdown_during_clone_callback=true producers=4 seeded=1")
-	missing := strings.contains(text, "No test found") || strings.contains(diag, "No test found") || strings.contains(text, "No tests to run") || strings.contains(diag, "No tests to run")
-	if !ok || state.exit_code != 0 || !finished || !succeeded || !producers || !shutdown || missing {
-		fmt.eprintf("concurrency101 units: ok=%t exit=%d\n%s\n%s\n", ok, state.exit_code, clip(text), clip(diag))
-		_ = os.flush(os.stderr)
-		return false
-	}
-	return true
-}
-

@@ -15,7 +15,7 @@ POLL :: 250 * time.Millisecond
 // suite binary. The group has to exist before exec or a timeout cannot reach
 // that child. process_wait also retries EINTR, so the suite is polled with
 // waitpid and the signal flag is observed between polls.
-spawn_grouped :: proc(command: []string, working_dir: string) {
+spawn_grouped :: proc(command: []string, working_dir: string, log: string = "") {
 	if len(command) == 0 {
 		say_err("empty command\n")
 		finish(1)
@@ -39,6 +39,23 @@ spawn_grouped :: proc(command: []string, working_dir: string) {
 			finish(1)
 		}
 		cwd = text
+	}
+
+	// The child takes the log as stdout and stderr, so both keep their order in one file.
+	output := posix.FD(-1)
+	if log != "" {
+		path, err := strings.clone_to_cstring(log)
+		if err != nil {
+			say_err("out of memory\n")
+			finish(1)
+		}
+
+		output = posix.open(path, {.WRONLY, .CREAT, .TRUNC, .CLOEXEC}, {.IRUSR, .IWUSR})
+		delete(path)
+		if output == -1 {
+			say_err("%s: %s\n", log, string(posix.strerror()))
+			finish(1)
+		}
 	}
 
 	ends: [2]posix.FD
@@ -79,6 +96,12 @@ spawn_grouped :: proc(command: []string, working_dir: string) {
 			posix.close(null)
 		}
 
+		if output != -1 {
+			if posix.dup2(output, posix.STDOUT_FILENO) == -1 || posix.dup2(output, posix.STDERR_FILENO) == -1 {
+				child_fail(ends[1])
+			}
+		}
+
 		if cwd != nil && posix.chdir(cwd) != .OK {
 			child_fail(ends[1])
 		}
@@ -91,6 +114,10 @@ spawn_grouped :: proc(command: []string, working_dir: string) {
 		delete(argv)
 		if cwd != nil {
 			delete(cwd)
+		}
+
+		if output != -1 {
+			posix.close(output)
 		}
 
 		child_pid = pid

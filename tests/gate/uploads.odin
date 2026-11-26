@@ -90,7 +90,7 @@ run_uploads :: proc() {
 	uploads_check(plain, secure)
 	uploads_stop_peer(plain)
 	uploads_stop_peer(secure)
-	text := "{{\"passed\":true,\"scenarios\":10}}\n"
+	text := "{\"passed\":true,\"scenarios\":10}\n"
 	if os.write_entire_file(report_path, transmute([]u8)text, FILE_PERM) != nil {
 		fail("report")
 	}

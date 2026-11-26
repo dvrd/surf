@@ -1,5 +1,5 @@
-// Public Client redirect matrix. Units run once, then one cell per mode.
-// The peer is tests/support/redirect/peer.
+// Public Client redirect matrix, one cell per mode. The peer is
+// tests/support/redirect/peer.
 
 package main
 
@@ -15,23 +15,14 @@ redirect_TCP_MODES :: [?]string{
 	"head301", "head302", "head303", "head307", "head308",
 	"post301", "post302", "post303", "post307", "post308",
 	"disabled", "relative", "cross-public", "cross-auth", "cross-cookie", "cross-custom",
-	"loop", "hopcap", "bodycap", "cutoff", "dns32", "cancel", "close", "handoff-cancel", "handoff-close",
-}
-
-redirect_UNIT_NAMES :: [?]string{
-	"redirect28_public_config_and_prestart_handle_lifecycle",
-	"network_schema_rejects_forged_normalization_and_invalid_redirect_policy",
+	"cross-policy", "loop", "hopcap", "bodycap", "cutoff", "dns32", "cancel", "close",
 }
 
 run_redirect :: proc() {
 	gate_label = "redirect"
 
-	g := support.begin("redirect101")
+	g := support.begin("redirect")
 	defer support.end(&g)
-	units := redirect_UNIT_NAMES
-	if !support.task_test(&g, "async", units[:], 2) {
-		support.fail(&g, "units")
-	}
 	peer_bin := support.path(&g, "peer")
 	defer delete(peer_bin)
 	fixture_bin := support.path(&g, "fixture")
@@ -58,7 +49,7 @@ run_redirect :: proc() {
 		}
 		cells += 1
 	}
-	if cells != 61 {
+	if cells != 59 {
 		support.fail(&g, "matrix")
 	}
 	text := fmt.aprintf("{{\"passed\":true,\"cells\":%d}}\n", cells)
@@ -176,7 +167,7 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 	if single_wire(mode) {
 		expected = 1
 	}
-	if mode == "loop" || mode == "hopcap" {
+	if mode == "loop" || mode == "hopcap" || mode == "dns32" {
 		expected = 6
 	}
 	if mode == "cutoff" {
@@ -247,8 +238,8 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 			}
 		}
 	}
-	if strings.has_prefix(mode, "handoff-") && !support.is_true(native, "handoff_callback") {
-		return "handoff"
+	if (mode == "cancel" || mode == "close") && !support.eq_string(native, "held_stage", "Reading") {
+		return "held stage"
 	}
 	if mode == "relative" {
 		if expected < 2 || !support.eq_string(events[1], "path", "/final?proof=relative") {
@@ -274,20 +265,15 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 		}
 	}
 	if mode == "dns32" {
-		if !support.eq_int(native, "dns_ids_remaining", 32) {
-			return "dns allowance"
-		}
 		names, names_ok := support.array_field(peer, "dns_names")
-		want := [?]string{"one.redirect.test", "two.redirect.test"}
-		if !names_ok || !support.same_strings(names, want[:]) {
+		want := [?]string{"one.redirect.test", "two.redirect.test", "three.redirect.test"}
+		if !names_ok || !redirect_names_cover(names, want[:]) {
 			return "dns names"
 		}
-		if len(events) != 2 {
-			return "dns order"
-		}
+		hosts := [?]string{"one.redirect.test", "two.redirect.test", "three.redirect.test", "three.redirect.test", "three.redirect.test", "three.redirect.test"}
 		for event, i in events {
 			host, host_ok := support.string_field(event, "host")
-			if !host_ok || hostname(host) != want[i] {
+			if !host_ok || hostname(host) != hosts[i] {
 				return "dns order"
 			}
 		}
@@ -299,9 +285,45 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 
 single_wire :: proc(mode: string) -> bool {
 	switch mode {
-	case "disabled", "bodycap", "downgrade", "cross-auth", "cross-cookie", "cross-custom", "handoff-cancel", "handoff-close", "post301", "post302", "post303", "head301", "head302", "head303":
+	case "disabled", "bodycap", "downgrade", "cross-auth", "cross-cookie", "cross-custom", "cross-policy", "post301", "post302", "post303", "head301", "head302", "head303":
 		return true
 	}
 	return false
 }
 
+
+// Every name the peer resolved is one of want, and each of want was resolved.
+redirect_names_cover :: proc(items: json.Array, want: []string) -> bool {
+	for item in items {
+		text, ok := item.(json.String)
+		if !ok {
+			return false
+		}
+
+		known := false
+		for name in want {
+			if string(text) == name {
+				known = true
+			}
+		}
+
+		if !known {
+			return false
+		}
+	}
+
+	for name in want {
+		found := false
+		for item in items {
+			if text, ok := item.(json.String); ok && string(text) == name {
+				found = true
+			}
+		}
+
+		if !found {
+			return false
+		}
+	}
+
+	return true
+}

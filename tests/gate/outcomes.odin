@@ -22,7 +22,7 @@ run_outcomes :: proc() {
 	gate_label = "outcomes"
 
 	_ = posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
-	compiler, sanitize := outcomes_parse_args()
+	compiler, report_path, sanitize := outcomes_parse_args()
 	root := fmt.aprintf("/tmp/okami-outcomes-%d", posix.getpid())
 	defer delete(root)
 	if err := os.make_directory_all(root, DIR_PERM); err != nil && err != .Exist {
@@ -109,6 +109,11 @@ run_outcomes :: proc() {
 		}
 	}
 	fmt.println("Only owned loopback peers used; each POST reached the peer exactly once.")
+	text := fmt.aprintf("{{\"passed\":true,\"requests\":%d}}\n", len(expect))
+	defer delete(text)
+	if os.write_entire_file(report_path, transmute([]u8)text, FILE_PERM) != nil {
+		fail("report")
+	}
 }
 
 outcomes_serve :: proc(job: ^Job) {
@@ -358,7 +363,7 @@ delete_env :: proc(env: []string) {
 	delete(env)
 }
 
-outcomes_parse_args :: proc() -> (compiler: string, sanitize: bool) {
+outcomes_parse_args :: proc() -> (compiler, report: string, sanitize: bool) {
 	compiler = ""
 	for i in 1 ..< len(os.args) {
 		arg := os.args[i]
@@ -366,10 +371,15 @@ outcomes_parse_args :: proc() -> (compiler: string, sanitize: bool) {
 			sanitize = true
 		} else if arg == "--odin" && i + 1 < len(os.args) {
 			compiler = os.args[i + 1]
+		} else if arg == "--report" && i + 1 < len(os.args) {
+			report = os.args[i + 1]
 		}
 	}
 	if compiler == "" {
 		fail("odin required")
+	}
+	if report == "" {
+		fail("report required")
 	}
 	return
 }

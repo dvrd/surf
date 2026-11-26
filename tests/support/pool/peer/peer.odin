@@ -228,6 +228,12 @@ adopt :: proc(fd: net.TCP_Socket) {
 	_ = net.set_option(fd, .TCP_Nodelay, true)
 	_ = net.set_option(fd, .Send_Timeout, 12 * time.Second)
 	loopback.set_recv_timeout(fd, 12 * time.Second)
+	// The listening socket is non-blocking, and an accepted socket keeps that.
+	// This worker has to wait for the next request on a kept-alive connection.
+	if net.set_blocking(fd, true) != nil {
+		net.close(fd)
+		fail("blocking")
+	}
 	sync.lock(&worker_mu)
 	if worker_n == len(workers) {
 		sync.unlock(&worker_mu)
@@ -328,6 +334,16 @@ serve :: proc(job: ^Job) {
 			if err == .Interrupted {
 				continue
 			}
+			if err == .Would_Block {
+				time.sleep(time.Millisecond)
+				continue
+			}
+
+			if mode == "idle" && n == 0 {
+				marker: [32]u8
+				_ = write_text(fmt.bprintf(marker[:], "closed-%d", job.id), "closed")
+			}
+
 			return
 		}
 		path_buf: [128]u8

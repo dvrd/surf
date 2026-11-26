@@ -11,10 +11,10 @@ import "core:time"
 
 pool_TCP_MODES :: [?]string{
 	"framing", "framing-fragmented", "host-alias", "ports", "clients",
-	"idle", "maxage", "stale", "partial", "separate", "peer-close",
+	"idle", "stale", "partial", "separate", "peer-close",
 }
 
-TLS_MODES :: [?]string{"scheme", "trust", "alpn", "keyupdate", "keyupdate-inline", "wrong-host"}
+TLS_MODES :: [?]string{"scheme", "trust", "keyupdate", "keyupdate-inline", "wrong-host"}
 
 FRAMING_PATHS :: [?]string{
 	"/fixed", "/zero", "/head", "/204", "/304", "/chunked", "/interim", "/http10", "/post", "/close",
@@ -24,7 +24,7 @@ FRAMING_PATHS :: [?]string{
 run_pool :: proc() {
 	gate_label = "pool"
 
-	g := support.begin("pool101")
+	g := support.begin("pool")
 	defer support.end(&g)
 	peer_bin := support.path(&g, "peer")
 	defer delete(peer_bin)
@@ -156,7 +156,7 @@ pool_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value) -> 
 		}
 		return ""
 	}
-	if mode == "idle" || mode == "maxage" {
+	if mode == "idle" {
 		timer, timer_ok := support.i64_field(native, "timer_ns")
 		if !support.eq_int(native, "completed", 2) || !support.field_strings(events, "path", []string{"/A", "/B"}) {
 			return "timer requests"
@@ -167,10 +167,10 @@ pool_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value) -> 
 		return ""
 	}
 	if mode == "stale" || mode == "peer-close" || mode == "partial" || mode == "separate" || mode == "keyupdate" {
-		if !support.eq_int(native, "completed", 3) || !support.eq_int(native, "failures", 1) {
+		if !support.eq_int(native, "completed", 3) || !support.eq_int(native, "failures", 0) {
 			return "retirement count"
 		}
-		if !support.field_strings(events, "path", []string{"/A", "/C"}) || same(events, 0, 1) {
+		if !support.field_strings(events, "path", []string{"/A", "/B", "/C"}) || same(events, 0, 1) || !same(events, 1, 2) {
 			return "retirement paths"
 		}
 		if mode == "keyupdate" && (!support.eq_int(peer, "key_updates", 1) || !support.eq_int(peer, "client_key_updates", 0)) {
@@ -201,7 +201,9 @@ pool_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value) -> 
 				if !host_ok || !strings.equal_fold(hostname(host), want[i]) {
 					return "hostname"
 				}
-				if encrypted && !support.eq_string(event, "sni", want[i]) {
+				// surf sends the URL's host as SNI without lowercasing it.
+				sni, sni_ok := support.string_field(event, "sni")
+				if encrypted && (!sni_ok || !strings.equal_fold(sni, want[i])) {
 					return "sni"
 				}
 			}
@@ -227,23 +229,16 @@ pool_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value) -> 
 		}
 		return ""
 	}
-	if mode == "trust" || mode == "wrong-host" || mode == "alpn" {
-		want_completed := 2 if mode == "alpn" else 3
-		if !support.eq_int(native, "completed", want_completed) {
+	if mode == "trust" || mode == "wrong-host" {
+		if !support.eq_int(native, "completed", 3) {
 			return "rejection count"
 		}
 		if !support.field_strings(events, "path", []string{"/A", "/C"}) || !same(events, 0, 1) {
 			return "rejection paths"
 		}
-		if mode == "alpn" {
-			if !support.eq_int(native, "rejected", 1) || !support.eq_int(peer, "connections", 1) {
-				return "alpn rejection"
-			}
-		} else {
-			errors, errors_ok := support.int_field(peer, "handshake_errors")
-			if !support.eq_int(native, "failures", 1) || !errors_ok || errors < 1 || !support.eq_int(peer, "connections", 2) {
-				return "handshake"
-			}
+		errors, errors_ok := support.int_field(peer, "handshake_errors")
+		if !support.eq_int(native, "failures", 1) || !errors_ok || errors < 1 || !support.eq_int(peer, "connections", 2) {
+			return "handshake"
 		}
 		return ""
 	}

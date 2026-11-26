@@ -1,4 +1,4 @@
-// Public Client prestart consumer. The fixture prints one marker line.
+// A minimal consumer of the public API. The fixture prints one marker line.
 
 package main
 
@@ -7,12 +7,12 @@ import "core:fmt"
 import "core:strings"
 import "core:time"
 
-MARKER :: "CONSUMER101 public_client_prestart=true unchanged_facade=true http1=true heap_zero=true"
+MARKER :: "CONSUMER execute=true client_start=true client_init=true requests=4 heap_zero=true"
 
 run_consumer :: proc() {
 	gate_label = "consumer"
 
-	g := support.begin("consumer101")
+	g := support.begin("consumer")
 	defer support.end(&g)
 	binary := support.path(&g, "fixture")
 	defer delete(binary)
@@ -35,5 +35,5 @@ run_consumer :: proc() {
 		support.fail(&g, "marker")
 	}
 	support.passed(&g, "{\"passed\":true,\"marker\":true}\n")
-	fmt.println("consumer101 marker passed")
+	fmt.println("consumer marker passed")
 }

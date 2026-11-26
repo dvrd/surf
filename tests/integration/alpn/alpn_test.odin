@@ -1,8 +1,14 @@
 package tests
 
-import surf "shared:surf"
+import "../../support/loopback"
+import "../../support/site"
+import "core:fmt"
 import "core:io"
+import "core:strings"
 import "core:testing"
+import "core:time"
+import "shared:async"
+import "shared:surf"
 
 // Local stand-in so this suite does not share the upload suite's package.
 Upload_Producer :: struct {
@@ -29,63 +35,101 @@ upload_producer :: proc(
 		return 0, {}
 	case .Read:
 		state.reads += 1
-		if len(state.bytes) == 0 {
-			return 0, .EOF
-		}
 		n := copy(dst, state.bytes)
 		state.bytes = state.bytes[n:]
 		if n == 0 {
 			return 0, .EOF
 		}
+
 		return i64(n), {}
 	}
+
 	return 0, .Unsupported
 }
 
-source_for :: proc(state: ^Upload_Producer, length: i64) -> surf.Upload_Source {
-	return {stream = {procedure = upload_producer, data = state}, content_length = length}
+alpn_roots :: proc(t: ^testing.T, roots: ^async.Root_Pool) -> bool {
+	return testing.expect_value(t, async.root_pool_load_file(roots, "tests/support/http3/localhost.pem"), nil)
 }
 
+// Over TLS the client offers h2 and http/1.1 and speaks whichever the server
+// selected.
 @(test)
-alpn_surf_rejects_unsupported_protocol_before_connection_setup :: proc(t: ^testing.T) {
-	for protocols in ([?][]string{{"h3"}, {"http/1.1", "h3"}, {"h2", "h3"}, {""}, {"http/2"}, {"H2"}, {"H3"}}) {
-		// A syntactically invalid zero-port URL cannot mask configuration failure;
-		// it also prevents DNS/socket I/O if this guard regresses.
+alpn_tls_speaks_the_protocol_the_server_selects :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 30 * time.Second)
+	roots: async.Root_Pool
+	defer async.root_pool_destroy(&roots)
+
+	if !alpn_roots(t, &roots) {
+		return
+	}
+
+	for sample in ([]struct {
+			protocols: bit_set[async.Protocol],
+			expected:  string,
+		} {
+			{{.HTTP1}, "HTTP/1.1"},
+			{{.H2}, "HTTP/2"},
+			{{.HTTP1, .H2}, "HTTP/2"},
+		}) {
+		s := new(site.Site)
+		defer free(s)
+
+		if !testing.expect(t, site.start(s, sample.protocols)) {
+			return
+		}
+
 		response, error := surf.execute(
-			{method = .GET, url = "http://127.0.0.1:0/"},
-			{allow_http = true, tls = {alpn_protocols = protocols}},
+			{method = .GET, url = site.url(s, "/protocol")},
+			{tls = {roots = &roots}, timeout = 5 * time.Second},
 		)
+		testing.expectf(t, error.kind == .None, "%v: %v", sample.protocols, error)
+		testing.expect_value(t, response.status, 200)
+		testing.expect_value(t, string(response.body), sample.expected)
 		surf.response_destroy(&response)
-		testing.expect_value(t, error.kind, .Invalid_Config)
-		testing.expect_value(t, error.phase, .Configuration)
-		testing.expect_value(t, error.write_effect, .Not_Sent)
+		site.stop(s)
 	}
 }
 
+// Cleartext is HTTP/1.1 from the first byte: no h2c upgrade and no prior
+// knowledge preface.
 @(test)
-alpn_surf_tcp_accepts_http1_and_h2_without_implicit_offer :: proc(t: ^testing.T) {
-	bare := surf.Config{}
-	testing.expect_value(t, surf.config_validate(bare).kind, .None)
-	testing.expect_value(t, len(bare.tls.alpn_protocols), 0)
-
-	for protocols in ([?][]string{{"http/1.1"}, {"h2"}, {"http/1.1", "h2"}, {"h2", "http/1.1"}}) {
-		testing.expect_value(t, surf.config_validate({tls = {alpn_protocols = protocols}}).kind, .None)
+alpn_cleartext_is_http1 :: proc(t: ^testing.T) {
+	peer := loopback.Server {
+		answer = {wire = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"},
 	}
+
+	if !testing.expect(t, loopback.server_start(&peer)) {
+		return
+	}
+	defer loopback.server_stop(&peer)
+
+	response, error := surf.execute(
+		{method = .GET, url = fmt.tprintf("http://127.0.0.1:%d/plain", peer.port)},
+		{allow_http = true, timeout = 3 * time.Second},
+	)
+	defer surf.response_destroy(&response)
+	testing.expect_value(t, error.kind, .None)
+	request := loopback.server_last(&peer, context.temp_allocator)
+	testing.expect(t, strings.has_prefix(request, "GET /plain HTTP/1.1\r\n"))
+	_, upgrade := loopback.header_value(request, "Upgrade")
+	_, settings := loopback.header_value(request, "HTTP2-Settings")
+	testing.expect(t, !upgrade && !settings)
 }
 
 @(test)
-alpn_surf_rejects_before_reading_upload_source :: proc(t: ^testing.T) {
+alpn_http3_over_cleartext_is_refused_before_reading_upload_source :: proc(t: ^testing.T) {
 	producer := Upload_Producer {
 		bytes = {1},
 	}
 
 	response, error := surf.execute_upload(
-		{method = .POST, url = "http://127.0.0.1:0/"},
-		source_for(&producer, 1),
-		{allow_http = true, tls = {alpn_protocols = {"h3"}}},
+		{method = .POST, url = "http://127.0.0.1:1/"},
+		{stream = {procedure = upload_producer, data = &producer}, content_length = 1},
+		{allow_http = true, http3 = true},
 	)
 	surf.response_destroy(&response)
-	testing.expect_value(t, error.kind, .Invalid_Config)
+	testing.expect_value(t, error.kind, .Insecure_URL)
+	testing.expect_value(t, error.phase, .Configuration)
 	testing.expect_value(t, error.write_effect, .Not_Sent)
 	testing.expect_value(t, producer.reads, 0)
 	testing.expect_value(t, producer.closes, 0)

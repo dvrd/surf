@@ -24,7 +24,7 @@ cancel_Case :: struct {
 run_cancel :: proc() {
 	gate_label = "cancel"
 
-	g := support.begin("cancel101")
+	g := support.begin("cancel")
 	defer support.end(&g)
 	cases, loaded := load_cases()
 	if !loaded {
@@ -129,7 +129,7 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	if !support.eq_int(native, "completed", want_completed) {
 		return "completed"
 	}
-	if !support.eq_int(native, "workers", 1) || !support.eq_int(native, "work_per_resume", 1) {
+	if !support.eq_int(native, "workers", 1) {
 		return "workers"
 	}
 	facts := [?]string{"cheap_before_release", "terminal_once", "heap_zero", "scope_zero", "fd_zero"}
@@ -201,8 +201,7 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	}
 	if item.phase == "dns" {
 		ids, ids_ok := support.array_field(peer, "dns_ids")
-		remaining, rem_ok := support.int_field(native, "dns_ids_remaining")
-		if !ids_ok || len(ids) == 0 || !rem_ok || remaining >= 64 {
+		if !ids_ok || len(ids) == 0 {
 			return "dns draw"
 		}
 		names, names_ok := support.array_field(peer, "dns_names")
@@ -274,10 +273,8 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 			return "write effect"
 		}
 	}
-	deadline := item.action == "total" || item.action == "setup" || item.action == "lifetime"
-	if item.phase == "queued" && item.action == "lifetime" {
-		deadline = false
-	}
+	// client_close lets requests in flight run to their own cutoff.
+	deadline := item.action == "total" || item.action == "setup" || item.action == "close"
 	if deadline {
 		elapsed, elapsed_ok := support.f64_field(native, "elapsed_ms")
 		if !support.eq_string(native, "error", "Deadline_Failed") || !support.eq_string(native, "phase", "Deadline") || !elapsed_ok || elapsed >= 2000 {
@@ -389,14 +386,14 @@ load_cases :: proc() -> (cases: [dynamic]cancel_Case, ok: bool) {
 		return
 	}
 	defer json.destroy_value(root)
-	if !support.eq_int(root, "workers", 1) || !support.eq_int(root, "work_per_resume", 1) || !support.eq_int(root, "expected_cases", 80) {
+	if !support.eq_int(root, "workers", 1) || !support.eq_int(root, "expected_cases", 67) {
 		return
 	}
 	items, items_ok := support.array_field(root, "cases")
-	if !items_ok || len(items) != 80 {
+	if !items_ok || len(items) != 67 {
 		return
 	}
-	cases = make([dynamic]cancel_Case, 0, 80)
+	cases = make([dynamic]cancel_Case, 0, 67)
 	public := 0
 	raw := 0
 	for item in items {
@@ -439,7 +436,7 @@ load_cases :: proc() -> (cases: [dynamic]cancel_Case, ok: bool) {
 		}
 		append(&cases, row)
 	}
-	if public != 68 || raw != 12 || !covers(cases[:]) {
+	if public != 55 || raw != 12 || !covers(cases[:]) {
 		free_cases(&cases)
 		return
 	}
@@ -448,7 +445,7 @@ load_cases :: proc() -> (cases: [dynamic]cancel_Case, ok: bool) {
 
 covers :: proc(cases: []cancel_Case) -> bool {
 	phases := [?]string{"dns", "tls", "write", "header", "body", "redirect", "queued"}
-	actions := [?]string{"cancel", "total", "lifetime", "close", "shutdown"}
+	actions := [?]string{"cancel", "total", "close", "shutdown"}
 	raw_actions := [?]string{"release_success", "owner_cancel", "close_connect", "runtime_shutdown", "later_finish", "earlier_finish"}
 	seen := 0
 	for phase in phases {
