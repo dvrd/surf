@@ -1,8 +1,11 @@
 version: '3'
 
 # ODIN and WEBTOOLS_SHARED still select the compiler and the dependency
-# collection. PACKAGE limits one suite owner (`.` or `async`). INTERNAL=1 runs
-# only private suites. Flags after -- are odin test flags.
+# collection. PACKAGE limits one suite owner (`.` , `async`, `async/exchange`,
+# `async/stream`, or an `integration/...` path). INTERNAL=1 runs only the unit
+# suites. GATE selects one acceptance gate, or all of them. VERBOSE=1 streams
+# each gate's output instead of showing it only when the gate fails. Flags
+# after -- are odin test flags.
 vars:
   ODIN:
     sh: printf '%s' "${ODIN:-odin}"
@@ -10,6 +13,8 @@ vars:
     sh: printf '%s' "${WEBTOOLS_SHARED:-$HOME/dev/oss/Odin/shared}"
   PACKAGE: '{{.PACKAGE | default "all"}}'
   INTERNAL: '{{.INTERNAL | default "0"}}'
+  GATE: '{{.GATE | default "all"}}'
+  VERBOSE: '{{.VERBOSE | default "0"}}'
 
 tasks:
   test:
@@ -24,3 +29,15 @@ tasks:
       SURF_INTERNAL: '{{.INTERNAL}}'
     cmds:
       - '{{.ODIN}} run tools/test -- {{.CLI_ARGS}}'
+
+  gate:
+    desc: 'Stage shared:surf and run the acceptance gates'
+    silent: true
+    env:
+      SURF_ROOT: '{{.ROOT_DIR}}'
+      SURF_ODIN: '{{.ODIN}}'
+      SURF_SHARED: '{{.SHARED}}'
+      SURF_GATE: '{{.GATE}}'
+      SURF_GATE_VERBOSE: '{{.VERBOSE}}'
+    cmds:
+      - '{{.ODIN}} run tools/test -- --gates'

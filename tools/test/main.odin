@@ -43,18 +43,30 @@ main :: proc() {
 
 	library := library_name()
 	compiler = resolve_compiler(compiler)
+	if gates_mode {
+		require_known_gate()
+	}
+
 	make_work()
 
-	suites := discover_suites(root)
-	if len(suites) == 0 {
-		say_err("No matching test suites\n")
-		finish(2)
+	suites: [dynamic]Suite
+	if !gates_mode {
+		suites = discover_suites(root)
+		if len(suites) == 0 {
+			say_err("No matching test suites\n")
+			finish(2)
+		}
 	}
 
 	staged := stage(library)
 	if err := os.set_env("ODIN", staged.wrapper); err != nil {
 		say_err("ODIN: %v\n", err)
 		finish(1)
+	}
+
+	if gates_mode {
+		run_gates(staged)
+		finish(0)
 	}
 
 	flags := test_flags(staged.shared, odin_flags)
@@ -91,6 +103,15 @@ load_environment :: proc() {
 		selected = value
 	}
 
+	gate_selection = "all"
+	if value, found := os.lookup_env("SURF_GATE", context.allocator); found && value != "" {
+		gate_selection = value
+	}
+
+	if value, found := os.lookup_env("SURF_GATE_VERBOSE", context.allocator); found {
+		gate_verbose = value == "1" || value == "true"
+	}
+
 	if value, found := os.lookup_env("SURF_INTERNAL", context.allocator); found {
 		internal_only = value == "1" || value == "true"
 	}
@@ -113,10 +134,14 @@ parse_arguments :: proc(arguments: []string) -> []string {
 		case "--internal-only":
 			internal_only = true
 			index += 1
+		case "--gates":
+			gates_mode = true
+			index += 1
 		case "--":
 			return arguments[index + 1:]
 		case "--help", "-h":
 			say("Usage: task test [PACKAGE=owner] [INTERNAL=1] [ODIN=path] [SHARED=dir] -- [odin flags]\n")
+			say("       task gate [GATE=name] [VERBOSE=1] [ODIN=path] [SHARED=dir]\n")
 			finish(0)
 		case:
 			return arguments[index:]

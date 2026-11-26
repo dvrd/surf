@@ -50,10 +50,18 @@ jobs:
           # is finished by the next merge. The largest change wins.
           IFS=. read -r major minor patch <<< "${previous:-v0.0.0}"
           major=${major#v}
-          if git log --format=%s "$range" | grep -qE "$breaking" ||
-             git log --format=%b "$range" | grep -qE "$footer"; then
-            major=$((major + 1)); minor=0; patch=0
-          elif git log --format=%s "$range" | grep -qE "$feature"; then
+          # The logs go into variables first: grep -q closes a pipe early, and
+          # with pipefail the SIGPIPE of git log would count as "no match".
+          subjects=$(git log --format=%s "$range")
+          bodies=$(git log --format=%b "$range")
+          if grep -qE "$breaking" <<< "$subjects" || grep -qE "$footer" <<< "$bodies"; then
+            # Before v1.0.0 a breaking change raises the minor number.
+            if [[ $major -eq 0 ]]; then
+              minor=$((minor + 1)); patch=0
+            else
+              major=$((major + 1)); minor=0; patch=0
+            fi
+          elif grep -qE "$feature" <<< "$subjects"; then
             minor=$((minor + 1)); patch=0
           else
             patch=$((patch + 1))
