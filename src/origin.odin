@@ -63,7 +63,12 @@ origin_get :: proc(
 
 	o, allocation := new(Origin, s.allocator)
 	if allocation != nil {
-		return nil, false, {kind = .Allocation_Failed, allocation = allocation, phase = .Admission, write_effect = .Not_Sent}
+		return nil, false, {
+			kind = .Allocation_Failed,
+			allocation = allocation,
+			phase = .Admission,
+			write_effect = .Not_Sent,
+		}
 	}
 
 	o.s = s
@@ -73,28 +78,47 @@ origin_get :: proc(
 	o.dial_host = o.host
 
 	if address, found := client_hosts_address(s, o.host, o.port); found {
-		literal, e := strings.clone(net.address_to_string(address, context.temp_allocator), s.allocator)
+		literal, e := strings.clone(
+			net.address_to_string(address, context.temp_allocator),
+			s.allocator,
+		)
 		if e != nil {
 			free(o, s.allocator)
-			return nil, false, {kind = .Allocation_Failed, allocation = e, phase = .Admission, write_effect = .Not_Sent}
+			return nil, false, {
+				kind = .Allocation_Failed,
+				allocation = e,
+				phase = .Admission,
+				write_effect = .Not_Sent,
+			}
 		}
 		o.dial_host = literal
 	}
 
-	if o.dial_host == o.host && net.parse_address(o.host) == nil && len(client_name_servers(s)) == 0 {
+	if o.dial_host == o.host &&
+	   net.parse_address(o.host) == nil &&
+	   len(client_name_servers(s)) == 0 {
 		free(o, s.allocator)
 		return nil, false, {kind = .Dial_Failed, phase = .DNS, write_effect = .Not_Sent}
 	}
 
 	if begun := async.client_begin(&o.client, &s.task, origin_config(s, o)); begun.kind != .None {
 		origin_free(s, o)
-		return nil, false, {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent}
+		return nil, false, {
+			kind = .Invalid_Config,
+			phase = .Configuration,
+			write_effect = .Not_Sent,
+		}
 	}
 
 	if _, e := append(&s.origins, o); e != nil {
 		async.client_destroy(&o.client)
 		origin_free(s, o)
-		return nil, false, {kind = .Allocation_Failed, allocation = e, phase = .Admission, write_effect = .Not_Sent}
+		return nil, false, {
+			kind = .Allocation_Failed,
+			allocation = e,
+			phase = .Admission,
+			write_effect = .Not_Sent,
+		}
 	}
 
 	return o, false, {}
@@ -112,11 +136,7 @@ origin_config :: proc(s: ^Client_State, o: ^Origin) -> async.Client_Config {
 	}
 
 	config := async.Client_Config {
-		dial = {
-			host = o.dial_host,
-			port = o.port,
-			nameservers = servers,
-		},
+		dial = {host = o.dial_host, port = o.port, nameservers = servers},
 		dial_timeout = setup,
 		protocols = {.HTTP1, .H2},
 		max_connections = s.capacities.connections_per_origin,
@@ -239,7 +259,8 @@ client_h3_pool :: proc(s: ^Client_State) -> ^async.H3_Pool {
 origin_policy :: proc(host: string, addresses: []net.Endpoint, user: rawptr) -> bool {
 	o := cast(^Origin)user
 	config := o.s.config
-	allowed := len(addresses) > 0 && config.address_policy(o.host, addresses, config.address_policy_data)
+	allowed :=
+		len(addresses) > 0 && config.address_policy(o.host, addresses, config.address_policy_data)
 
 	if !allowed {
 		o.refused = true
@@ -263,7 +284,9 @@ origins_resume :: proc(s: ^Client_State, active: int) -> (yield: bool) {
 		o := s.origins[i]
 
 		if !o.closing && o.active == 0 {
-			if s.closing || o.idle_at == {} || async.sleep_until_earlier(s.runtime, o.idle_at).kind == .None {
+			if s.closing ||
+			   o.idle_at == {} ||
+			   async.sleep_until_earlier(s.runtime, o.idle_at).kind == .None {
 				origin_close(s, o)
 			}
 		}

@@ -28,28 +28,28 @@ CHUNK_BYTES :: 16384
 ENGINE_FAULT_POINT :: 9
 
 Evidence :: struct {
-	mode:                                                                     string,
-	tls:                                                                      bool,
-	bytes:                                                                    u64,
-	sha256:                                                                   string,
-	chunks, max_response_backing:                                             int,
-	ended, head_received, first_chunk_barrier, intermediate_hidden:           bool,
-	status:                                                                   int,
-	wire_content_length:                                                      i64,
-	error_kind, http_kind, phase, decoding, write_effect, source_io:          string,
-	transport:                                                                string,
-	source_created, source_accepted, source_rejected, source_released:        int,
-	source_accepted_bytes, upload_blocked_after_bytes, upload_stall_ns:       u64,
-	late_owner, credit_preserved, chunk_credit_held, credit_reopened:         bool,
-	occupied_preserved, deadline_without_poll, cancel_without_poll:           bool,
-	cheap_before_release:                                                     bool,
-	baseline_bytes, peak_bytes:                                               i64,
-	retained_after_teardown_bytes:                                            u64,
-	heap_zero, fd_zero:                                                       bool,
-	allocation_calls, allocation_hits:                                        int,
-	allocation_sizes:                                                         [16]int,
-	elapsed_ns:                                                               u64,
-	source_error_completed_ns:                                                u64,
+	mode:                                                               string,
+	tls:                                                                bool,
+	bytes:                                                              u64,
+	sha256:                                                             string,
+	chunks, max_response_backing:                                       int,
+	ended, head_received, first_chunk_barrier, intermediate_hidden:     bool,
+	status:                                                             int,
+	wire_content_length:                                                i64,
+	error_kind, http_kind, phase, decoding, write_effect, source_io:    string,
+	transport:                                                          string,
+	source_created, source_accepted, source_rejected, source_released:  int,
+	source_accepted_bytes, upload_blocked_after_bytes, upload_stall_ns: u64,
+	late_owner, credit_preserved, chunk_credit_held, credit_reopened:   bool,
+	occupied_preserved, deadline_without_poll, cancel_without_poll:     bool,
+	cheap_before_release:                                               bool,
+	baseline_bytes, peak_bytes:                                         i64,
+	retained_after_teardown_bytes:                                      u64,
+	heap_zero, fd_zero:                                                 bool,
+	allocation_calls, allocation_hits:                                  int,
+	allocation_sizes:                                                   [16]int,
+	elapsed_ns:                                                         u64,
+	source_error_completed_ns:                                          u64,
 }
 
 Failure :: struct {
@@ -116,7 +116,11 @@ is_upload :: proc(mode: string) -> bool {
 }
 
 large_gzip :: proc(f: ^Fixture) -> bool {
-	return strings.has_prefix(f.mode, "gzip") && f.size >= 4 << 20 && f.mode != "gzip-amplification"
+	return(
+		strings.has_prefix(f.mode, "gzip") &&
+		f.size >= 4 << 20 &&
+		f.mode != "gzip-amplification" \
+	)
 }
 
 extended_correctness_budget :: proc(f: ^Fixture) -> bool {
@@ -218,7 +222,15 @@ failure_allocator :: proc(
 		}
 	}
 
-	return failure.backing.procedure(failure.backing.data, mode, size, alignment, old_memory, old_size, location)
+	return failure.backing.procedure(
+		failure.backing.data,
+		mode,
+		size,
+		alignment,
+		old_memory,
+		old_size,
+		location,
+	)
 }
 
 arm_failure :: proc(f: ^Fixture, point: int) {
@@ -271,7 +283,10 @@ initialize :: proc(f: ^Fixture) {
 	f.allocator = mem.tracking_allocator(&f.track)
 	f.runtime = new(async.Runtime, f.allocator)
 	f.client = new(surf.Client, f.allocator)
-	assert(async.init(f.runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = f.allocator}).kind == .None)
+	assert(
+		async.init(f.runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = f.allocator}).kind ==
+		.None,
+	)
 
 	if f.encrypted {
 		bytes, error := os.read_entire_file(fmt.tprintf("%s/root.pem", f.directory), f.allocator)
@@ -304,7 +319,10 @@ initialize :: proc(f: ^Fixture) {
 	}
 
 	f.failure.backing = f.allocator
-	assert(surf.client_init(f.client, f.runtime, config, {failure_allocator, &f.failure}).kind == .None)
+	assert(
+		surf.client_init(f.client, f.runtime, config, {failure_allocator, &f.failure}).kind ==
+		.None,
+	)
 	f.upload = {
 		allocator = f.allocator,
 	}
@@ -351,7 +369,9 @@ check_payload :: proc(f: ^Fixture, bytes: []u8) {
 			expected = text[int(offset)]
 		}
 
-		if f.mode == "chunk-invalid-crlf" || f.mode == "chunk-missing-terminal" || f.mode == "chunk-truncated" {
+		if f.mode == "chunk-invalid-crlf" ||
+		   f.mode == "chunk-missing-terminal" ||
+		   f.mode == "chunk-truncated" {
 			text := "partial" if f.mode == "chunk-truncated" else "abc"
 			assert(offset < u64(len(text)))
 			expected = text[int(offset)]
@@ -381,7 +401,9 @@ options :: proc(f: ^Fixture) -> surf.Stream_Options {
 		result.decoding = .Gzip
 	}
 
-	if f.mode == "encoded-limit" || f.mode == "gzip-encoded-limit" || f.mode == "gzip-encoded-exact" {
+	if f.mode == "encoded-limit" ||
+	   f.mode == "gzip-encoded-limit" ||
+	   f.mode == "gzip-encoded-exact" {
 		result.max_decoded_bytes = 0
 	}
 
@@ -431,10 +453,18 @@ submit :: proc(f: ^Fixture, endpoint: net.Endpoint) -> surf.Request_Handle {
 		duration = 300 * time.Millisecond
 	}
 
-	handle, error := surf.client_submit_stream(f.client, request, options(f), time.tick_add(time.tick_now(), duration))
+	handle, error := surf.client_submit_stream(
+		f.client,
+		request,
+		options(f),
+		time.tick_add(time.tick_now(), duration),
+	)
 	assert(error.kind == .None)
 	response: surf.Response
-	assert(surf.client_take(f.client, handle, &response).kind == .Invalid_State && response.body == nil)
+	assert(
+		surf.client_take(f.client, handle, &response).kind == .Invalid_State &&
+		response.body == nil,
+	)
 
 	if f.mode == "allocation-engine" {
 		arm_failure(f, ENGINE_FAULT_POINT)
@@ -496,7 +526,11 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 
 		for index in 0 ..< UPLOAD_CHUNKS {
 			status, error := surf.client_upload_submit(f.client, handle, &chunks[index])
-			assert(status == .Accepted && error.kind == .None && !surf.body_chunk_valid(&chunks[index]))
+			assert(
+				status == .Accepted &&
+				error.kind == .None &&
+				!surf.body_chunk_valid(&chunks[index]),
+			)
 			f.evidence.source_accepted += 1
 			f.evidence.source_accepted_bytes += 1
 		}
@@ -519,7 +553,11 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 				break
 			}
 
-			assert(status == .Backpressure && surf.body_chunk_valid(&chunks[2]) && time.tick_since(started) < 5 * time.Second)
+			assert(
+				status == .Backpressure &&
+				surf.body_chunk_valid(&chunks[2]) &&
+				time.tick_since(started) < 5 * time.Second,
+			)
 			thread.yield()
 		}
 
@@ -596,7 +634,10 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 
 					if f.mode == "upload-source-error-blocked" {
 						f.source_error_at = time.tick_now()
-						assert(surf.client_upload_finish(f.client, handle, .Unexpected_EOF).kind == .None)
+						assert(
+							surf.client_upload_finish(f.client, handle, .Unexpected_EOF).kind ==
+							.None,
+						)
 						surf.body_chunk_release(&chunk)
 						return
 					}
@@ -661,7 +702,8 @@ consume :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 				f.evidence.status = f.head.response.status
 				assert(f.head.response.body == nil)
 
-				if value, found := surf.response_header(&f.head.response, "Content-Length"); found {
+				if value, found := surf.response_header(&f.head.response, "Content-Length");
+				   found {
 					length, valid := strconv.parse_i64(value)
 					assert(valid)
 					f.evidence.wire_content_length = length
@@ -715,7 +757,12 @@ consume :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 			continue
 		}
 
-		assert(state == .Chunk && surf.body_chunk_valid(&chunk) && len(chunk.data) > 0 && len(chunk.data) <= CHUNK_BYTES)
+		assert(
+			state == .Chunk &&
+			surf.body_chunk_valid(&chunk) &&
+			len(chunk.data) > 0 &&
+			len(chunk.data) <= CHUNK_BYTES,
+		)
 		offset := f.evidence.bytes
 		check_payload(f, chunk.data)
 
@@ -725,7 +772,9 @@ consume :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 		}
 
 		keep :=
-			(strings.has_prefix(f.mode, "late") && f.mode != "late-head" || f.mode == "gzip-crc-held") && held == 0 ||
+			(strings.has_prefix(f.mode, "late") && f.mode != "late-head" ||
+					f.mode == "gzip-crc-held") &&
+				held == 0 ||
 			(f.mode == "timeout" || f.mode == "cancel" || f.mode == "fairness") && held < 2
 
 		if !keep {
@@ -890,7 +939,11 @@ cleanup :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 	}
 
 	if f.mode == "buffered-gzip" {
-		assert(len(f.head.response.body) > 18 && f.head.response.body[0] == 31 && f.head.response.body[1] == 139)
+		assert(
+			len(f.head.response.body) > 18 &&
+			f.head.response.body[0] == 31 &&
+			f.head.response.body[1] == 139,
+		)
 		encoding, present := surf.response_header(&f.head.response, "Content-Encoding")
 		assert(present && encoding == "gzip")
 		surf.response_destroy(&f.head.response)

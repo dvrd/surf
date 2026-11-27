@@ -161,4 +161,3 @@ alt_svc_h3 :: proc(value: string) -> (port, ma: int, ok: bool) {
 
 	return
 }
-

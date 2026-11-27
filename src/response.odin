@@ -45,11 +45,17 @@ response_trailers_copy :: proc(response: ^Response, trailers: []async.Http_Heade
 response_clone :: proc(source: ^Response, allocator: mem.Allocator) -> (Response, HTTP_Error) {
 	result: Response
 
-	if failure := response_head_copy(&result, source.status, headers_async(source.headers), allocator); failure.kind != .None {
+	if failure := response_head_copy(
+		&result,
+		source.status,
+		headers_async(source.headers),
+		allocator,
+	); failure.kind != .None {
 		return {}, failure
 	}
 
-	if failure := response_trailers_copy(&result, headers_async(source.trailers)); failure.kind != .None {
+	if failure := response_trailers_copy(&result, headers_async(source.trailers));
+	   failure.kind != .None {
 		response_destroy(&result)
 		return {}, failure
 	}
@@ -57,7 +63,12 @@ response_clone :: proc(source: ^Response, allocator: mem.Allocator) -> (Response
 	if len(source.body) > 0 {
 		if _, error := append(&result.body_storage, ..source.body); error != nil {
 			response_destroy(&result)
-			return {}, {kind = .Allocation_Failed, allocation = error, phase = .Read, status = source.status}
+			return {}, {
+				kind = .Allocation_Failed,
+				allocation = error,
+				phase = .Read,
+				status = source.status,
+			}
 		}
 	}
 
@@ -106,7 +117,10 @@ header_fields_copy :: proc(
 		value := storage[at:][:len(h.value)]
 		copy(value, h.value)
 		at += len(h.value)
-		fields[i] = {name = string(name), value = string(value)}
+		fields[i] = {
+			name  = string(name),
+			value = string(value),
+		}
 	}
 
 	return

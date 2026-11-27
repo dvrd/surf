@@ -183,9 +183,15 @@ serve :: proc(job: ^Job) {
 		if !wait_file("release", 8 * time.Second) {
 			fail("release timeout")
 		}
-		write_all(job.fd, "HTTP/1.1 307 Temporary Redirect\r\nContent-Length: 0\r\nLocation: /dir/../final\r\n\r\n")
+		write_all(
+			job.fd,
+			"HTTP/1.1 307 Temporary Redirect\r\nContent-Length: 0\r\nLocation: /dir/../final\r\n\r\n",
+		)
 	} else if path == "/final" {
-		write_all(job.fd, "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nX-Connection: 2\r\nConnection: close\r\n\r\nresponse")
+		write_all(
+			job.fd,
+			"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nX-Connection: 2\r\nConnection: close\r\n\r\nresponse",
+		)
 	} else {
 		fail("unexpected request")
 	}

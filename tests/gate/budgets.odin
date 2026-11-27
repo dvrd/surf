@@ -69,8 +69,13 @@ run_budgets :: proc() {
 	if !budgets_build(compiler, shared, binary, sanitizer) {
 		fail("build")
 	}
-	report := Report{sanitizer = sanitizer if sanitizer != "" else "none"}
-	cases := [?]struct{mode, scenario: string, size: int}{
+	report := Report {
+		sanitizer = sanitizer if sanitizer != "" else "none",
+	}
+	cases := [?]struct {
+		mode, scenario: string,
+		size:           int,
+	} {
 		{"native", "retained", 1024},
 		{"native", "oversize", 65537},
 		{"native", "managed", 1024},
@@ -80,7 +85,11 @@ run_budgets :: proc() {
 	}
 	for item in cases {
 		peer := budgets_start_peer(item.size, item.mode == "tls")
-		url := fmt.aprintf("%s://127.0.0.1:%d/budget", "https" if item.mode == "tls" else "http", port_of(peer.listener))
+		url := fmt.aprintf(
+			"%s://127.0.0.1:%d/budget",
+			"https" if item.mode == "tls" else "http",
+			port_of(peer.listener),
+		)
 		defer delete(url)
 		command := make([dynamic]string)
 		append(&command, binary, item.mode, url, item.scenario)
@@ -103,7 +112,16 @@ run_budgets :: proc() {
 		if len(peer.errors) != 0 {
 			fail(item.scenario)
 		}
-		append(&report.checks, Check{mode = item.mode, scenario = item.scenario, calls = receipt.calls, peak = receipt.peak, limit = receipt.limit})
+		append(
+			&report.checks,
+			Check {
+				mode = item.mode,
+				scenario = item.scenario,
+				calls = receipt.calls,
+				peak = receipt.peak,
+				limit = receipt.limit,
+			},
+		)
 		delete(peer.errors)
 		free(peer)
 	}
@@ -153,7 +171,9 @@ budgets_handle :: proc(peer: ^budgets_Peer, fd: net.TCP_Socket) {
 	_ = net.set_option(fd, .TCP_Nodelay, true)
 	_ = net.set_option(fd, .Receive_Timeout, 4 * time.Second)
 	_ = net.set_option(fd, .Send_Timeout, 4 * time.Second)
-	conn := loopback.Conn{fd = fd}
+	conn := loopback.Conn {
+		fd = fd,
+	}
 	// Wipe when handle returns. A defer inside the TLS branch runs when that
 	// branch ends, which is before the request is read.
 	defer loopback.conn_wipe(&conn)
@@ -235,7 +255,16 @@ budgets_build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 	defer delete(collection)
 	command := make([dynamic]string)
 	defer delete(command)
-	append(&command, compiler, "build", "tests/support/budgets", "-thread-count:1", "-warnings-as-errors", collection, out_flag)
+	append(
+		&command,
+		compiler,
+		"build",
+		"tests/support/budgets",
+		"-thread-count:1",
+		"-warnings-as-errors",
+		collection,
+		out_flag,
+	)
 	if sanitizer != "" {
 		append(&command, fmt.aprintf("-sanitize:%s", sanitizer))
 	}
@@ -243,7 +272,9 @@ budgets_build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 }
 
 budgets_run :: proc(command: []string, capture: bool) -> bool {
-	process, start_error := os.process_start({command = command, stdout = os.stdout, stderr = os.stderr})
+	process, start_error := os.process_start(
+		{command = command, stdout = os.stdout, stderr = os.stderr},
+	)
 	if start_error != nil {
 		return false
 	}
@@ -256,7 +287,9 @@ run_text :: proc(command: []string) -> string {
 	if pipe_error != nil {
 		return ""
 	}
-	process, start_error := os.process_start({command = command, stdout = write_end, stderr = os.stderr})
+	process, start_error := os.process_start(
+		{command = command, stdout = write_end, stderr = os.stderr},
+	)
 	os.close(write_end)
 	if start_error != nil {
 		os.close(read_end)
@@ -331,4 +364,3 @@ budgets_parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 	}
 	return
 }
-

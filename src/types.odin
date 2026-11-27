@@ -9,6 +9,7 @@ import "core:io"
 import "core:mem"
 import "core:net"
 import "shared:async"
+import "shared:async/tls"
 
 Method :: enum {
 	GET,
@@ -223,7 +224,11 @@ trust_roots_load_file :: proc(roots: ^Trust_Roots, path: string) -> Trust_Roots_
 }
 
 // PEM certificates in data.
-trust_roots_parse :: proc(roots: ^Trust_Roots, data: []u8, allocator := context.allocator) -> Trust_Roots_Error {
+trust_roots_parse :: proc(
+	roots: ^Trust_Roots,
+	data: []u8,
+	allocator := context.allocator,
+) -> Trust_Roots_Error {
 	if roots == nil {
 		return .Invalid_State
 	}
@@ -336,7 +341,14 @@ Body_Chunk_Error :: struct {
 }
 
 // A chunk holding a copy of data, refused when data is longer than limit.
-body_chunk_copy :: proc(data: []u8, limit: int, allocator := context.allocator) -> (Body_Chunk, Body_Chunk_Error) {
+body_chunk_copy :: proc(
+	data: []u8,
+	limit: int,
+	allocator := context.allocator,
+) -> (
+	Body_Chunk,
+	Body_Chunk_Error,
+) {
 	owned, error := async.owned_copy_bounded(data, limit, allocator)
 	if error.kind != .None {
 		return {}, body_chunk_error(error)
@@ -540,7 +552,7 @@ tls_failure :: proc(error: async.TLS_Error) -> (TLS_Failure, net.Network_Error) 
 		return .Transport, cause
 	case async.TLS_General_Error:
 		return tls_general_failure(cause), nil
-	case async.TLS_Protocol_Error:
+	case tls.Protocol_Error:
 		return tls_alert_failure(cause), nil
 	}
 
@@ -586,7 +598,7 @@ tls_general_failure :: proc(error: async.TLS_General_Error) -> TLS_Failure {
 	return .Invalid_State
 }
 
-tls_alert_failure :: proc(alert: async.TLS_Protocol_Error) -> TLS_Failure {
+tls_alert_failure :: proc(alert: tls.Protocol_Error) -> TLS_Failure {
 	switch alert {
 	case .None:
 		return .None

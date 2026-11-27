@@ -55,61 +55,659 @@ LOG_PENALTY :: 7
 MAX_INT32 :: i32(2147483647)
 
 LENGTH_EXTRA: [32]u8 = {
-	0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
-	3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0, 0, 0, 0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	1,
+	1,
+	1,
+	1,
+	2,
+	2,
+	2,
+	2,
+	3,
+	3,
+	3,
+	3,
+	4,
+	4,
+	4,
+	4,
+	5,
+	5,
+	5,
+	5,
+	0,
+	0,
+	0,
+	0,
 }
 LENGTH_BASE: [32]u8 = {
-	0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20,
-	24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 255, 0, 0, 0,
+	0,
+	1,
+	2,
+	3,
+	4,
+	5,
+	6,
+	7,
+	8,
+	10,
+	12,
+	14,
+	16,
+	20,
+	24,
+	28,
+	32,
+	40,
+	48,
+	56,
+	64,
+	80,
+	96,
+	112,
+	128,
+	160,
+	192,
+	224,
+	255,
+	0,
+	0,
+	0,
 }
 OFFSET_EXTRA: [32]u8 = {
-	0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
-	7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14,
+	0,
+	0,
+	0,
+	0,
+	1,
+	1,
+	2,
+	2,
+	3,
+	3,
+	4,
+	4,
+	5,
+	5,
+	6,
+	6,
+	7,
+	7,
+	8,
+	8,
+	9,
+	9,
+	10,
+	10,
+	11,
+	11,
+	12,
+	12,
+	13,
+	13,
+	14,
+	14,
 }
 OFFSET_COMBINED: [32]u32 = {
-	0x0, 0x0, 0x0, 0x0, 0x401, 0x601, 0x802, 0xc02,
-	0x1003, 0x1803, 0x2004, 0x3004, 0x4005, 0x6005, 0x8006, 0xc006,
-	0x10007, 0x18007, 0x20008, 0x30008, 0x40009, 0x60009, 0x8000a, 0xc000a,
-	0x10000b, 0x18000b, 0x20000c, 0x30000c, 0x40000d, 0x60000d, 0x0, 0x0,
+	0x0,
+	0x0,
+	0x0,
+	0x0,
+	0x401,
+	0x601,
+	0x802,
+	0xc02,
+	0x1003,
+	0x1803,
+	0x2004,
+	0x3004,
+	0x4005,
+	0x6005,
+	0x8006,
+	0xc006,
+	0x10007,
+	0x18007,
+	0x20008,
+	0x30008,
+	0x40009,
+	0x60009,
+	0x8000a,
+	0xc000a,
+	0x10000b,
+	0x18000b,
+	0x20000c,
+	0x30000c,
+	0x40000d,
+	0x60000d,
+	0x0,
+	0x0,
 }
 CODEGEN_ORDER: [19]int = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15}
 
 
 LENGTH_CODES: [256]u8 = {
-	0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 9, 10, 10, 11, 11,
-	12, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 14, 15, 15, 15, 15,
-	16, 16, 16, 16, 16, 16, 16, 16, 17, 17, 17, 17, 17, 17, 17, 17,
-	18, 18, 18, 18, 18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19,
-	20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20,
-	21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21,
-	22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22,
-	23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23,
-	24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
-	24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
-	25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
-	25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
-	26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
-	26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
-	27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27,
-	27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 28,
+	0,
+	1,
+	2,
+	3,
+	4,
+	5,
+	6,
+	7,
+	8,
+	8,
+	9,
+	9,
+	10,
+	10,
+	11,
+	11,
+	12,
+	12,
+	12,
+	12,
+	13,
+	13,
+	13,
+	13,
+	14,
+	14,
+	14,
+	14,
+	15,
+	15,
+	15,
+	15,
+	16,
+	16,
+	16,
+	16,
+	16,
+	16,
+	16,
+	16,
+	17,
+	17,
+	17,
+	17,
+	17,
+	17,
+	17,
+	17,
+	18,
+	18,
+	18,
+	18,
+	18,
+	18,
+	18,
+	18,
+	19,
+	19,
+	19,
+	19,
+	19,
+	19,
+	19,
+	19,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	20,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	21,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	22,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	23,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	24,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	25,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	26,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	27,
+	28,
 }
 OFFSET_CODES: [256]u32 = {
-	0, 1, 2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7,
-	8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9,
-	10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
-	11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
-	12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
-	12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
-	13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-	13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-	14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-	14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-	14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-	14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-	15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-	15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-	15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-	15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+	0,
+	1,
+	2,
+	3,
+	4,
+	4,
+	5,
+	5,
+	6,
+	6,
+	6,
+	6,
+	7,
+	7,
+	7,
+	7,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	9,
+	9,
+	9,
+	9,
+	9,
+	9,
+	9,
+	9,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	10,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	11,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	12,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	13,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	14,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
+	15,
 }
 
 
@@ -151,21 +749,21 @@ Fast :: struct {
 }
 
 Bit_Writer :: struct {
-	out:             ^[dynamic]u8,
-	bits:            u64,
-	nbits:           int,
-	nbytes:          int,
-	wrote_huffman:   bool,
-	literal:         Huffman,
-	tmp_lit:         Huffman,
-	offset:          Huffman,
-	codegen_enc:     Huffman,
-	prev_header:     int,
-	literal_freq:    [LENGTH_CODES_START + 32]u16,
-	offset_freq:     [32]u16,
-	codegen_freq:    [CODEGEN_COUNT]u16,
-	codegen:         [LITERAL_COUNT + OFFSET_CODE_COUNT + 1]u8,
-	bytes:           [256 + 8]u8,
+	out:           ^[dynamic]u8,
+	bits:          u64,
+	nbits:         int,
+	nbytes:        int,
+	wrote_huffman: bool,
+	literal:       Huffman,
+	tmp_lit:       Huffman,
+	offset:        Huffman,
+	codegen_enc:   Huffman,
+	prev_header:   int,
+	literal_freq:  [LENGTH_CODES_START + 32]u16,
+	offset_freq:   [32]u16,
+	codegen_freq:  [CODEGEN_COUNT]u16,
+	codegen:       [LITERAL_COUNT + OFFSET_CODE_COUNT + 1]u8,
+	bytes:         [256 + 8]u8,
 }
 
 Comp :: struct {
@@ -225,7 +823,9 @@ sort_nodes :: proc(list: []Literal_Node, by_freq: bool) {
 			prev := list[j - 1]
 			less := item.literal < prev.literal
 			if by_freq {
-				less = (int(item.freq) << 10) + int(item.literal) < (int(prev.freq) << 10) + int(prev.literal)
+				less =
+					(int(item.freq) << 10) + int(item.literal) <
+					(int(prev.freq) << 10) + int(prev.literal)
 			}
 			if !less {
 				break
@@ -249,9 +849,9 @@ bit_counts :: proc(h: ^Huffman, count: int, max_bits: i32) -> []i32 {
 	leaf: [16][16]i32
 	top := int(limit)
 	for level in 1 ..= top {
-		levels[level] = Level_Info{
-			level = i32(level),
-			last_freq = i32(list[1].freq),
+		levels[level] = Level_Info {
+			level          = i32(level),
+			last_freq      = i32(list[1].freq),
 			next_char_freq = i32(list[2].freq),
 			next_pair_freq = i32(list[0].freq) + i32(list[1].freq),
 		}
@@ -553,7 +1153,16 @@ load_le32 :: proc(b: []u8, i: int) -> u32 {
 }
 
 load_le64 :: proc(b: []u8, i: int) -> u64 {
-	return u64(b[i]) | u64(b[i + 1]) << 8 | u64(b[i + 2]) << 16 | u64(b[i + 3]) << 24 | u64(b[i + 4]) << 32 | u64(b[i + 5]) << 40 | u64(b[i + 6]) << 48 | u64(b[i + 7]) << 56
+	return(
+		u64(b[i]) |
+		u64(b[i + 1]) << 8 |
+		u64(b[i + 2]) << 16 |
+		u64(b[i + 3]) << 24 |
+		u64(b[i + 4]) << 32 |
+		u64(b[i + 5]) << 40 |
+		u64(b[i + 6]) << 48 |
+		u64(b[i + 7]) << 56 \
+	)
 }
 
 bit_append :: proc(w: ^Bit_Writer, src: []u8) {
@@ -708,17 +1317,33 @@ codegens_count :: proc(w: ^Bit_Writer) -> int {
 
 header_size :: proc(w: ^Bit_Writer) -> (size, num: int) {
 	num = codegens_count(w)
-	size = 3 + 5 + 5 + 4 + (3 * num) + bit_length(w.codegen_enc.codes[:], w.codegen_freq[:]) + int(w.codegen_freq[16]) * 2 + int(w.codegen_freq[17]) * 3 + int(w.codegen_freq[18]) * 7
+	size =
+		3 +
+		5 +
+		5 +
+		4 +
+		(3 * num) +
+		bit_length(w.codegen_enc.codes[:], w.codegen_freq[:]) +
+		int(w.codegen_freq[16]) * 2 +
+		int(w.codegen_freq[17]) * 3 +
+		int(w.codegen_freq[18]) * 7
 	return
 }
 
 dynamic_reuse_size :: proc(w: ^Bit_Writer) -> int {
-	return bit_length(w.literal.codes[:], w.literal_freq[:]) + bit_length(w.offset.codes[:], w.offset_freq[:])
+	return(
+		bit_length(w.literal.codes[:], w.literal_freq[:]) +
+		bit_length(w.offset.codes[:], w.offset_freq[:]) \
+	)
 }
 
 dynamic_size :: proc(w: ^Bit_Writer, extra: int) -> (size, num: int) {
 	header, num_codes := header_size(w)
-	size = header + bit_length(w.literal.codes[:], w.literal_freq[:]) + bit_length(w.offset.codes[:], w.offset_freq[:]) + extra
+	size =
+		header +
+		bit_length(w.literal.codes[:], w.literal_freq[:]) +
+		bit_length(w.offset.codes[:], w.offset_freq[:]) +
+		extra
 	num = num_codes
 	return
 }
@@ -736,7 +1361,12 @@ extra_bit_size :: proc(w: ^Bit_Writer) -> int {
 }
 
 fixed_size :: proc(w: ^Bit_Writer, extra: int) -> int {
-	return 3 + bit_length(fixed_lit.codes[:], w.literal_freq[:]) + bit_length(fixed_off.codes[:], w.offset_freq[:]) + extra
+	return(
+		3 +
+		bit_length(fixed_lit.codes[:], w.literal_freq[:]) +
+		bit_length(fixed_off.codes[:], w.offset_freq[:]) +
+		extra \
+	)
 }
 
 stored_size :: proc(n: int) -> (int, bool) {
@@ -746,7 +1376,11 @@ stored_size :: proc(n: int) -> (int, bool) {
 	return 0, false
 }
 
-write_dynamic_header :: proc(w: ^Bit_Writer, num_literals, num_offsets, num_codegens: int, is_eof: bool) {
+write_dynamic_header :: proc(
+	w: ^Bit_Writer,
+	num_literals, num_offsets, num_codegens: int,
+	is_eof: bool,
+) {
 	first: u32 = 4
 	if is_eof {
 		first = 5
@@ -1476,7 +2110,11 @@ fast_encode :: proc(e: ^Fast, dst: ^Tokens, src_in: []u8) {
 			for i := next_s + 1; i < i32(len(src) - 8); i += 2 {
 				hv := load_le64(src, int(i))
 				e.table[hash_len(hv, TABLE_BITS, 4)] = i + e.cur
-				push_entry(&e.b_cur[hash_len(hv, TABLE_BITS, HASH_LONG)], &e.b_prev[hash_len(hv, TABLE_BITS, HASH_LONG)], i + e.cur)
+				push_entry(
+					&e.b_cur[hash_len(hv, TABLE_BITS, HASH_LONG)],
+					&e.b_prev[hash_len(hv, TABLE_BITS, HASH_LONG)],
+					i + e.cur,
+				)
 			}
 			break search
 		}
@@ -1484,8 +2122,16 @@ fast_encode :: proc(e: ^Fast, dst: ^Tokens, src_in: []u8) {
 			hv := load_le64(src, int(i))
 			cur_off := i + e.cur
 			e.table[hash_len(hv, TABLE_BITS, 4)] = cur_off
-			push_entry(&e.b_cur[hash_len(hv, TABLE_BITS, HASH_LONG)], &e.b_prev[hash_len(hv, TABLE_BITS, HASH_LONG)], cur_off)
-			push_entry(&e.b_cur[hash_len(hv >> 8, TABLE_BITS, HASH_LONG)], &e.b_prev[hash_len(hv >> 8, TABLE_BITS, HASH_LONG)], cur_off + 1)
+			push_entry(
+				&e.b_cur[hash_len(hv, TABLE_BITS, HASH_LONG)],
+				&e.b_prev[hash_len(hv, TABLE_BITS, HASH_LONG)],
+				cur_off,
+			)
+			push_entry(
+				&e.b_cur[hash_len(hv >> 8, TABLE_BITS, HASH_LONG)],
+				&e.b_prev[hash_len(hv >> 8, TABLE_BITS, HASH_LONG)],
+				cur_off + 1,
+			)
 		}
 		cv = load_le64(src, int(s))
 	}
@@ -1872,7 +2518,15 @@ close_notify :: proc(link: ^Link) {
 	tag: [16]u8
 	header := [5]u8{23, 3, 3, 0, 19}
 	nonce := nonce_of(link.conn.out_iv, link.conn.out_seq)
-	aead.seal_oneshot(.AES_GCM_128, cipher[:], tag[:], link.conn.out_key[:], nonce[:], header[:], inner[:])
+	aead.seal_oneshot(
+		.AES_GCM_128,
+		cipher[:],
+		tag[:],
+		link.conn.out_key[:],
+		nonce[:],
+		header[:],
+		inner[:],
+	)
 	link.conn.out_seq += 1
 	packet: [24]u8
 	copy(packet[:5], header[:])
@@ -2084,7 +2738,9 @@ read_head :: proc(rd: ^Reader, storage: ^[dynamic]u8) -> Request {
 }
 
 take :: proc(f: ^Fixture, link: ^Link, storage: ^[dynamic]u8) -> (Reader, Request) {
-	rd := Reader{link = link}
+	rd := Reader {
+		link = link,
+	}
 	head := read_head(&rd, storage)
 	f.requests += 1
 	if len(head.accept) > len(f.accept_buf) {
@@ -2139,13 +2795,16 @@ arm_io :: proc(fd: net.TCP_Socket, limit: time.Duration) {
 	if net.set_option(fd, .TCP_Nodelay, true) != nil {
 		fail("nodelay")
 	}
-	if net.set_option(fd, .Send_Timeout, limit) != nil || net.set_option(fd, .Receive_Timeout, limit) != nil {
+	if net.set_option(fd, .Send_Timeout, limit) != nil ||
+	   net.set_option(fd, .Receive_Timeout, limit) != nil {
 		fail("deadline")
 	}
 }
 
 tune_buffers :: proc(f: ^Fixture, fd: net.TCP_Socket) {
-	if strings.has_prefix(f.mode, "early-final") || f.mode == "upload-stall" || f.mode == "upload-source-error-blocked" {
+	if strings.has_prefix(f.mode, "early-final") ||
+	   f.mode == "upload-stall" ||
+	   f.mode == "upload-source-error-blocked" {
 		if net.set_option(fd, .Receive_Buffer_Size, 4096) != nil {
 			fail("read buffer")
 		}
@@ -2428,7 +3087,11 @@ respond :: proc(f: ^Fixture, link: ^Link) {
 			require(!ok, "held output peer unexpectedly completed entire response")
 			marker(f, "transport-retired")
 		}
-		if f.mode != "credit" && f.mode != "cancel" && f.mode != "timeout" && f.mode != "encoded-limit" && f.mode != "decoded-limit" {
+		if f.mode != "credit" &&
+		   f.mode != "cancel" &&
+		   f.mode != "timeout" &&
+		   f.mode != "encoded-limit" &&
+		   f.mode != "decoded-limit" {
 			if !ok {
 				fail("response body")
 			}
@@ -2489,7 +3152,10 @@ upload :: proc(f: ^Fixture, link: ^Link, rd: ^Reader, head: Request) {
 	f.upload_bytes = n
 	f.upload_sha_n = finish_sha(&ctx, f.upload_sha[:])
 	f.upload_complete = !bad && n == head.length
-	if f.mode == "upload-short" || f.mode == "upload-cancel" || f.mode == "upload-source-error" || f.mode == "upload-overrun" {
+	if f.mode == "upload-short" ||
+	   f.mode == "upload-cancel" ||
+	   f.mode == "upload-source-error" ||
+	   f.mode == "upload-overrun" {
 		require(bad, "abandoned upload completed")
 		return
 	}
@@ -2498,7 +3164,10 @@ upload :: proc(f: ^Fixture, link: ^Link, rd: ^Reader, head: Request) {
 	}
 	expect: [64]u8
 	expect_n := digest_pattern(head.length, expect[:])
-	require(string(f.upload_sha[:f.upload_sha_n]) == string(expect[:expect_n]), "upload byte identity")
+	require(
+		string(f.upload_sha[:f.upload_sha_n]) == string(expect[:expect_n]),
+		"upload byte identity",
+	)
 	write_head(link, 200, 2, "Connection: close\r\n")
 	must_write(link, bytes_of("ok"))
 }
@@ -2516,7 +3185,7 @@ await_quiet :: proc(listener: net.TCP_Socket, limit: time.Duration, hit, observe
 			ms = 1
 		}
 		pfd := posix.pollfd {
-			fd = posix.FD(c.int(i64(listener))),
+			fd     = posix.FD(c.int(i64(listener))),
 			events = {.IN},
 		}
 		rc := posix.poll(&pfd, posix.nfds_t(1), c.int(ms))
@@ -2563,7 +3232,12 @@ redirects :: proc(f: ^Fixture) {
 		scheme = "https"
 	}
 	loc: [512]u8
-	fields := fmt.bprintf(loc[:], "Location: %s://127.0.0.1:%d/final\r\nX-Intermediate: hidden\r\nConnection: close\r\n", scheme, bound_port(final_listener))
+	fields := fmt.bprintf(
+		loc[:],
+		"Location: %s://127.0.0.1:%d/final\r\nX-Intermediate: hidden\r\nConnection: close\r\n",
+		scheme,
+		bound_port(final_listener),
+	)
 	first := accept_link(f, f.listener, f.encrypted)
 	defer close_link(&first)
 	storage: [dynamic]u8
@@ -2604,12 +3278,22 @@ redirects :: proc(f: ^Fixture) {
 		wait_file(f, "intermediate-hidden")
 	}
 	if f.mode == "redirect-cross-auth" {
-		await_quiet(final_listener, 300 * time.Millisecond, "unsafe credentials contacted second origin", "cross-origin rejection observation")
+		await_quiet(
+			final_listener,
+			300 * time.Millisecond,
+			"unsafe credentials contacted second origin",
+			"cross-origin rejection observation",
+		)
 		f.authorization_gone = true
 		return
 	}
 	if f.mode == "redirect-downgrade" {
-		await_quiet(final_listener, 300 * time.Millisecond, "HTTPS downgrade contacted HTTP peer", "downgrade observation")
+		await_quiet(
+			final_listener,
+			300 * time.Millisecond,
+			"HTTPS downgrade contacted HTTP peer",
+			"downgrade observation",
+		)
 		return
 	}
 	if f.mode == "redirect-loop" {
@@ -2660,7 +3344,10 @@ redirects :: proc(f: ^Fixture) {
 	}
 	if f.mode == "redirect-deadline" {
 		time.sleep(150 * time.Millisecond)
-		_ = write_all(&last, bytes_of("HTTP/1.1 200 Fixture\r\nContent-Length: 2\r\nConnection: close\r\n\r\n"))
+		_ = write_all(
+			&last,
+			bytes_of("HTTP/1.1 200 Fixture\r\nContent-Length: 2\r\nConnection: close\r\n\r\n"),
+		)
 	} else {
 		write_head(&last, 200, 2, "X-Final: yes\r\nConnection: close\r\n")
 	}
@@ -2675,12 +3362,16 @@ serve_cheap :: proc(job: ^Cheap_Job) {
 	if err != nil {
 		fail("cheap accept")
 	}
-	link := Link{fd = fd}
+	link := Link {
+		fd = fd,
+	}
 	defer close_link(&link)
 	arm_io(fd, 5 * time.Second)
 	storage: [dynamic]u8
 	defer delete(storage)
-	rd := Reader{link = &link}
+	rd := Reader {
+		link = &link,
+	}
 	head := read_head(&rd, &storage)
 	if head.target != "/cheap" || head.length != 0 {
 		fail("cheap request")
@@ -2690,7 +3381,10 @@ serve_cheap :: proc(job: ^Cheap_Job) {
 	if os.exists(retired) {
 		fail("cheap request waited for held transport retirement")
 	}
-	if !write_all(&link, bytes_of("HTTP/1.1 200 Fixture\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")) {
+	if !write_all(
+		&link,
+		bytes_of("HTTP/1.1 200 Fixture\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"),
+	) {
 		fail("cheap write")
 	}
 	job.ok = true
@@ -2702,7 +3396,7 @@ fairness :: proc(f: ^Fixture) {
 		fail("listen")
 	}
 	held := Closer {
-		fd = cheap,
+		fd   = cheap,
 		open = true,
 	}
 	defer close_closer(&held)
@@ -2936,12 +3630,12 @@ main :: proc() {
 		fail("listen")
 	}
 	f := Fixture {
-		mode = mode,
+		mode      = mode,
 		directory = directory,
-		size = size,
+		size      = size,
 		encrypted = encrypted,
-		barrier = barrier,
-		listener = listener,
+		barrier   = barrier,
+		listener  = listener,
 	}
 	defer net.close(f.listener)
 	defer free_tables()
@@ -3004,4 +3698,3 @@ main :: proc() {
 	}
 	emit_json(&f)
 }
-

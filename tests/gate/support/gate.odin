@@ -12,18 +12,18 @@ DIR_PERM :: os.Permissions{.Read_User, .Write_User, .Execute_User}
 FILE_PERM :: os.Permissions{.Read_User, .Write_User}
 
 Gate :: struct {
-	name:       string,
-	compiler:   string,
-	shared:     string,
-	report:     string,
-	sanitizer:  string,
-	root:       string,
+	name:      string,
+	compiler:  string,
+	shared:    string,
+	report:    string,
+	sanitizer: string,
+	root:      string,
 }
 
 begin :: proc(name: string) -> Gate {
 	_ = posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
 	g := Gate {
-		name = name,
+		name      = name,
 		sanitizer = "none",
 	}
 	for i in 1 ..< len(os.args) {
@@ -96,7 +96,16 @@ build :: proc(g: ^Gate, pkg, binary: string, sanitize: bool, extra: ..string) ->
 	defer delete(collection)
 	command := make([dynamic]string)
 	defer delete(command)
-	append(&command, g.compiler, "build", pkg, "-thread-count:1", "-warnings-as-errors", collection, out_flag)
+	append(
+		&command,
+		g.compiler,
+		"build",
+		pkg,
+		"-thread-count:1",
+		"-warnings-as-errors",
+		collection,
+		out_flag,
+	)
 	sanitize_flag := ""
 	if sanitize && g.sanitizer != "" && g.sanitizer != "none" {
 		sanitize_flag = fmt.aprintf("-sanitize:%s", g.sanitizer)
@@ -108,7 +117,9 @@ build :: proc(g: ^Gate, pkg, binary: string, sanitize: bool, extra: ..string) ->
 	for flag in extra {
 		append(&command, flag)
 	}
-	process, start_error := os.process_start({command = command[:], stdout = os.stdout, stderr = os.stderr})
+	process, start_error := os.process_start(
+		{command = command[:], stdout = os.stdout, stderr = os.stderr},
+	)
 	if start_error != nil {
 		return false
 	}

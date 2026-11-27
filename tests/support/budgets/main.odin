@@ -1,13 +1,13 @@
 package main
 
-import "shared:async"
-import "shared:surf"
 import rt "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:sys/posix"
 import "core:time"
+import "shared:async"
+import "shared:surf"
 
 Context :: struct {
 	root, connection, a, b: async.Budget_Scope,
@@ -136,7 +136,13 @@ perform :: proc(
 	)
 }
 // One response under a roomy scope: what it retains and the scope's peak.
-calibrate :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) -> (retained, peak: u64) {
+calibrate :: proc(
+	mode, url: string,
+	allocator: mem.Allocator,
+	record: ^Record,
+) -> (
+	retained, peak: u64,
+) {
 	ctx := context_create(16 * 1024 * 1024, allocator)
 	response, error := perform(mode, url, ctx.a, allocator)
 	record.calls += 1
@@ -166,7 +172,10 @@ retained :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) {
 	assert(usage(ctx.root).used.streams == 0 && usage(ctx.root).rejected > 0)
 	chunk, transferred := surf.response_take_body(&first)
 	assert(transferred.kind == .None)
-	info, known := async.budget_allocation_info(chunk._owned.allocator, raw_data(chunk._owned.storage))
+	info, known := async.budget_allocation_info(
+		chunk._owned.allocator,
+		raw_data(chunk._owned.storage),
+	)
 	assert(known)
 	async.budget_release_scope(&ctx.a)
 	surf.response_destroy(&first)
@@ -201,7 +210,10 @@ managed :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 	// Only the arena blocks that hold retained responses are charged: room for
 	// three, so the peer's bound is never reached first.
 	ctx := context_create(3 * block + 512, allocator)
-	binding, created := async.budget_binding_create(ctx.a, {backing = allocator, metadata_allocator = allocator})
+	binding, created := async.budget_binding_create(
+		ctx.a,
+		{backing = allocator, metadata_allocator = allocator},
+	)
 	assert(created.kind == .None)
 	managed := async.budget_allocator(binding)
 	arena: mem.Dynamic_Arena
@@ -269,7 +281,10 @@ managed :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 block_cost :: proc(allocator: mem.Allocator) -> u64 {
 	ctx := context_create(1024 * 1024, allocator)
 	defer context_destroy(&ctx)
-	binding, created := async.budget_binding_create(ctx.a, {backing = allocator, metadata_allocator = allocator})
+	binding, created := async.budget_binding_create(
+		ctx.a,
+		{backing = allocator, metadata_allocator = allocator},
+	)
 	assert(created.kind == .None)
 	defer async.budget_binding_release(&binding)
 	managed := async.budget_allocator(binding)

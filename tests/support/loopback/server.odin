@@ -165,7 +165,11 @@ server_accept :: proc(s: ^Server) {
 			socket = socket,
 		}
 		sync.atomic_add(&s.connections, 1)
-		worker := thread.create_and_start_with_poly_data(connection, server_serve, self_cleanup = true)
+		worker := thread.create_and_start_with_poly_data(
+			connection,
+			server_serve,
+			self_cleanup = true,
+		)
 
 		if worker == nil {
 			net.close(socket)
@@ -208,7 +212,8 @@ server_serve :: proc(connection: ^Server_Connection) {
 
 		if !s.early {
 			for len(pending) < split + 4 + length {
-				if len(pending) > SERVER_REQUEST_BYTES || !server_fill(s, socket, &pending, scratch[:]) {
+				if len(pending) > SERVER_REQUEST_BYTES ||
+				   !server_fill(s, socket, &pending, scratch[:]) {
 					net.close(socket)
 					return
 				}
@@ -272,7 +277,12 @@ server_answer :: proc(s: ^Server, request: Received) -> Answer {
 }
 
 // False once the client closed, the read failed, or the server is stopping.
-server_fill :: proc(s: ^Server, socket: net.TCP_Socket, pending: ^[dynamic]u8, scratch: []u8) -> bool {
+server_fill :: proc(
+	s: ^Server,
+	socket: net.TCP_Socket,
+	pending: ^[dynamic]u8,
+	scratch: []u8,
+) -> bool {
 	for {
 		if sync.atomic_load(&s.stop) {
 			return false

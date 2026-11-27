@@ -39,27 +39,27 @@ Read_Kind :: enum {
 }
 
 Event :: struct {
-	id:              int,
-	order:           int,
-	method:          [METHOD_CAP]u8,
-	method_n:        int,
-	host:            [HOST_CAP]u8,
-	host_n:          int,
-	path:            [TARGET_CAP]u8,
-	path_n:          int,
-	route:           [TARGET_CAP]u8,
-	route_n:         int,
-	body:            [BODY_CAP]u8,
-	body_n:          int,
-	alpn:            [32]u8,
-	alpn_n:          int,
-	tls:             int,
-	response_bytes:  int,
-	request_bytes:   int,
-	headers:         [HEADER_CAP]u8,
-	headers_n:       int,
-	old_closed:      bool,
-	status:          int,
+	id:             int,
+	order:          int,
+	method:         [METHOD_CAP]u8,
+	method_n:       int,
+	host:           [HOST_CAP]u8,
+	host_n:         int,
+	path:           [TARGET_CAP]u8,
+	path_n:         int,
+	route:          [TARGET_CAP]u8,
+	route_n:        int,
+	body:           [BODY_CAP]u8,
+	body_n:         int,
+	alpn:           [32]u8,
+	alpn_n:         int,
+	tls:            int,
+	response_bytes: int,
+	request_bytes:  int,
+	headers:        [HEADER_CAP]u8,
+	headers_n:      int,
+	old_closed:     bool,
+	status:         int,
 }
 
 Request :: struct {
@@ -303,7 +303,9 @@ serve :: proc(job: ^Job) {
 		fail("deadline")
 	}
 	_ = net.set_option(job.fd, .TCP_Nodelay, true)
-	conn := loopback.Conn{fd = job.fd}
+	conn := loopback.Conn {
+		fd = job.fd,
+	}
 	defer loopback.conn_wipe(&conn)
 	alpn: [32]u8
 	alpn_n := 0
@@ -381,7 +383,14 @@ serve :: proc(job: ^Job) {
 		payload = string(xs[:])
 	}
 	wire_buf: [1024]u8
-	wire := response_wire(wire_buf[:], final, status, target, payload, string(req.method[:req.method_n]))
+	wire := response_wire(
+		wire_buf[:],
+		final,
+		status,
+		target,
+		payload,
+		string(req.method[:req.method_n]),
+	)
 	wrote, wrote_ok := write_all(&conn, wire)
 	if !wrote_ok && mode != "cutoff" {
 		fail("write")
@@ -500,10 +509,18 @@ redirect_target :: proc(buf: []u8, order: int, request_uri: string) -> string {
 	return target
 }
 
-response_wire :: proc(buf: []u8, final: bool, status: int, target, payload, method: string) -> string {
+response_wire :: proc(
+	buf: []u8,
+	final: bool,
+	status: int,
+	target, payload, method: string,
+) -> string {
 	if final {
 		if method != "HEAD" {
-			return fmt.bprintf(buf, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal")
+			return fmt.bprintf(
+				buf,
+				"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal",
+			)
 		}
 		return "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n"
 	}
@@ -635,7 +652,13 @@ record_warmup :: proc(id, version: int, alpn: []u8, req: ^Request, wrote: int) {
 	slot.body_n = 0
 }
 
-fill_event :: proc(slot: ^Event, id, order, version: int, alpn: []u8, req: ^Request, request_bytes, response_bytes, status: int) {
+fill_event :: proc(
+	slot: ^Event,
+	id, order, version: int,
+	alpn: []u8,
+	req: ^Request,
+	request_bytes, response_bytes, status: int,
+) {
 	slot.id = id
 	slot.order = order
 	slot.method_n = copy(slot.method[:], req.method[:req.method_n])
@@ -942,7 +965,12 @@ emit_headers :: proc(headers: string) {
 	}
 	for i in 1 ..< count {
 		j := i
-		for j > 0 && strings.compare(string(fields[j].key[:fields[j].key_n]), string(fields[j - 1].key[:fields[j - 1].key_n])) < 0 {
+		for j > 0 &&
+		    strings.compare(
+			    string(fields[j].key[:fields[j].key_n]),
+			    string(fields[j - 1].key[:fields[j - 1].key_n]),
+		    ) <
+			    0 {
 			fields[j], fields[j - 1] = fields[j - 1], fields[j]
 			j -= 1
 		}
@@ -1000,7 +1028,27 @@ canonical_key :: proc(dst: []u8, src: string) -> int {
 
 header_token :: proc(c: u8) -> bool {
 	switch c {
-	case '0' ..= '9', 'A' ..= 'Z', 'a' ..= 'z', '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+	case '0' ..=
+	     '9',
+	     'A' ..=
+	     'Z',
+	     'a' ..=
+	     'z',
+	     '!',
+	     '#',
+	     '$',
+	     '%',
+	     '&',
+	     '\'',
+	     '*',
+	     '+',
+	     '-',
+	     '.',
+	     '^',
+	     '_',
+	     '`',
+	     '|',
+	     '~':
 		return true
 	}
 	return false

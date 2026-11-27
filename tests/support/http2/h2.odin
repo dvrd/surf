@@ -62,7 +62,12 @@ Data_Recv :: proc "c" (
 	length: c.size_t,
 	user_data: rawptr,
 ) -> c.int
-Stream_Close :: proc "c" (session: rawptr, stream_id: i32, error_code: u32, user_data: rawptr) -> c.int
+Stream_Close :: proc "c" (
+	session: rawptr,
+	stream_id: i32,
+	error_code: u32,
+	user_data: rawptr,
+) -> c.int
 
 Data_Provider :: struct {
 	source:        rawptr,
@@ -93,32 +98,32 @@ END_STREAM :: u8(0x01)
 INTERNAL_ERROR :: u32(0x02)
 
 Stream :: struct {
-	id:               i32,
-	live:             bool,
-	logged:           bool,
-	responded:        bool,
-	stall:            bool,
-	stall_at:         time.Time,
-	blob:             bool,
-	method:           [16]u8,
-	method_n:         int,
-	path:             [512]u8,
-	path_n:           int,
-	authorization:    [256]u8,
-	authorization_n:  int,
-	cookie:           [256]u8,
-	cookie_n:         int,
-	content_type:     [128]u8,
-	content_type_n:   int,
-	review:           [512]u8,
-	review_n:         int,
-	body:             [4096]u8,
-	body_n:           int,
-	reply:            [1024]u8,
-	reply_n:          int,
-	reply_at:         int,
-	blob_n:           int,
-	blob_sent:        int,
+	id:              i32,
+	live:            bool,
+	logged:          bool,
+	responded:       bool,
+	stall:           bool,
+	stall_at:        time.Time,
+	blob:            bool,
+	method:          [16]u8,
+	method_n:        int,
+	path:            [512]u8,
+	path_n:          int,
+	authorization:   [256]u8,
+	authorization_n: int,
+	cookie:          [256]u8,
+	cookie_n:        int,
+	content_type:    [128]u8,
+	content_type_n:  int,
+	review:          [512]u8,
+	review_n:        int,
+	body:            [4096]u8,
+	body_n:          int,
+	reply:           [1024]u8,
+	reply_n:         int,
+	reply_at:        int,
+	blob_n:          int,
+	blob_sent:       int,
 }
 
 H2 :: struct {
@@ -129,7 +134,9 @@ H2 :: struct {
 }
 
 serve_h2 :: proc(conn: ^loopback.Conn) {
-	h := H2{conn = conn}
+	h := H2 {
+		conn = conn,
+	}
 	callbacks: rawptr
 	if nghttp2_session_callbacks_new(&callbacks) != 0 {
 		return
@@ -145,7 +152,10 @@ serve_h2 :: proc(conn: ^loopback.Conn) {
 	nghttp2_session_callbacks_del(callbacks)
 	defer nghttp2_session_del(h.session)
 	push: [1]Settings_Entry
-	push[0] = {settings_id = 0x02, value = 0}
+	push[0] = {
+		settings_id = 0x02,
+		value       = 0,
+	}
 	_ = nghttp2_submit_settings(h.session, 0, &push[0], 1)
 
 	for {
@@ -241,7 +251,10 @@ h2_open :: proc(h: ^H2, id: i32) -> ^Stream {
 	}
 	for &stream in h.streams {
 		if !stream.live {
-			stream = Stream{id = id, live = true}
+			stream = Stream {
+				id   = id,
+				live = true,
+			}
 			return &stream
 		}
 	}
@@ -340,7 +353,12 @@ h2_on_frame :: proc "c" (session: rawptr, frame: rawptr, user_data: rawptr) -> c
 	return 0
 }
 
-h2_on_close :: proc "c" (session: rawptr, stream_id: i32, error_code: u32, user_data: rawptr) -> c.int {
+h2_on_close :: proc "c" (
+	session: rawptr,
+	stream_id: i32,
+	error_code: u32,
+	user_data: rawptr,
+) -> c.int {
 	context = runtime.default_context()
 	h := cast(^H2)user_data
 	if stream := h2_find(h, stream_id); stream != nil {
@@ -417,10 +435,10 @@ h2_submit :: proc(h: ^H2, stream: ^Stream) {
 	if string(stream.reply[:stream.reply_n]) == "bad" {
 		value = "400"
 	}
-	nv := NV{
-		name = cast([^]u8)raw_data(name),
-		value = cast([^]u8)raw_data(value),
-		namelen = c.size_t(len(name)),
+	nv := NV {
+		name     = cast([^]u8)raw_data(name),
+		value    = cast([^]u8)raw_data(value),
+		namelen  = c.size_t(len(name)),
 		valuelen = c.size_t(len(value)),
 	}
 	provider: Data_Provider

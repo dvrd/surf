@@ -53,16 +53,18 @@ install_p256 :: proc(path, common_name: string, dns: []string, ips: [][]byte) ->
 	extensions := [4][]byte{basic, usage, eku, san}
 	now := time.now()
 	serial := [1]u8{1}
-	tbs, tbs_error := x509.marshal_tbs_certificate(x509.TBS_Certificate{
-		serial = serial[:],
-		signature_algorithm = .ECDSA_SHA256,
-		issuer = name[:],
-		not_before = time.time_add(now, -time.Hour),
-		not_after = time.time_add(now, time.Hour),
-		subject = name[:],
-		public_key = {algorithm = .ECDSA_P256, ec_point = point[:]},
-		extensions = extensions[:],
-	})
+	tbs, tbs_error := x509.marshal_tbs_certificate(
+		x509.TBS_Certificate {
+			serial = serial[:],
+			signature_algorithm = .ECDSA_SHA256,
+			issuer = name[:],
+			not_before = time.time_add(now, -time.Hour),
+			not_after = time.time_add(now, time.Hour),
+			subject = name[:],
+			public_key = {algorithm = .ECDSA_P256, ec_point = point[:]},
+			extensions = extensions[:],
+		},
+	)
 	if tbs_error != nil {
 		return false
 	}

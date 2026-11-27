@@ -69,7 +69,11 @@ client_submit_stream :: proc(
 
 // Moves the head into destination once it arrived: .Pending before that,
 // .Request_Error when the request failed first.
-client_stream_take_head :: proc(c: ^Client, handle: Request_Handle, destination: ^Stream_Head) -> Client_Error {
+client_stream_take_head :: proc(
+	c: ^Client,
+	handle: Request_Handle,
+	destination: ^Stream_Head,
+) -> Client_Error {
 	s, slot, error := slot_lock(c, handle)
 	if error.kind != .None {
 		return error
@@ -182,7 +186,11 @@ client_upload_submit :: proc(
 }
 
 // Ends the upload. A source_error fails the request with it.
-client_upload_finish :: proc(c: ^Client, handle: Request_Handle, source_error: io.Error = nil) -> Client_Error {
+client_upload_finish :: proc(
+	c: ^Client,
+	handle: Request_Handle,
+	source_error: io.Error = nil,
+) -> Client_Error {
 	s, slot, error := slot_lock(c, handle)
 	if error.kind != .None {
 		return error
@@ -225,7 +233,11 @@ stream_body :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 
 			chunk, copied := async.owned_copy_bounded(s.read_buffer[:n], n, s.response_alloc)
 			if copied.kind != .None {
-				request_fail(s, slot, {kind = .Allocation_Failed, allocation = copied.allocation, phase = .Read})
+				request_fail(
+					s,
+					slot,
+					{kind = .Allocation_Failed, allocation = copied.allocation, phase = .Read},
+				)
 				return false
 			}
 

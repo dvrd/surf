@@ -29,46 +29,46 @@ Read_Status :: enum {
 }
 
 Conn :: struct {
-	fd:         net.TCP_Socket,
-	in_key:     [16]u8,
-	out_key:    [16]u8,
-	in_iv:      [12]u8,
-	out_iv:     [12]u8,
-	in_seq:     u64,
-	out_seq:    u64,
+	fd:             net.TCP_Socket,
+	in_key:         [16]u8,
+	out_key:        [16]u8,
+	in_iv:          [12]u8,
+	out_iv:         [12]u8,
+	in_seq:         u64,
+	out_seq:        u64,
 	// Application traffic secrets. The record oracle reads these; handshake
 	// keys are never stored here.
-	client_secret: [32]u8,
-	server_secret: [32]u8,
-	app_records:   int,
-	updates:       int,
+	client_secret:  [32]u8,
+	server_secret:  [32]u8,
+	app_records:    int,
+	updates:        int,
 	client_updates: int,
-	manual_seq:    [8]u64,
-	manual_n:      int,
-	plain:      [18 * 1024]u8,
-	plain_at:   int,
-	plain_n:    int,
-	alpn:       [32]u8,
-	alpn_n:     int,
-	sni:        [256]u8,
-	sni_n:      int,
-	reason:     string,
+	manual_seq:     [8]u64,
+	manual_n:       int,
+	plain:          [18 * 1024]u8,
+	plain_at:       int,
+	plain_n:        int,
+	alpn:           [32]u8,
+	alpn_n:         int,
+	sni:            [256]u8,
+	sni_n:          int,
+	reason:         string,
 }
 
 Hello :: struct {
-	session:     [32]u8,
-	session_n:   int,
-	share:       [32]u8,
-	share_ok:    bool,
-	tls13:       bool,
-	ed25519:     bool,
-	p256:        bool,
-	aes128:      bool,
-	alpn:        [8][32]u8,
-	alpn_len:    [8]int,
-	alpn_count:  int,
-	sni:         [256]u8,
-	sni_n:       int,
+	session:    [32]u8,
+	session_n:  int,
+	share:      [32]u8,
+	share_ok:   bool,
+	tls13:      bool,
+	ed25519:    bool,
+	p256:       bool,
+	aes128:     bool,
+	alpn:       [8][32]u8,
+	alpn_len:   [8]int,
+	alpn_count: int,
+	sni:        [256]u8,
+	sni_n:      int,
 }
 
 Signer :: enum {
@@ -83,20 +83,105 @@ peer_p256: ecdsa.Private_Key
 peer_signer: Signer
 
 CERT_VERIFY_CONTEXT :: [98]u8 {
-	0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-	0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-	0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-	0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-	0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-	0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-	0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-	0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
+	0x20,
 	// "TLS 1.3, server CertificateVerify\0"
-	0x54, 0x4c, 0x53, 0x20, 0x31, 0x2e, 0x33, 0x2c,
-	0x20, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x20,
-	0x43, 0x65, 0x72, 0x74, 0x69, 0x66, 0x69, 0x63,
-	0x61, 0x74, 0x65, 0x56, 0x65, 0x72, 0x69, 0x66,
-	0x79, 0x00,
+	0x54,
+	0x4c,
+	0x53,
+	0x20,
+	0x31,
+	0x2e,
+	0x33,
+	0x2c,
+	0x20,
+	0x73,
+	0x65,
+	0x72,
+	0x76,
+	0x65,
+	0x72,
+	0x20,
+	0x43,
+	0x65,
+	0x72,
+	0x74,
+	0x69,
+	0x66,
+	0x69,
+	0x63,
+	0x61,
+	0x74,
+	0x65,
+	0x56,
+	0x65,
+	0x72,
+	0x69,
+	0x66,
+	0x79,
+	0x00,
 }
 
 // dir holds leaf.pem and key.pem. The default is relative to a peer's own
@@ -255,7 +340,8 @@ handshake :: proc(conn: ^Conn, mode: Mode) -> bool {
 		return false
 	}
 	if !scheme_offered(&hello) {
-		conn.reason = "client hello scheme p256" if peer_signer == .P256 else "client hello scheme ed25519"
+		conn.reason =
+			"client hello scheme p256" if peer_signer == .P256 else "client hello scheme ed25519"
 		return false
 	}
 	selected := select_alpn(mode, &hello)
@@ -276,7 +362,8 @@ handshake :: proc(conn: ^Conn, mode: Mode) -> bool {
 	defer ecdh.public_key_clear(&peer)
 	shared: [32]u8
 	defer crypto.zero_explicit(&shared, size_of(shared))
-	if !ecdh.public_key_set_bytes(&peer, .X25519, hello.share[:]) || !ecdh.ecdh(&priv, &peer, shared[:]) {
+	if !ecdh.public_key_set_bytes(&peer, .X25519, hello.share[:]) ||
+	   !ecdh.ecdh(&priv, &peer, shared[:]) {
 		conn.reason = "ecdh"
 		return false
 	}
@@ -284,7 +371,12 @@ handshake :: proc(conn: ^Conn, mode: Mode) -> bool {
 	server_hello: [128]u8
 	random: [32]u8
 	crypto.rand_bytes(random[:])
-	hello_n := write_server_hello(server_hello[:], hello.session[:hello.session_n], public[:], random[:])
+	hello_n := write_server_hello(
+		server_hello[:],
+		hello.session[:hello.session_n],
+		public[:],
+		random[:],
+	)
 	if !write_record(conn.fd, 22, 0x0303, server_hello[:hello_n]) {
 		conn.reason = "server hello write"
 		return false
@@ -370,7 +462,9 @@ handshake :: proc(conn: ^Conn, mode: Mode) -> bool {
 	}
 	// Application secrets cover the transcript through server Finished.
 	hash.final(&transcript, digest[:], true)
-	if client_finished[0] != 20 || got != 36 || !finished_ok(client_hs[:], digest[:], client_finished[4:36]) {
+	if client_finished[0] != 20 ||
+	   got != 36 ||
+	   !finished_ok(client_hs[:], digest[:], client_finished[4:36]) {
 		conn.reason = "finished mac"
 		return false
 	}
@@ -459,7 +553,11 @@ parse_hello :: proc(msg: []u8) -> (hello: Hello, ok: bool) {
 			if len(data) >= 5 {
 				list := int(data[0]) << 8 | int(data[1])
 				name_n := int(data[3]) << 8 | int(data[4])
-				if data[2] == 0 && list == len(data) - 2 && name_n == list - 3 && name_n <= len(hello.sni) && 5 + name_n <= len(data) {
+				if data[2] == 0 &&
+				   list == len(data) - 2 &&
+				   name_n == list - 3 &&
+				   name_n <= len(hello.sni) &&
+				   5 + name_n <= len(data) {
 					copy(hello.sni[:], data[5:][:name_n])
 					hello.sni_n = name_n
 				}
@@ -814,9 +912,21 @@ seal :: proc(conn: ^Conn, kind: u8, body: []u8) -> bool {
 	header[4] = u8(wire_n)
 	tag: [16]u8
 	nonce := nonce_of(conn.out_iv, conn.out_seq)
-	aead.seal_oneshot(.AES_GCM_128, cipher[:inner_n], tag[:], conn.out_key[:], nonce[:], header[:], inner[:inner_n])
+	aead.seal_oneshot(
+		.AES_GCM_128,
+		cipher[:inner_n],
+		tag[:],
+		conn.out_key[:],
+		nonce[:],
+		header[:],
+		inner[:inner_n],
+	)
 	conn.out_seq += 1
-	return write_full(conn.fd, header[:]) && write_full(conn.fd, cipher[:inner_n]) && write_full(conn.fd, tag[:])
+	return(
+		write_full(conn.fd, header[:]) &&
+		write_full(conn.fd, cipher[:inner_n]) &&
+		write_full(conn.fd, tag[:]) \
+	)
 }
 
 // seal_wire builds one TLS record and advances the send sequence without
@@ -843,7 +953,15 @@ seal_wire :: proc(conn: ^Conn, dst: []u8, body: []u8, kind: u8) -> int {
 	dst[4] = u8(inner_n + 16)
 	tag := dst[5 + inner_n:][:16]
 	nonce := nonce_of(conn.out_iv, conn.out_seq)
-	aead.seal_oneshot(.AES_GCM_128, dst[5:][:inner_n], tag, conn.out_key[:], nonce[:], dst[:5], inner[:inner_n])
+	aead.seal_oneshot(
+		.AES_GCM_128,
+		dst[5:][:inner_n],
+		tag,
+		conn.out_key[:],
+		nonce[:],
+		dst[:5],
+		inner[:inner_n],
+	)
 	conn.out_seq += 1
 	return total
 }
@@ -892,7 +1010,15 @@ open_record :: proc(conn: ^Conn) -> (kind: u8, body: []u8, status: Read_Status) 
 	cipher_n := len(payload) - 16
 	opened: [16 * 1024 + 1]u8
 	nonce := nonce_of(conn.in_iv, conn.in_seq)
-	if !aead.open_oneshot(.AES_GCM_128, opened[:cipher_n], conn.in_key[:], nonce[:], header[:], payload[:cipher_n], payload[cipher_n:]) {
+	if !aead.open_oneshot(
+		.AES_GCM_128,
+		opened[:cipher_n],
+		conn.in_key[:],
+		nonce[:],
+		header[:],
+		payload[:cipher_n],
+		payload[cipher_n:],
+	) {
 		return 0, nil, .Failed
 	}
 	conn.in_seq += 1

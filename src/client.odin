@@ -130,47 +130,47 @@ Client :: struct {
 }
 
 Client_State :: struct {
-	mu:              sync.Mutex,
-	id:              u64,
-	config:          Config,
-	capacities:      Capacities,
-	idle_timeout:    time.Duration,
-	runtime:         ^async.Runtime,
-	own_runtime:     bool,
-	task:            async.Task,
-	wake:            async.Signal,
-	notify:          async.Signal,
-	allocator:       mem.Allocator,
+	mu:             sync.Mutex,
+	id:             u64,
+	config:         Config,
+	capacities:     Capacities,
+	idle_timeout:   time.Duration,
+	runtime:        ^async.Runtime,
+	own_runtime:    bool,
+	task:           async.Task,
+	wake:           async.Signal,
+	notify:         async.Signal,
+	allocator:      mem.Allocator,
 	// Responses are built with this allocator. It is allocator unless execute
 	// builds them for its caller.
-	response_alloc:  mem.Allocator,
-	slots:           []Slot,
+	response_alloc: mem.Allocator,
+	slots:          []Slot,
 	// Submitted requests the task has not picked up, oldest first.
-	pending:         [dynamic]u32,
+	pending:        [dynamic]u32,
 	// Completed requests client_poll has not reported, oldest first.
-	completions:     [dynamic]u32,
-	websockets:      []WebSocket_Slot,
+	completions:    [dynamic]u32,
+	websockets:     []WebSocket_Slot,
 	// Completed websocket operations whose callbacks have not run, oldest
 	// first. Callbacks run on the task once mu is released.
-	ws_done:         ^WebSocket_Op,
-	ws_done_tail:    ^WebSocket_Op,
+	ws_done:        ^WebSocket_Op,
+	ws_done_tail:   ^WebSocket_Op,
 	// Task only below, apart from the flags read under mu.
-	origins:         [dynamic]^Origin,
-	resolver:        net.Resolver_Snapshot,
-	resolver_ready:  bool,
-	h3_pool:         ^async.H3_Pool,
+	origins:        [dynamic]^Origin,
+	resolver:       net.Resolver_Snapshot,
+	resolver_ready: bool,
+	h3_pool:        ^async.H3_Pool,
 	// The platform roots, loaded on the first HTTPS origin when Config.tls has
 	// none: async's dial does not load them for nil roots yet.
-	system_roots:    ^async.Root_Pool,
-	own_h3:          bool,
-	read_buffer:     [CLIENT_READ_BYTES]u8,
+	system_roots:   ^async.Root_Pool,
+	own_h3:         bool,
+	read_buffer:    [CLIENT_READ_BYTES]u8,
 	// One request, then the task closes and shuts the runtime down.
-	once:            bool,
-	closing:         bool,
-	cancelled:       bool,
-	finished:        bool,
-	finished_sema:   sync.Sema,
-	notify_pending:  bool,
+	once:           bool,
+	closing:        bool,
+	cancelled:      bool,
+	finished:       bool,
+	finished_sema:  sync.Sema,
+	notify_pending: bool,
 }
 
 client_id_next: u64
@@ -217,7 +217,8 @@ client_init :: proc(
 	s.id = sync.atomic_add(&client_id_next, 1) + 1
 	s.config = config.http
 	s.capacities = caps
-	s.idle_timeout = config.idle_timeout if config.idle_timeout > 0 else CLIENT_DEFAULT_IDLE_TIMEOUT
+	s.idle_timeout =
+		config.idle_timeout if config.idle_timeout > 0 else CLIENT_DEFAULT_IDLE_TIMEOUT
 	s.runtime = runtime
 	s.allocator = allocator
 	s.response_alloc = allocator
@@ -270,7 +271,11 @@ client_init :: proc(
 }
 
 // Starts the client on a runtime of its own, with one worker thread.
-client_start :: proc(c: ^Client, config: Client_Config, allocator := context.allocator) -> Client_Error {
+client_start :: proc(
+	c: ^Client,
+	config: Client_Config,
+	allocator := context.allocator,
+) -> Client_Error {
 	if c == nil || c._self != nil {
 		return {kind = .Invalid_Config}
 	}
@@ -280,7 +285,8 @@ client_start :: proc(c: ^Client, config: Client_Config, allocator := context.all
 		return {kind = .Allocation_Failed}
 	}
 
-	if error := async.init(r, {workers = 1, task_capacity = 64, io_capacity = 1024}); error.kind != .None {
+	if error := async.init(r, {workers = 1, task_capacity = 64, io_capacity = 1024});
+	   error.kind != .None {
 		free(r, allocator)
 		return client_runtime_error(error)
 	}
@@ -415,7 +421,10 @@ client_state_alloc :: proc(s: ^Client_State) -> Client_Error {
 client_resolver_prepare :: proc(s: ^Client_State) -> Client_Error {
 	if error := net.resolver_snapshot_prepare(
 		&s.resolver,
-		{name_servers = s.config.resolver.name_servers, limits = net.DEFAULT_RESOLVER_SNAPSHOT_LIMITS},
+		{
+			name_servers = s.config.resolver.name_servers,
+			limits = net.DEFAULT_RESOLVER_SNAPSHOT_LIMITS,
+		},
 		s.allocator,
 	); error != nil {
 		// No resolver configuration: IP literals still work.
@@ -544,7 +553,15 @@ client_task_cancel :: proc(data: rawptr) -> async.Resume_Result {
 
 	for &slot in s.slots {
 		if slot.phase == .Active {
-			request_fail(s, &slot, {kind = .IO_Failed, phase = .Cancellation, transport = net.Connection_Error.Cancelled})
+			request_fail(
+				s,
+				&slot,
+				{
+					kind = .IO_Failed,
+					phase = .Cancellation,
+					transport = net.Connection_Error.Cancelled,
+				},
+			)
 		}
 	}
 

@@ -81,7 +81,12 @@ Upload_Peer :: struct {
 	base:   string,
 }
 
-upload_peer_start :: proc(t: ^testing.T, peer: ^Upload_Peer, answer: loopback.Answer, early := false) -> bool {
+upload_peer_start :: proc(
+	t: ^testing.T,
+	peer: ^Upload_Peer,
+	answer: loopback.Answer,
+	early := false,
+) -> bool {
 	peer.server.answer = answer
 	peer.server.early = early
 
@@ -175,7 +180,13 @@ upload_leaves_excess_source_bytes_unread_and_never_probes_eof :: proc(t: ^testin
 	testing.expect_value(t, error.kind, .None)
 	testing.expect_value(t, producer.at, 3)
 	testing.expect_value(t, producer.reads, 1)
-	testing.expect(t, strings.has_suffix(loopback.server_last(&peer.server, context.temp_allocator), "\r\n\r\nabc"))
+	testing.expect(
+		t,
+		strings.has_suffix(
+			loopback.server_last(&peer.server, context.temp_allocator),
+			"\r\n\r\nabc",
+		),
+	)
 	zero := Upload_Producer {
 		bytes = body,
 	}
@@ -231,9 +242,21 @@ upload_short_invalid_and_failed_sources_fail_the_write :: proc(t: ^testing.T) {
 		testing.expectf(t, error.phase == .Write, "%v: phase %v", sample, error.phase)
 		// .None in a sample: any source error will do.
 		if sample.source_io == .None {
-			testing.expectf(t, error.source_io != .None, "%v: source_io %v", sample, error.source_io)
+			testing.expectf(
+				t,
+				error.source_io != .None,
+				"%v: source_io %v",
+				sample,
+				error.source_io,
+			)
 		} else {
-			testing.expectf(t, error.source_io == sample.source_io, "%v: source_io %v", sample, error.source_io)
+			testing.expectf(
+				t,
+				error.source_io == sample.source_io,
+				"%v: source_io %v",
+				sample,
+				error.source_io,
+			)
 		}
 
 		testing.expect(t, error.write_effect != .Response_Received)
@@ -273,14 +296,30 @@ upload_validation_and_redirect_rejection_happen_before_io :: proc(t: ^testing.T)
 	testing.expect_value(t, invalid.write_effect, .Not_Sent)
 	redirecting := UPLOAD_CONFIG
 	redirecting.max_redirects = 1
-	_, redirected := surf.execute_upload({method = .POST, url = url}, source_for(&producer, 1), redirecting)
+	_, redirected := surf.execute_upload(
+		{method = .POST, url = url},
+		source_for(&producer, 1),
+		redirecting,
+	)
 	testing.expect_value(t, redirected.kind, .Invalid_Config)
 	testing.expect_value(t, redirected.write_effect, .Not_Sent)
-	_, negative := surf.execute_upload({method = .POST, url = url}, source_for(&producer, -1), UPLOAD_CONFIG)
+	_, negative := surf.execute_upload(
+		{method = .POST, url = url},
+		source_for(&producer, -1),
+		UPLOAD_CONFIG,
+	)
 	testing.expect_value(t, negative.kind, .Invalid_Config)
-	_, missing := surf.execute_upload({method = .POST, url = url}, {content_length = 1}, UPLOAD_CONFIG)
+	_, missing := surf.execute_upload(
+		{method = .POST, url = url},
+		{content_length = 1},
+		UPLOAD_CONFIG,
+	)
 	testing.expect_value(t, missing.kind, .Invalid_Config)
-	_, head := surf.execute_upload({method = .HEAD, url = url}, source_for(&producer, 1), UPLOAD_CONFIG)
+	_, head := surf.execute_upload(
+		{method = .HEAD, url = url},
+		source_for(&producer, 1),
+		UPLOAD_CONFIG,
+	)
 	testing.expect_value(t, head.kind, .Invalid_Method)
 	h3 := UPLOAD_CONFIG
 	h3.http3 = true
@@ -310,7 +349,11 @@ upload_deadline_waits_for_a_cooperative_source :: proc(t: ^testing.T) {
 
 	config := UPLOAD_CONFIG
 	config.timeout = 100 * time.Millisecond
-	_, cooperative := surf.execute_upload({method = .POST, url = upload_url(&peer, "/")}, source_for(&producer, 2), config)
+	_, cooperative := surf.execute_upload(
+		{method = .POST, url = upload_url(&peer, "/")},
+		source_for(&producer, 2),
+		config,
+	)
 	testing.expect_value(t, cooperative.phase, .Deadline)
 	testing.expect(t, cooperative.write_effect != .Response_Received)
 	testing.expect_value(t, producer.reads, 1)
@@ -322,11 +365,19 @@ Upload_Runtime :: struct {
 }
 
 upload_runtime_start :: proc(t: ^testing.T, u: ^Upload_Runtime) -> bool {
-	if !testing.expect_value(t, async.init(&u.r, {workers = 1, task_capacity = 16, io_capacity = 64}).kind, .None) {
+	if !testing.expect_value(
+		t,
+		async.init(&u.r, {workers = 1, task_capacity = 16, io_capacity = 64}).kind,
+		.None,
+	) {
 		return false
 	}
 
-	if !testing.expect_value(t, surf.client_init(&u.client, &u.r, {http = UPLOAD_CONFIG}).kind, .None) {
+	if !testing.expect_value(
+		t,
+		surf.client_init(&u.client, &u.r, {http = UPLOAD_CONFIG}).kind,
+		.None,
+	) {
 		async.destroy(&u.r)
 		return false
 	}
@@ -351,7 +402,14 @@ upload_runtime_stop :: proc(u: ^Upload_Runtime) {
 	_ = async.destroy(&u.r)
 }
 
-upload_wait :: proc(c: ^surf.Client, handle: surf.Request_Handle, limit: time.Duration) -> (surf.HTTP_Error, bool) {
+upload_wait :: proc(
+	c: ^surf.Client,
+	handle: surf.Request_Handle,
+	limit: time.Duration,
+) -> (
+	surf.HTTP_Error,
+	bool,
+) {
 	started := time.tick_now()
 
 	for time.tick_since(started) < limit {
@@ -404,8 +462,19 @@ upload_expired_deadline_is_not_sent :: proc(t: ^testing.T) {
 	}
 	defer surf.client_release(&u.client, handle)
 
-	upload_push(t, &u.client, handle, []u8{'a'})
-	testing.expect_value(t, surf.client_upload_finish(&u.client, handle).kind, .None)
+	// The client may fail the expired request before the chunk arrives.
+	chunk, copied := surf.body_chunk_copy([]u8{'a'}, 1)
+	assert(copied.kind == .None)
+	status, pushed := surf.client_upload_submit(&u.client, handle, &chunk)
+	testing.expect_value(t, pushed.kind, .None)
+
+	if status == .Accepted {
+		testing.expect_value(t, surf.client_upload_finish(&u.client, handle).kind, .None)
+	} else {
+		testing.expect_value(t, status, surf.Upload_Submit_Status.Closed)
+		surf.body_chunk_release(&chunk)
+	}
+
 	late, done := upload_wait(&u.client, handle, 3 * time.Second)
 
 	if !testing.expect(t, done, "an expired request completes") {
