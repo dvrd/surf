@@ -74,31 +74,16 @@ origin_get :: proc(
 	o.port, o.secure, o.decode = u.port, u.secure, decode
 	o.dial_host = o.host
 
-	if net.parse_address(o.host) == nil && s.resolver_ready {
-		endpoints: [DNS_HOSTS_ENTRIES]net.Endpoint
-		count, found, lookup := net.resolver_snapshot_lookup(&s.resolver, o.host, endpoints[:], o.port)
-
-		if found && lookup == nil && count > 0 {
-			chosen := endpoints[0]
-
-			// IPv4 first, as the dial would order a DNS answer.
-			for endpoint in endpoints[:count] {
-				if _, v4 := endpoint.address.(net.IP4_Address); v4 {
-					chosen = endpoint
-					break
-				}
-			}
-
-			literal, e := strings.clone(net.address_to_string(chosen.address, context.temp_allocator), s.allocator)
-			if e != nil {
-				free(o, s.allocator)
-				return nil, false, {kind = .Allocation_Failed, allocation = e, phase = .Admission, write_effect = .Not_Sent}
-			}
-			o.dial_host = literal
+	if address, found := client_hosts_address(s, o.host, o.port); found {
+		literal, e := strings.clone(net.address_to_string(address, context.temp_allocator), s.allocator)
+		if e != nil {
+			free(o, s.allocator)
+			return nil, false, {kind = .Allocation_Failed, allocation = e, phase = .Admission, write_effect = .Not_Sent}
 		}
+		o.dial_host = literal
 	}
 
-	if o.dial_host == o.host && net.parse_address(o.host) == nil && !origin_has_name_servers(s) {
+	if o.dial_host == o.host && net.parse_address(o.host) == nil && len(client_name_servers(s)) == 0 {
 		free(o, s.allocator)
 		return nil, false, {kind = .Dial_Failed, phase = .DNS, write_effect = .Not_Sent}
 	}
@@ -122,11 +107,7 @@ origin_config :: proc(s: ^Client_State, o: ^Origin) -> async.Client_Config {
 	// surf applies Config.max_body_size itself, once the head and its status are
 	// known.
 	limit := i64(async.HTTP_MAX_BODY_SIZE)
-	servers: []net.Endpoint
-
-	if s.resolver_ready {
-		servers, _ = net.resolver_snapshot_name_servers(&s.resolver)
-	}
+	servers := client_name_servers(s)
 
 	setup := s.config.setup_timeout
 	if setup == 0 {
@@ -155,7 +136,7 @@ origin_config :: proc(s: ^Client_State, o: ^Origin) -> async.Client_Config {
 	if o.secure {
 		config.dial.tls = async.Dial_TLS {
 			server_name        = origin_sni(o),
-			roots              = origin_roots(s),
+			roots              = client_roots(s),
 			client_credentials = s.config.tls.client_credentials,
 			session_cache      = s.config.tls.session_cache,
 		}
@@ -172,14 +153,41 @@ origin_config :: proc(s: ^Client_State, o: ^Origin) -> async.Client_Config {
 }
 
 @(private)
-origin_has_name_servers :: proc(s: ^Client_State) -> bool {
+client_name_servers :: proc(s: ^Client_State) -> []net.Endpoint {
 	if !s.resolver_ready {
-		return false
+		return nil
 	}
 
 	servers, _ := net.resolver_snapshot_name_servers(&s.resolver)
 
-	return len(servers) > 0
+	return servers
+}
+
+// The address the hosts file gives a host name, IPv4 first, as a dial orders
+// a DNS answer.
+@(private)
+client_hosts_address :: proc(s: ^Client_State, host: string, port: int) -> (net.Address, bool) {
+	if !s.resolver_ready || net.parse_address(host) != nil {
+		return nil, false
+	}
+
+	endpoints: [DNS_HOSTS_ENTRIES]net.Endpoint
+	count, found, lookup := net.resolver_snapshot_lookup(&s.resolver, host, endpoints[:], port)
+
+	if !found || lookup != nil || count == 0 {
+		return nil, false
+	}
+
+	chosen := endpoints[0]
+
+	for endpoint in endpoints[:count] {
+		if _, v4 := endpoint.address.(net.IP4_Address); v4 {
+			chosen = endpoint
+			break
+		}
+	}
+
+	return chosen.address, true
 }
 
 @(private)
@@ -313,7 +321,7 @@ origin_sni :: proc(o: ^Origin) -> string {
 }
 
 @(private)
-origin_roots :: proc(s: ^Client_State) -> ^async.Root_Pool {
+client_roots :: proc(s: ^Client_State) -> ^async.Root_Pool {
 	if s.config.tls.roots != nil {
 		return s.config.tls.roots
 	}

@@ -432,8 +432,16 @@ execute_run :: proc(
 	defer async.destroy(&r)
 
 	c: Client
+	capacities := Capacities {
+		requests               = 1,
+		origins                = 4,
+		connections_per_origin = 1,
+		upload_chunks          = 1,
+		response_chunks        = 1,
+		websockets             = 1,
+	}
 
-	if error := client_init(&c, &r, {http = config, capacities = Capacities{1, 4, 1, 1, 1}}, runtime.heap_allocator());
+	if error := client_init(&c, &r, {http = config, capacities = capacities}, runtime.heap_allocator());
 	   error.kind != .None {
 		return {}, client_error_http(error)
 	}
