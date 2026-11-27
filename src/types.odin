@@ -9,6 +9,7 @@ import "core:io"
 import "core:mem"
 import "core:net"
 import "shared:async"
+import "shared:async/tls"
 
 Method :: enum {
 	GET,
@@ -540,7 +541,7 @@ tls_failure :: proc(error: async.TLS_Error) -> (TLS_Failure, net.Network_Error) 
 		return .Transport, cause
 	case async.TLS_General_Error:
 		return tls_general_failure(cause), nil
-	case async.TLS_Protocol_Error:
+	case tls.Protocol_Error:
 		return tls_alert_failure(cause), nil
 	}
 
@@ -586,7 +587,7 @@ tls_general_failure :: proc(error: async.TLS_General_Error) -> TLS_Failure {
 	return .Invalid_State
 }
 
-tls_alert_failure :: proc(alert: async.TLS_Protocol_Error) -> TLS_Failure {
+tls_alert_failure :: proc(alert: tls.Protocol_Error) -> TLS_Failure {
 	switch alert {
 	case .None:
 		return .None
