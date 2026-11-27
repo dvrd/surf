@@ -11,6 +11,7 @@ import "core:crypto/hmac"
 import "core:encoding/pem"
 import "core:net"
 import "core:os"
+import "core:strings"
 import "core:time"
 
 Mode :: enum {
@@ -98,13 +99,17 @@ CERT_VERIFY_CONTEXT :: [98]u8 {
 	0x79, 0x00,
 }
 
-load_identity :: proc() -> bool {
-	cert_pem, cert_error := os.read_entire_file("../credentials/leaf.pem", context.allocator)
+// dir holds leaf.pem and key.pem. The default is relative to a peer's own
+// directory under tests/support.
+load_identity :: proc(dir := "../credentials") -> bool {
+	cert_path := strings.concatenate({dir, "/leaf.pem"}, context.temp_allocator)
+	key_path := strings.concatenate({dir, "/key.pem"}, context.temp_allocator)
+	cert_pem, cert_error := os.read_entire_file(cert_path, context.allocator)
 	if cert_error != nil {
 		return false
 	}
 	defer delete(cert_pem)
-	key_pem, key_error := os.read_entire_file("../credentials/key.pem", context.allocator)
+	key_pem, key_error := os.read_entire_file(key_path, context.allocator)
 	if key_error != nil {
 		return false
 	}
