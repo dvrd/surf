@@ -95,7 +95,11 @@ Slot :: struct {
 // Drives one request as far as it can go now.
 request_step :: proc(s: ^Client_State, slot: ^Slot) -> (yield: bool) {
 	if slot.cancel {
-		request_fail(s, slot, {kind = .IO_Failed, phase = .Cancellation, transport = net.Connection_Error.Cancelled})
+		request_fail(
+			s,
+			slot,
+			{kind = .IO_Failed, phase = .Cancellation, transport = net.Connection_Error.Cancelled},
+		)
 		return false
 	}
 
@@ -128,7 +132,11 @@ request_step :: proc(s: ^Client_State, slot: ^Slot) -> (yield: bool) {
 request_begin :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	u, parse := async.http_url_parse(slot.url)
 	if parse.kind != .None {
-		request_fail(s, slot, {kind = .Invalid_URL, phase = .Configuration, write_effect = .Not_Sent})
+		request_fail(
+			s,
+			slot,
+			{kind = .Invalid_URL, phase = .Configuration, write_effect = .Not_Sent},
+		)
 		return false
 	}
 
@@ -142,7 +150,11 @@ request_begin :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 		slot.stage = .Queued
 
 		if async.sleep_until_earlier(s.runtime, slot.deadline).kind == .None {
-			request_fail(s, slot, {kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent})
+			request_fail(
+				s,
+				slot,
+				{kind = .Deadline_Failed, phase = .Deadline, write_effect = .Not_Sent},
+			)
 		}
 
 		return false
@@ -167,8 +179,13 @@ request_begin :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 		}
 	}
 
-	if begun := async.client_exchange_begin(&origin.client, &slot.x, &slot.request, length, slot.deadline);
-	   begun.kind != .None {
+	if begun := async.client_exchange_begin(
+		&origin.client,
+		&slot.x,
+		&slot.request,
+		length,
+		slot.deadline,
+	); begun.kind != .None {
 		request_fail(s, slot, begin_error(begun))
 		return false
 	}
@@ -381,7 +398,15 @@ request_head :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 
 	if s.config.alt_svc != nil && slot.parsed.secure {
 		if value, found := header_find(head.headers, "Alt-Svc"); found {
-			_ = alt_svc_note(s.config.alt_svc, slot.parsed.host, value, true, true, time.now(), slot.parsed.port)
+			_ = alt_svc_note(
+				s.config.alt_svc,
+				slot.parsed.host,
+				value,
+				true,
+				true,
+				time.now(),
+				slot.parsed.port,
+			)
 		}
 	}
 
@@ -396,7 +421,11 @@ request_head :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 			s.allocator,
 		)
 		if failure.kind != .None {
-			request_fail(s, slot, http_error_classify(failure, .Protocol, .Response_Received, head.status))
+			request_fail(
+				s,
+				slot,
+				http_error_classify(failure, .Protocol, .Response_Received, head.status),
+			)
 			return false
 		}
 
@@ -449,8 +478,10 @@ request_body :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 		case .Pending:
 			return false
 		case .Peer_Closed:
-			if failure := response_trailers_copy(&slot.response, async.client_exchange_trailers(&slot.x));
-			   failure.kind != .None {
+			if failure := response_trailers_copy(
+				&slot.response,
+				async.client_exchange_trailers(&slot.x),
+			); failure.kind != .None {
 				request_fail(s, slot, failure)
 				return false
 			}
@@ -618,9 +649,19 @@ begin_error :: proc(error: async.Error) -> HTTP_Error {
 	case .Unsupported:
 		return {kind = .Insecure_URL, phase = .Configuration, write_effect = .Not_Sent}
 	case .Closed, .Cancelled:
-		return {kind = .IO_Failed, phase = .Cancellation, transport = net.Connection_Error.Cancelled, write_effect = .Not_Sent}
+		return {
+			kind = .IO_Failed,
+			phase = .Cancellation,
+			transport = net.Connection_Error.Cancelled,
+			write_effect = .Not_Sent,
+		}
 	case .Allocation_Failed:
-		return {kind = .Allocation_Failed, allocation = error.allocation_cause, phase = .Admission, write_effect = .Not_Sent}
+		return {
+			kind = .Allocation_Failed,
+			allocation = error.allocation_cause,
+			phase = .Admission,
+			write_effect = .Not_Sent,
+		}
 	}
 
 	return {kind = .IO_Failed, phase = .Configuration, write_effect = .Not_Sent}
@@ -644,30 +685,62 @@ exchange_error :: proc(s: ^Client_State, slot: ^Slot, error: async.Error) -> HTT
 
 	switch {
 	case error.kind == .Timeout:
-		result = {kind = .Deadline_Failed, phase = .Deadline}
+		result = {
+			kind  = .Deadline_Failed,
+			phase = .Deadline,
+		}
 	case error.kind == .Cancelled:
-		result = {kind = .IO_Failed, phase = .Cancellation, transport = net.Connection_Error.Cancelled}
+		result = {
+			kind      = .IO_Failed,
+			phase     = .Cancellation,
+			transport = net.Connection_Error.Cancelled,
+		}
 	case error.kind == .Allocation_Failed:
-		result = {kind = .Allocation_Failed, allocation = error.allocation_cause}
+		result = {
+			kind       = .Allocation_Failed,
+			allocation = error.allocation_cause,
+		}
 	// Over HTTP/3 the exchange is bound before its dial; nothing was sent.
 	case !on_wire && slot.origin != nil && slot.origin.refused:
-		result = {kind = .Address_Rejected, phase = .Connect}
+		result = {
+			kind  = .Address_Rejected,
+			phase = .Connect,
+		}
 	case failure.decode != .None:
-		result = {kind = .Content_Decoding_Failed, decoding = decode_failure(failure.decode), phase = .Decode}
+		result = {
+			kind     = .Content_Decoding_Failed,
+			decoding = decode_failure(failure.decode),
+			phase    = .Decode,
+		}
 	case http_kind != .None && http_kind != .IO_Failed:
-		result = {kind = http_error_kind(http_kind), allocation = failure.http.allocation}
+		result = {
+			kind       = http_error_kind(http_kind),
+			allocation = failure.http.allocation,
+		}
 	case !bound:
 		cause := error.network_cause
 		if slot.parsed.secure && (failure.tls != nil || dial_tls_failed(cause)) {
-			result = {kind = .TLS_Failed, phase = .TLS, network = cause, transport = cause}
+			result = {
+				kind      = .TLS_Failed,
+				phase     = .TLS,
+				network   = cause,
+				transport = cause,
+			}
 		} else {
-			result = {kind = .Dial_Failed, network = cause, transport = cause}
+			result = {
+				kind      = .Dial_Failed,
+				network   = cause,
+				transport = cause,
+			}
 			if http_network_phase(cause) == .Unknown {
 				result.phase = .Connect
 			}
 		}
 	case:
-		result = {kind = .IO_Failed, transport = error.network_cause}
+		result = {
+			kind      = .IO_Failed,
+			transport = error.network_cause,
+		}
 	}
 
 	tls, carried := tls_failure(failure.tls)

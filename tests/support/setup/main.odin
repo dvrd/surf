@@ -1,15 +1,15 @@
 package main
 
-import "shared:surf"
 import "core:fmt"
 import "core:mem"
-import "core:net"
 import "core:nbio"
+import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
-import "core:time"
 import "core:sys/posix"
+import "core:time"
+import "shared:surf"
 
 count_fds :: proc() -> int {
 	count := 0
@@ -78,7 +78,10 @@ main :: proc() {
 			)
 			assert(error == nil && endpoint.address == net.Address(net.IP4_Address{127, 0, 0, 1}))
 		} else if mode == "connect" || mode == "refuse" || mode == "backlog" {
-			socket, error := net.dial_tcp_until({address = net.IP4_Address{127, 0, 0, 1}, port = port}, budget)
+			socket, error := net.dial_tcp_until(
+				{address = net.IP4_Address{127, 0, 0, 1}, port = port},
+				budget,
+			)
 
 			if mode == "connect" {
 				assert(error == nil)
@@ -175,7 +178,15 @@ main :: proc() {
 	assert(nbio.run() == nil && callback_called)
 
 	if mode == "backlog" {
-		fmt.println("backlog observed", successes, "successes", failures, "failures", timeouts, "timeouts")
+		fmt.println(
+			"backlog observed",
+			successes,
+			"successes",
+			failures,
+			"failures",
+			timeouts,
+			"timeouts",
+		)
 	}
 
 	fmt.println(

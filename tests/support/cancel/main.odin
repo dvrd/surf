@@ -31,7 +31,11 @@ Completions :: struct {
 	count: int,
 }
 
-collect :: proc(c: ^surf.Client, pending: ^Completions, want: surf.Request_Handle) -> surf.Completion {
+collect :: proc(
+	c: ^surf.Client,
+	pending: ^Completions,
+	want: surf.Request_Handle,
+) -> surf.Completion {
 	start := time.tick_now()
 
 	for {
@@ -95,7 +99,10 @@ run_client :: proc() {
 	servers := [1]net.Endpoint{read_endpoint(dir, "dns", allocator)}
 	before := fd_count()
 	r: async.Runtime
-	assert(async.init(&r, {workers = 1, task_capacity = 4, io_capacity = 16, allocator = allocator}).kind == .None)
+	assert(
+		async.init(&r, {workers = 1, task_capacity = 4, io_capacity = 16, allocator = allocator}).kind ==
+		.None,
+	)
 	c: surf.Client
 	config := surf.Client_Config {
 		http = {
@@ -265,7 +272,11 @@ run_client :: proc() {
 	state, e := budget.snapshot(scope)
 	assert(e == .None && state.used == (budget.Usage{}))
 	budget.release_scope(&scope)
-	assert(track.current_memory_allocated == 0 && len(track.allocation_map) == 0 && len(track.bad_free_array) == 0)
+	assert(
+		track.current_memory_allocated == 0 &&
+		len(track.allocation_map) == 0 &&
+		len(track.bad_free_array) == 0,
+	)
 	mem.tracking_allocator_destroy(&track)
 	assert(os.write_entire_file(fmt.tprintf("%s/done", dir), "done") == nil)
 	fmt.print("{")
@@ -348,7 +359,8 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 	before := fd_count()
 	r: async.Runtime
 	assert(
-		async.init(&r, {workers = 1, task_capacity = 3, io_capacity = 8, allocator = allocator}).kind == .None,
+		async.init(&r, {workers = 1, task_capacity = 3, io_capacity = 8, allocator = allocator}).kind ==
+		.None,
 	)
 	boundary := Boundary {
 		r = &r,
@@ -365,7 +377,9 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 	assert(async.register(&r, &task).kind == .None)
 	original := async.deadline_after(
 		&r,
-		700 * time.Millisecond if mode == "deadline" || mode == "later_finish" else 5 * time.Second,
+		700 * time.Millisecond if \
+			mode == "deadline" || mode == "later_finish" else \
+			5 * time.Second,
 	)
 	connecting, error := async.begin_connect(&r, &task, endpoint, original)
 	assert(error.kind == .None)
@@ -514,7 +528,11 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 	state, se := budget.snapshot(scope)
 	assert(se == .None && state.used == (budget.Usage{}))
 	budget.release_scope(&scope)
-	assert(track.current_memory_allocated == 0 && len(track.bad_free_array) == 0 && len(track.allocation_map) == 0)
+	assert(
+		track.current_memory_allocated == 0 &&
+		len(track.bad_free_array) == 0 &&
+		len(track.allocation_map) == 0,
+	)
 	mem.tracking_allocator_destroy(&track)
 	assert(os.write_entire_file(fmt.tprintf("%s/done", dir), "done") == nil)
 	fmt.print("{")

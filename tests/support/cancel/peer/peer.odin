@@ -22,28 +22,28 @@ MAX_DNS :: 64
 BODY_CAP :: 0
 
 Event :: struct {
-	id:              int,
-	method:          [16]u8,
-	method_n:        int,
-	path:            [256]u8,
-	path_n:          int,
-	request_bytes:   int,
-	content_length:  int,
-	alpn:            [32]u8,
-	alpn_n:          int,
-	tls:             int,
-	clienthello:     int,
-	response_bytes:  int,
-}
-
-Request :: struct {
+	id:             int,
 	method:         [16]u8,
 	method_n:       int,
 	path:           [256]u8,
 	path_n:         int,
-	length:         int,
 	request_bytes:  int,
-	ok:             bool,
+	content_length: int,
+	alpn:           [32]u8,
+	alpn_n:         int,
+	tls:            int,
+	clienthello:    int,
+	response_bytes: int,
+}
+
+Request :: struct {
+	method:        [16]u8,
+	method_n:      int,
+	path:          [256]u8,
+	path_n:        int,
+	length:        int,
+	request_bytes: int,
+	ok:            bool,
 }
 
 directory: string
@@ -267,7 +267,9 @@ cheap_loop :: proc() {
 	fd := accept_one(cheap_fd, "cheap accept")
 	defer net.close(fd)
 	arm_deadline(fd)
-	conn := loopback.Conn{fd = fd}
+	conn := loopback.Conn {
+		fd = fd,
+	}
 	defer loopback.conn_wipe(&conn)
 	secure := phase == "rawconnect" && encrypted
 	if secure {
@@ -277,7 +279,10 @@ cheap_loop :: proc() {
 		}
 	}
 	req := read_request(fd, &conn, secure)
-	if !req.ok || string(req.method[:req.method_n]) != "GET" || string(req.path[:req.path_n]) != "/cheap" || req.length != 0 {
+	if !req.ok ||
+	   string(req.method[:req.method_n]) != "GET" ||
+	   string(req.path[:req.path_n]) != "/cheap" ||
+	   req.length != 0 {
 		fail("cheap request")
 	}
 	release: [1024]u8
@@ -330,9 +335,13 @@ serve_held :: proc(fd: net.TCP_Socket, id: int) -> bool {
 	if phase == "write" && net.set_option(fd, .Receive_Buffer_Size, 1024) != nil {
 		fail("read buffer")
 	}
-	conn := loopback.Conn{fd = fd}
+	conn := loopback.Conn {
+		fd = fd,
+	}
 	defer loopback.conn_wipe(&conn)
-	ev := Event{id = id}
+	ev := Event {
+		id = id,
+	}
 	if phase == "rawconnect" {
 		if !mark("held") {
 			fail("held")
@@ -387,7 +396,12 @@ serve_held :: proc(fd: net.TCP_Socket, id: int) -> bool {
 				return true
 			}
 			redirect_reused = true
-			ev = Event{id = 2, tls = ev.tls, alpn = ev.alpn, alpn_n = ev.alpn_n}
+			ev = Event {
+				id     = 2,
+				tls    = ev.tls,
+				alpn   = ev.alpn,
+				alpn_n = ev.alpn_n,
+			}
 			ev.method_n = copy(ev.method[:], next.method[:next.method_n])
 			ev.path_n = copy(ev.path[:], next.path[:next.path_n])
 			ev.content_length = next.length
@@ -537,7 +551,15 @@ request_target :: proc(line: string) -> (method, target: string, ok: bool) {
 	return method, target, true
 }
 
-read_some :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, secure: bool, dst: []u8) -> (int, net.TCP_Recv_Error) {
+read_some :: proc(
+	fd: net.TCP_Socket,
+	conn: ^loopback.Conn,
+	secure: bool,
+	dst: []u8,
+) -> (
+	int,
+	net.TCP_Recv_Error,
+) {
 	if secure {
 		n, status := loopback.tls_read(conn, dst)
 		if status == .Ok {
@@ -554,7 +576,12 @@ read_some :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, secure: bool, dst: [
 	return net.recv_tcp(fd, dst)
 }
 
-write_stream :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, secure: bool, text: string) -> bool {
+write_stream :: proc(
+	fd: net.TCP_Socket,
+	conn: ^loopback.Conn,
+	secure: bool,
+	text: string,
+) -> bool {
 	if secure {
 		return loopback.tls_write(conn, transmute([]u8)text)
 	}
@@ -757,7 +784,12 @@ emit_json :: proc() {
 		write_escaped(string(ev.method[:ev.method_n]))
 		fmt.fprint(os.stdout, `","path":"`)
 		write_escaped(string(ev.path[:ev.path_n]))
-		fmt.fprintf(os.stdout, `","request_bytes":%d,"content_length":%d,"alpn":"`, ev.request_bytes, ev.content_length)
+		fmt.fprintf(
+			os.stdout,
+			`","request_bytes":%d,"content_length":%d,"alpn":"`,
+			ev.request_bytes,
+			ev.content_length,
+		)
 		write_escaped(string(ev.alpn[:ev.alpn_n]))
 		fmt.fprintf(
 			os.stdout,

@@ -72,8 +72,8 @@ http3_get_falls_back_to_tcp_once_and_post_is_not_replayed :: proc(t: ^testing.T)
 	defer site.stop(s)
 
 	config := surf.Config {
-		http3   = true,
-		tls     = {roots = roots},
+		http3 = true,
+		tls = {roots = roots},
 		timeout = 5 * time.Second,
 	}
 	response, error := surf.execute({method = .GET, url = site.url(s, "/protocol")}, config)

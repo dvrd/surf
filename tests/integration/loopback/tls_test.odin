@@ -76,7 +76,8 @@ peer_stop :: proc(peer: ^Peer) {
 
 	// accept(2) is not woken by a close from another thread on every platform.
 	if !sync.atomic_load(&peer.accepted) {
-		if wake, e := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = peer.port}); e == nil {
+		if wake, e := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = peer.port});
+		   e == nil {
 			net.close(wake)
 		}
 	}
@@ -120,10 +121,15 @@ peer_serve :: proc(peer: ^Peer) {
 	case .Echo:
 		peer.served = peer_read(peer, ECHO_BYTES) && loopback.tls_write(conn, peer.received[:])
 	case .Key_Update:
-		peer.served = loopback.server_key_update(conn) && loopback.tls_write(conn, transmute([]u8)string("rotated")) && peer_read(peer, len("ack"))
+		peer.served =
+			loopback.server_key_update(conn) &&
+			loopback.tls_write(conn, transmute([]u8)string("rotated")) &&
+			peer_read(peer, len("ack"))
 	case .Close_Notify:
 		notify := [2]u8{1, 0}
-		peer.served = loopback.tls_write(conn, transmute([]u8)string("bye")) && loopback.seal(conn, 21, notify[:])
+		peer.served =
+			loopback.tls_write(conn, transmute([]u8)string("bye")) &&
+			loopback.seal(conn, 21, notify[:])
 	}
 
 	// Read until the client closes, so nothing it sent is left unread and the
@@ -141,7 +147,10 @@ peer_read :: proc(peer: ^Peer, count: int) -> bool {
 	scratch: [16 * 1024]u8
 
 	for len(peer.received) < count {
-		n, status := loopback.tls_read(&peer.conn, scratch[:min(len(scratch), count - len(peer.received))])
+		n, status := loopback.tls_read(
+			&peer.conn,
+			scratch[:min(len(scratch), count - len(peer.received))],
+		)
 
 		if status != .Ok {
 			return false
@@ -156,7 +165,8 @@ peer_read :: proc(peer: ^Peer, count: int) -> bool {
 roots_load :: proc(t: ^testing.T, path: string) -> ^tls.Root_Pool {
 	pool := new(tls.Root_Pool)
 
-	if error := tls.root_pool_load_file(pool, path); !testing.expectf(t, error == nil, "roots %s: %v", path, error) {
+	if error := tls.root_pool_load_file(pool, path);
+	   !testing.expectf(t, error == nil, "roots %s: %v", path, error) {
 		free(pool)
 		return nil
 	}
@@ -169,7 +179,12 @@ roots_destroy :: proc(pool: ^tls.Root_Pool) {
 	free(pool)
 }
 
-client_dial :: proc(client: ^tls.Conn, peer: ^Peer, roots: ^tls.Root_Pool, alpn: []string) -> tls.Error {
+client_dial :: proc(
+	client: ^tls.Conn,
+	peer: ^Peer,
+	roots: ^tls.Root_Pool,
+	alpn: []string,
+) -> tls.Error {
 	return tls.dial(
 		client,
 		"127.0.0.1",
@@ -201,7 +216,15 @@ client_read :: proc(client: ^tls.Conn, dst: []u8) -> tls.Error {
 }
 
 // Starts a peer with the fixture identity and the client trusting its root.
-setup :: proc(t: ^testing.T, mode: loopback.Mode, script: Script) -> (peer: ^Peer, roots: ^tls.Root_Pool, ok: bool) {
+setup :: proc(
+	t: ^testing.T,
+	mode: loopback.Mode,
+	script: Script,
+) -> (
+	peer: ^Peer,
+	roots: ^tls.Root_Pool,
+	ok: bool,
+) {
 	if !testing.expect(t, loopback.load_identity(CREDENTIALS), "load the fixture identity") {
 		return
 	}
@@ -253,7 +276,10 @@ loopback_tls_negotiates_the_protocol_of_each_mode :: proc(t: ^testing.T) {
 
 		client: tls.Conn
 		error := client_dial(&client, peer, roots, sample.offers)
-		negotiated := strings.clone(tls.connection_state(&client).negotiated_protocol, context.temp_allocator)
+		negotiated := strings.clone(
+			tls.connection_state(&client).negotiated_protocol,
+			context.temp_allocator,
+		)
 
 		if error == nil {
 			_ = tls.conn_close(&client)
@@ -261,7 +287,13 @@ loopback_tls_negotiates_the_protocol_of_each_mode :: proc(t: ^testing.T) {
 
 		peer_stop(peer)
 		testing.expectf(t, error == nil, "%v: dial: %v", sample.mode, error)
-		testing.expectf(t, peer.handshaken, "%v: server handshake: %s", sample.mode, peer.conn.reason)
+		testing.expectf(
+			t,
+			peer.handshaken,
+			"%v: server handshake: %s",
+			sample.mode,
+			peer.conn.reason,
+		)
 		testing.expect_value(t, negotiated, sample.expected)
 		testing.expect_value(t, string(peer.conn.alpn[:peer.conn.alpn_n]), sample.expected)
 		testing.expect_value(t, string(peer.conn.sni[:peer.conn.sni_n]), "localhost")
@@ -448,7 +480,12 @@ loopback_tls_close_notify_ends_the_stream :: proc(t: ^testing.T) {
 	peer_stop(peer)
 	testing.expectf(t, read_error == nil, "read: %v", read_error)
 	testing.expect_value(t, string(bye[:]), "bye")
-	testing.expectf(t, end_error == tls.Protocol_Error.Close_Notify, "end of stream: %v", end_error)
+	testing.expectf(
+		t,
+		end_error == tls.Protocol_Error.Close_Notify,
+		"end of stream: %v",
+		end_error,
+	)
 	testing.expect(t, peer.served)
 }
 
@@ -475,7 +512,11 @@ loopback_tls_minted_p256_identity_verifies :: proc(t: ^testing.T) {
 	ips := [1][]u8{ip[:]}
 	names := [1]string{"localhost"}
 
-	if !testing.expect(t, loopback.mint_p256(path, "localhost", names[:], ips[:]), "mint the identity") {
+	if !testing.expect(
+		t,
+		loopback.mint_p256(path, "localhost", names[:], ips[:]),
+		"mint the identity",
+	) {
 		return
 	}
 

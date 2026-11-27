@@ -44,15 +44,25 @@ run_outcomes :: proc() {
 	defer loopback.identity_clear()
 	resolv := join(root, "empty-resolv.conf")
 	defer delete(resolv)
-	if os.write_entire_file(resolv, "# Deliberately no resolver for the native DNS failure fixture.\n", FILE_PERM) != nil {
+	if os.write_entire_file(
+		   resolv,
+		   "# Deliberately no resolver for the native DNS failure fixture.\n",
+		   FILE_PERM,
+	   ) !=
+	   nil {
 		fail("resolver file")
 	}
 
 	plain := listen()
 	secure := listen()
 	refused := reserve_refused()
-	plain_job := Job{listener = plain}
-	secure_job := Job{listener = secure, encrypted = true}
+	plain_job := Job {
+		listener = plain,
+	}
+	secure_job := Job {
+		listener  = secure,
+		encrypted = true,
+	}
 	plain_thread := thread.create_and_start_with_poly_data(&plain_job, outcomes_serve)
 	secure_thread := thread.create_and_start_with_poly_data(&secure_job, outcomes_serve)
 	if plain_thread == nil || secure_thread == nil {
@@ -68,7 +78,15 @@ run_outcomes :: proc() {
 	defer delete(out_flag)
 	command := make([dynamic]string)
 	defer delete(command)
-	append(&command, compiler, "build", "tests/support/outcomes", "-thread-count:1", "-warnings-as-errors", out_flag)
+	append(
+		&command,
+		compiler,
+		"build",
+		"tests/support/outcomes",
+		"-thread-count:1",
+		"-warnings-as-errors",
+		out_flag,
+	)
 	if sanitize {
 		append(&command, "-sanitize:address")
 	}
@@ -86,9 +104,14 @@ run_outcomes :: proc() {
 	posix.close(refused)
 	thread.destroy(plain_thread)
 	thread.destroy(secure_thread)
-	expect := [?]string{
-		"/native-reset", "/native-large", "/native-malformed", "/native-slow",
-		"/native-redirect", "/native-redirected-reset", "/native-unsafe-redirect",
+	expect := [?]string {
+		"/native-reset",
+		"/native-large",
+		"/native-malformed",
+		"/native-slow",
+		"/native-redirect",
+		"/native-redirected-reset",
+		"/native-unsafe-redirect",
 	}
 	sync.lock(&seen_mu)
 	defer sync.unlock(&seen_mu)
@@ -124,7 +147,12 @@ outcomes_serve :: proc(job: ^Job) {
 		box := new(Conn)
 		box.fd = fd
 		box.encrypted = job.encrypted
-		if thread.create_and_start_with_poly_data(box, outcomes_handle_conn, self_cleanup = true) == nil {
+		if thread.create_and_start_with_poly_data(
+			   box,
+			   outcomes_handle_conn,
+			   self_cleanup = true,
+		   ) ==
+		   nil {
 			free(box)
 			net.close(fd)
 		}
@@ -143,7 +171,9 @@ outcomes_handle :: proc(fd: net.TCP_Socket, encrypted: bool) {
 	_ = net.set_option(fd, .TCP_Nodelay, true)
 	_ = net.set_option(fd, .Receive_Timeout, 3 * time.Second)
 	_ = net.set_option(fd, .Send_Timeout, 3 * time.Second)
-	conn := loopback.Conn{fd = fd}
+	conn := loopback.Conn {
+		fd = fd,
+	}
 	// Wipe when handle returns. A defer inside the TLS branch runs when that
 	// branch ends, which is before the request is read.
 	defer loopback.conn_wipe(&conn)
@@ -193,11 +223,21 @@ outcomes_handle :: proc(fd: net.TCP_Socket, encrypted: bool) {
 	}
 	record(path)
 	if path == "/native-redirect" {
-		_ = write_all(fd, &conn, encrypted, "HTTP/1.1 307 Temporary Redirect\r\nLocation: /native-redirected-reset\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		_ = write_all(
+			fd,
+			&conn,
+			encrypted,
+			"HTTP/1.1 307 Temporary Redirect\r\nLocation: /native-redirected-reset\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+		)
 		return
 	}
 	if path == "/native-unsafe-redirect" {
-		_ = write_all(fd, &conn, encrypted, "HTTP/1.1 302 Found\r\nLocation: /never-follow-this-post\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		_ = write_all(
+			fd,
+			&conn,
+			encrypted,
+			"HTTP/1.1 302 Found\r\nLocation: /never-follow-this-post\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+		)
 		return
 	}
 	if strings.has_suffix(path, "reset") || strings.has_suffix(path, "slow") {
@@ -214,7 +254,12 @@ outcomes_handle :: proc(fd: net.TCP_Socket, encrypted: bool) {
 		_ = write_large(fd, &conn, encrypted)
 		return
 	}
-	_ = write_all(fd, &conn, encrypted, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+	_ = write_all(
+		fd,
+		&conn,
+		encrypted,
+		"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+	)
 }
 
 record :: proc(path: string) {
@@ -225,7 +270,12 @@ record :: proc(path: string) {
 }
 
 write_large :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool) -> bool {
-	if !write_all(fd, conn, encrypted, "HTTP/1.1 200 OK\r\nContent-Length: 65537\r\nConnection: close\r\n\r\n") {
+	if !write_all(
+		fd,
+		conn,
+		encrypted,
+		"HTTP/1.1 200 OK\r\nContent-Length: 65537\r\nConnection: close\r\n\r\n",
+	) {
 		return false
 	}
 	chunk: [4096]u8
@@ -253,7 +303,8 @@ outcomes_content_length :: proc(head: string) -> int {
 		} else {
 			rest = rest[cut + 2:]
 		}
-		if len(line) >= len("content-length:") && strings.equal_fold(line[:len("content-length:")], "content-length:") {
+		if len(line) >= len("content-length:") &&
+		   strings.equal_fold(line[:len("content-length:")], "content-length:") {
 			value := strings.trim_space(line[len("content-length:"):])
 			parsed, ok := strconv.parse_int(value)
 			if ok {
@@ -263,7 +314,6 @@ outcomes_content_length :: proc(head: string) -> int {
 	}
 	return 0
 }
-
 
 
 request_path :: proc(head: string) -> string {
@@ -316,12 +366,9 @@ listen :: proc() -> net.TCP_Socket {
 }
 
 outcomes_run :: proc(command: []string, env: []string) -> bool {
-	process, start_error := os.process_start({
-		command = command,
-		env = env,
-		stdout = os.stdout,
-		stderr = os.stderr,
-	})
+	process, start_error := os.process_start(
+		{command = command, env = env, stdout = os.stdout, stderr = os.stderr},
+	)
 	if start_error != nil {
 		return false
 	}
@@ -382,4 +429,3 @@ outcomes_parse_args :: proc() -> (compiler, report: string, sanitize: bool) {
 	}
 	return
 }
-

@@ -271,7 +271,9 @@ serve :: proc(job: ^Job) {
 	storage := new([1 << 16]u8)
 	defer free(storage)
 	pending := storage[:]
-	conn := loopback.Conn{fd = job.fd}
+	conn := loopback.Conn {
+		fd = job.fd,
+	}
 	closed := false
 	tls_ready := false
 	defer {
@@ -392,7 +394,12 @@ serve :: proc(job: ^Job) {
 				}
 			} else if secure {
 				record_buf: [64]u8
-				sealed := loopback.seal_wire(&conn, record_buf[:], transmute([]u8)string("OLD"), 23)
+				sealed := loopback.seal_wire(
+					&conn,
+					record_buf[:],
+					transmute([]u8)string("OLD"),
+					23,
+				)
 				if sealed < 3 {
 					fail("record")
 				}
@@ -424,10 +431,23 @@ serve :: proc(job: ^Job) {
 }
 
 retire_mode :: proc() -> bool {
-	return mode == "stale" || mode == "peer-close" || mode == "partial" || mode == "separate" || mode == "keyupdate"
+	return(
+		mode == "stale" ||
+		mode == "peer-close" ||
+		mode == "partial" ||
+		mode == "separate" ||
+		mode == "keyupdate" \
+	)
 }
 
-build_response :: proc(dst: []u8, path, method, body: string, id, order: int) -> (text: string, close_after: bool) {
+build_response :: proc(
+	dst: []u8,
+	path, method, body: string,
+	id, order: int,
+) -> (
+	text: string,
+	close_after: bool,
+) {
 	if path == "/head" && method != "HEAD" {
 		fail("HEAD vector")
 	}
@@ -436,50 +456,140 @@ build_response :: proc(dst: []u8, path, method, body: string, id, order: int) ->
 	}
 	switch path {
 	case "/zero":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 0\r\n\r\n", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 0\r\n\r\n",
+			id,
+			order,
+		)
 	case "/head":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 999\r\n\r\n", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 999\r\n\r\n",
+			id,
+			order,
+		)
 	case "/204":
-		text = fmt.bprintf(dst, "HTTP/1.1 204 No Content\r\nX-Connection: %d\r\nX-Order: %d\r\n\r\n", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 204 No Content\r\nX-Connection: %d\r\nX-Order: %d\r\n\r\n",
+			id,
+			order,
+		)
 	case "/304":
-		text = fmt.bprintf(dst, "HTTP/1.1 304 Not Modified\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 999\r\n\r\n", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 304 Not Modified\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 999\r\n\r\n",
+			id,
+			order,
+		)
 	case "/chunked":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n2\r\nbc\r\n0\r\nX-End: yes\r\n\r\n", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n2\r\nbc\r\n0\r\nX-End: yes\r\n\r\n",
+			id,
+			order,
+		)
 	case "/interim":
-		text = fmt.bprintf(dst, "HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\n\r\nok", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\n\r\nok",
+			id,
+			order,
+		)
 	case "/http10":
-		text = fmt.bprintf(dst, "HTTP/1.0 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.0 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok",
+			id,
+			order,
+		)
 	case "/close":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
+			id,
+			order,
+		)
 		close_after = true
 	case "/http10-close":
-		text = fmt.bprintf(dst, "HTTP/1.0 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\n\r\nok", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.0 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\n\r\nok",
+			id,
+			order,
+		)
 	case "/connection-close":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\ncOnNeCtIoN: keep-alive, , close\r\nContent-Length: 2\r\n\r\nok", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\ncOnNeCtIoN: keep-alive, , close\r\nContent-Length: 2\r\n\r\nok",
+			id,
+			order,
+		)
 	case "/eof":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\n\r\nok", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\n\r\nok",
+			id,
+			order,
+		)
 		close_after = true
 	case "/truncated":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 5\r\n\r\nok", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 5\r\n\r\nok",
+			id,
+			order,
+		)
 		close_after = true
 	case "/malformed":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\nContent-Length: 3\r\n\r\nok", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\nContent-Length: 3\r\n\r\nok",
+			id,
+			order,
+		)
 		close_after = true
 	case "/badchunk":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\n", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\n",
+			id,
+			order,
+		)
 		close_after = true
 	case "/101":
-		text = fmt.bprintf(dst, "HTTP/1.1 101 Switching Protocols\r\nX-Connection: %d\r\nX-Order: %d\r\n\r\n", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 101 Switching Protocols\r\nX-Connection: %d\r\nX-Order: %d\r\n\r\n",
+			id,
+			order,
+		)
 		close_after = true
 	case "/surplus":
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\n\r\nokOLD", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\n\r\nokOLD",
+			id,
+			order,
+		)
 	case:
-		text = fmt.bprintf(dst, "HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\n\r\nok", id, order)
+		text = fmt.bprintf(
+			dst,
+			"HTTP/1.1 200 OK\r\nX-Connection: %d\r\nX-Order: %d\r\nContent-Length: 2\r\n\r\nok",
+			id,
+			order,
+		)
 	}
 	return
 }
 
-record :: proc(id, order: int, path, method, host, body: string, secure: bool, conn: ^loopback.Conn) {
+record :: proc(
+	id, order: int,
+	path, method, host, body: string,
+	secure: bool,
+	conn: ^loopback.Conn,
+) {
 	sync.lock(&mu)
 	defer sync.unlock(&mu)
 	if event_n == len(events) {
@@ -520,7 +630,12 @@ read_some :: proc(secure: bool, conn: ^loopback.Conn, dst: []u8) -> (int, net.TC
 	return net.recv_tcp(conn.fd, dst)
 }
 
-send :: proc(conn: ^loopback.Conn, fd: net.TCP_Socket, secure, manual, fragmented: bool, text: string) -> bool {
+send :: proc(
+	conn: ^loopback.Conn,
+	fd: net.TCP_Socket,
+	secure, manual, fragmented: bool,
+	text: string,
+) -> bool {
 	if manual {
 		wire: [2048]u8
 		n := loopback.seal_wire(conn, wire[:], transmute([]u8)text, 23)
@@ -739,7 +854,13 @@ emit_line :: proc(text: string) {
 emit_json :: proc() {
 	fmt.fprintf(os.stdout, `{{"mode":"`)
 	write_escaped(mode)
-	fmt.fprintf(os.stdout, `","tls":%t,"connections":%d,"requests":%d,"events":[`, encrypted, connections, event_n)
+	fmt.fprintf(
+		os.stdout,
+		`","tls":%t,"connections":%d,"requests":%d,"events":[`,
+		encrypted,
+		connections,
+		event_n,
+	)
 	for i in 0 ..< event_n {
 		if i > 0 {
 			fmt.fprint(os.stdout, ",")
@@ -759,7 +880,13 @@ emit_json :: proc() {
 		write_escaped(string(ev.sni[:ev.sni_n]))
 		fmt.fprintf(os.stdout, `","secure":%t}`, ev.secure)
 	}
-	fmt.fprintf(os.stdout, `],"handshake_errors":%d,"key_updates":%d,"client_key_updates":%d}` + "\n", handshake_errors, key_updates, client_key_updates)
+	fmt.fprintf(
+		os.stdout,
+		`],"handshake_errors":%d,"key_updates":%d,"client_key_updates":%d}` + "\n",
+		handshake_errors,
+		key_updates,
+		client_key_updates,
+	)
 	_ = os.flush(os.stdout)
 }
 

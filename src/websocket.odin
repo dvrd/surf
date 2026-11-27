@@ -270,11 +270,17 @@ client_websocket_open :: proc(
 
 	http_url, secure, scheme_ok := websocket_http_url(url)
 	if !scheme_ok {
-		return {}, {kind = .Invalid_Config, http = {kind = .Invalid_URL, phase = .Configuration, write_effect = .Not_Sent}}
+		return {}, {
+			kind = .Invalid_Config,
+			http = {kind = .Invalid_URL, phase = .Configuration, write_effect = .Not_Sent},
+		}
 	}
 
 	if !secure && !s.config.allow_http {
-		return {}, {kind = .Invalid_Config, http = {kind = .Insecure_URL, phase = .Configuration, write_effect = .Not_Sent}}
+		return {}, {
+			kind = .Invalid_Config,
+			http = {kind = .Insecure_URL, phase = .Configuration, write_effect = .Not_Sent},
+		}
 	}
 
 	prepared: WebSocket_Slot
@@ -323,7 +329,12 @@ client_websocket_open :: proc(
 }
 
 // Completes with one whole message copied into dst. One read at a time.
-client_websocket_read :: proc(c: ^Client, h: WebSocket_Handle, op: ^WebSocket_Op, dst: []u8) -> Client_Error {
+client_websocket_read :: proc(
+	c: ^Client,
+	h: WebSocket_Handle,
+	op: ^WebSocket_Op,
+	dst: []u8,
+) -> Client_Error {
 	s, slot, error := websocket_lock(c, h, op)
 	if error.kind != .None {
 		return error
@@ -437,7 +448,11 @@ client_websocket_close :: proc(
 
 // Cancels a pending open, read or write; it completes with .Cancelled.
 // Cancelling the open ends the session. A close cannot be cancelled.
-client_websocket_cancel :: proc(c: ^Client, h: WebSocket_Handle, op: ^WebSocket_Op) -> Client_Error {
+client_websocket_cancel :: proc(
+	c: ^Client,
+	h: WebSocket_Handle,
+	op: ^WebSocket_Op,
+) -> Client_Error {
 	s, error := client_state(c)
 	if error.kind != .None {
 		return error
@@ -491,7 +506,14 @@ client_websocket_release :: proc(c: ^Client, h: WebSocket_Handle) -> Client_Erro
 
 // The subprotocol the server selected, copied into buffer: "" before the
 // upgrade or for none.
-client_websocket_subprotocol :: proc(c: ^Client, h: WebSocket_Handle, buffer: []u8) -> (string, Client_Error) {
+client_websocket_subprotocol :: proc(
+	c: ^Client,
+	h: WebSocket_Handle,
+	buffer: []u8,
+) -> (
+	string,
+	Client_Error,
+) {
 	s, error := client_state(c)
 	if error.kind != .None {
 		return "", error
@@ -591,11 +613,21 @@ websocket_fill :: proc(
 	at += copy(storage[at:], rest)
 	parsed, parse_error := async.http_url_parse(string(storage[:at]))
 	if parse_error.kind != .None {
-		return {kind = .Invalid_Config, http = {kind = http_error_kind(parse_error.kind), phase = .Configuration, write_effect = .Not_Sent}}
+		return {
+			kind = .Invalid_Config,
+			http = {
+				kind = http_error_kind(parse_error.kind),
+				phase = .Configuration,
+				write_effect = .Not_Sent,
+			},
+		}
 	}
 
 	if len(parsed.host) > len(slot.sni) {
-		return {kind = .Invalid_Config, http = {kind = .Invalid_URL, phase = .Configuration, write_effect = .Not_Sent}}
+		return {
+			kind = .Invalid_Config,
+			http = {kind = .Invalid_URL, phase = .Configuration, write_effect = .Not_Sent},
+		}
 	}
 
 	slot.url = parsed
@@ -610,9 +642,16 @@ websocket_fill :: proc(
 		slot.headers[i].value = take(storage, &at, h.value)
 	}
 
-	slot.max_message = options.max_message_size if options.max_message_size > 0 else async.WS_DEFAULT_MESSAGE_BYTES
-	slot.max_queued = options.max_queued_bytes if options.max_queued_bytes > 0 else async.WS_DEFAULT_OUTPUT_BYTES
-	slot.handshake = options.handshake_timeout if options.handshake_timeout > 0 else WEBSOCKET_DEFAULT_HANDSHAKE_TIMEOUT
+	slot.max_message =
+		options.max_message_size if \
+			options.max_message_size > 0 else \
+			async.WS_DEFAULT_MESSAGE_BYTES
+	slot.max_queued =
+		options.max_queued_bytes if options.max_queued_bytes > 0 else async.WS_DEFAULT_OUTPUT_BYTES
+	slot.handshake =
+		options.handshake_timeout if \
+			options.handshake_timeout > 0 else \
+			WEBSOCKET_DEFAULT_HANDSHAKE_TIMEOUT
 	slot.session = {
 		max_frame_bytes   = options.max_frame_payload,
 		max_message_bytes = options.max_message_size,
@@ -740,10 +779,10 @@ websocket_step :: proc(s: ^Client_State, slot: ^WebSocket_Slot) -> bool {
 websocket_dial :: proc(s: ^Client_State, slot: ^WebSocket_Slot) -> bool {
 	host := slot.url.host
 	dial := async.Dial_Config {
-		host     = host,
-		port     = slot.url.port,
+		host = host,
+		port = slot.url.port,
 		deadline = async.deadline_after(s.runtime, slot.handshake),
-		stream   = {allocator = s.allocator},
+		stream = {allocator = s.allocator},
 	}
 
 	if address, found := client_hosts_address(s, host, slot.url.port); found {
@@ -828,7 +867,10 @@ websocket_policy :: proc(_: string, addresses: []net.Endpoint, user: rawptr) -> 
 	slot := cast(^WebSocket_Slot)user
 	config := slot.s.config
 
-	return len(addresses) > 0 && config.address_policy(slot.url.host, addresses, config.address_policy_data)
+	return(
+		len(addresses) > 0 &&
+		config.address_policy(slot.url.host, addresses, config.address_policy_data) \
+	)
 }
 
 websocket_upgrading :: proc(s: ^Client_State, slot: ^WebSocket_Slot) -> bool {
@@ -925,7 +967,11 @@ websocket_pump :: proc(s: ^Client_State, slot: ^WebSocket_Slot) -> bool {
 		if write._cancel {
 			result.error.kind = .Cancelled
 		} else {
-			sent := async.ws_message_send(&slot.ws, websocket_message_async(write.message), write.buffer)
+			sent := async.ws_message_send(
+				&slot.ws,
+				websocket_message_async(write.message),
+				write.buffer,
+			)
 			if sent.kind == .Pending {
 				break
 			}
@@ -1026,7 +1072,12 @@ websocket_end :: proc(s: ^Client_State, slot: ^WebSocket_Slot, failure: WebSocke
 	slot.phase = .Ended
 }
 
-websocket_fail_ops :: proc(s: ^Client_State, slot: ^WebSocket_Slot, error: WebSocket_Result, closed: WebSocket_Result) {
+websocket_fail_ops :: proc(
+	s: ^Client_State,
+	slot: ^WebSocket_Slot,
+	error: WebSocket_Result,
+	closed: WebSocket_Result,
+) {
 	cancelled := error
 	if slot.released {
 		cancelled = {
@@ -1265,7 +1316,9 @@ websocket_error :: proc(result: WebSocket_Result) -> WebSocket_Error {
 }
 
 websocket_network_kind :: proc(failure: WebSocket_Error) -> WebSocket_Error_Kind {
-	if failure.tls_error != .None && failure.tls_error != .Close_Notify && failure.tls_error != .Transport {
+	if failure.tls_error != .None &&
+	   failure.tls_error != .Close_Notify &&
+	   failure.tls_error != .Transport {
 		return .TLS_Failed
 	}
 

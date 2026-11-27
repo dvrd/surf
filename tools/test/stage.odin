@@ -66,7 +66,13 @@ print_library :: proc(library: string, order: []string) {
 	if len(order) > 1 {
 		rest = concat(" ", join_sep(order[1:], " "), " ")
 	}
-	say("Library %s from %s/src; dependencies from %s:%s\n", library, root, dependency_source, rest)
+	say(
+		"Library %s from %s/src; dependencies from %s:%s\n",
+		library,
+		root,
+		dependency_source,
+		rest,
+	)
 }
 
 report_escapes :: proc(repository: string, escapes: []Escape) {
@@ -129,7 +135,11 @@ stage_dependencies :: proc(library, repository, shared, sdk: string) -> [dynamic
 			append(&next, ..imported[:])
 			for escape in escaping_imports(dest, dest) {
 				if !strings.has_prefix(escape.resolved, concat(shared, "/")) {
-					say_err("shared:%s imports outside the collection: %s\n", name, escape.resolved)
+					say_err(
+						"shared:%s imports outside the collection: %s\n",
+						name,
+						escape.resolved,
+					)
 					finish(2)
 				}
 				top := escape.resolved[len(shared) + 1:]
@@ -195,7 +205,22 @@ quote_safe :: proc(value: string) -> bool {
 	}
 	for index := 0; index < len(value); index += 1 {
 		switch value[index] {
-		case 'A' ..= 'Z', 'a' ..= 'z', '0' ..= '9', '/', '_', '.', ',', ':', '=', '@', '%', '+', '-':
+		case 'A' ..=
+		     'Z',
+		     'a' ..=
+		     'z',
+		     '0' ..=
+		     '9',
+		     '/',
+		     '_',
+		     '.',
+		     ',',
+		     ':',
+		     '=',
+		     '@',
+		     '%',
+		     '+',
+		     '-':
 		case:
 			return false
 		}
@@ -493,9 +518,18 @@ copy_tree :: proc(source, target: string) {
 }
 
 copy_git :: proc(source, target: string) {
-	text, status := capture([]string{
-		"git", "-C", source, "ls-files", "--cached", "--others", "--exclude-standard", "-z",
-	})
+	text, status := capture(
+		[]string {
+			"git",
+			"-C",
+			source,
+			"ls-files",
+			"--cached",
+			"--others",
+			"--exclude-standard",
+			"-z",
+		},
+	)
 	if status != 0 {
 		finish(status)
 	}
@@ -643,7 +677,9 @@ force_symlink :: proc(target, link_path: string) {
 }
 
 relative_to :: proc(root_path, full: string) -> string {
-	if !strings.has_prefix(full, root_path) || len(full) <= len(root_path) || full[len(root_path)] != '/' {
+	if !strings.has_prefix(full, root_path) ||
+	   len(full) <= len(root_path) ||
+	   full[len(root_path)] != '/' {
 		return ""
 	}
 	return full[len(root_path) + 1:]
@@ -788,7 +824,8 @@ relative_import :: proc(rest: string) -> (path: string, used: int, ok: bool) {
 	if _, ident_len, has_ident := take_ident(after); has_ident {
 		more := count_spaces(after[ident_len:])
 		if more > 0 {
-			if quoted, quoted_len, quoted_ok := take_quoted_rel(after[ident_len + more:]); quoted_ok {
+			if quoted, quoted_len, quoted_ok := take_quoted_rel(after[ident_len + more:]);
+			   quoted_ok {
 				return quoted, spaces + ident_len + more + quoted_len, true
 			}
 		}

@@ -48,9 +48,9 @@ invalid_config_is_not_sent :: proc(t: ^testing.T) {
 @(test)
 public_execute_distinguishes_read_and_timeout_after_the_write :: proc(t: ^testing.T) {
 	for sample in ([]struct {
-			action:  loopback.Action,
-			kind:    surf.HTTP_Error_Kind,
-			phase:   surf.HTTP_Phase,
+			action: loopback.Action,
+			kind:   surf.HTTP_Error_Kind,
+			phase:  surf.HTTP_Phase,
 		} {
 			{.Close, .Unexpected_EOF, .Read},
 			{.Reset, .IO_Failed, .Read},
@@ -87,12 +87,19 @@ public_client_cancel_after_the_write_is_cancellation :: proc(t: ^testing.T) {
 
 	c: surf.Client
 
-	if !testing.expect_value(t, surf.client_start(&c, {http = {allow_http = true, timeout = 5 * time.Second}}).kind, .None) {
+	if !testing.expect_value(
+		t,
+		surf.client_start(&c, {http = {allow_http = true, timeout = 5 * time.Second}}).kind,
+		.None,
+	) {
 		return
 	}
 	defer surf.client_destroy(&c)
 
-	handle, submitted := surf.client_submit(&c, {method = .POST, url = peer.url, body = transmute([]u8)string("x")})
+	handle, submitted := surf.client_submit(
+		&c,
+		{method = .POST, url = peer.url, body = transmute([]u8)string("x")},
+	)
 
 	if !testing.expect_value(t, submitted.kind, .None) {
 		return
@@ -132,7 +139,12 @@ public_execute_retains_observed_status_after_body_failure :: proc(t: ^testing.T)
 			{"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n", 8, .Body_Limit, 200},
 			{"not an HTTP response\r\n\r\n", 8, .Protocol, 0},
 			{"HTTP/1.1 200 OK\r\nBrokenHeader\r\n\r\n", 8, .Protocol, 0},
-			{"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nContent-Length: 1\r\n\r\n", 8, .Protocol, 200},
+			{
+				"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nContent-Length: 1\r\n\r\n",
+				8,
+				.Protocol,
+				200,
+			},
 		}) {
 		peer: Outcome_Peer
 
@@ -146,9 +158,21 @@ public_execute_retains_observed_status_after_body_failure :: proc(t: ^testing.T)
 		)
 		surf.response_destroy(&response)
 		testing.expectf(t, error.phase == sample.phase, "%q: phase %v", sample.wire, error.phase)
-		testing.expectf(t, error.status == sample.status, "%q: status %v", sample.wire, error.status)
+		testing.expectf(
+			t,
+			error.status == sample.status,
+			"%q: status %v",
+			sample.wire,
+			error.status,
+		)
 		effect: surf.HTTP_Write_Effect = sample.status == 0 ? .Unknown : .Response_Received
-		testing.expectf(t, error.write_effect == effect, "%q: effect %v", sample.wire, error.write_effect)
+		testing.expectf(
+			t,
+			error.write_effect == effect,
+			"%q: effect %v",
+			sample.wire,
+			error.write_effect,
+		)
 		outcome_stop(&peer)
 	}
 }
@@ -167,7 +191,11 @@ native_dns_failure_classifies_as_dns :: proc(t: ^testing.T) {
 validated_status_survives_response_allocation_failure :: proc(t: ^testing.T) {
 	peer: Outcome_Peer
 
-	if !outcome_start(t, &peer, {wire = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n"}) {
+	if !outcome_start(
+		t,
+		&peer,
+		{wire = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n"},
+	) {
 		return
 	}
 	defer outcome_stop(&peer)
@@ -192,7 +220,11 @@ tls_record_failures_preserve_tls_but_transport_causes_remain_specific :: proc(t:
 	)
 	testing.expect_value(t, broken_record.phase, .TLS)
 	transport_read := surf.http_error_classify(
-		{kind = .IO_Failed, tls_error = .Transport, transport = net.TCP_Recv_Error.Connection_Closed},
+		{
+			kind = .IO_Failed,
+			tls_error = .Transport,
+			transport = net.TCP_Recv_Error.Connection_Closed,
+		},
 		.Read,
 		.Unknown,
 	)
@@ -228,7 +260,10 @@ outcome_fail_allocate :: proc(
 	mem.Allocator_Error,
 ) {
 	state := cast(^Outcome_Failing_Allocator)data
-	if mode == .Alloc || mode == .Alloc_Non_Zeroed || mode == .Resize || mode == .Resize_Non_Zeroed {
+	if mode == .Alloc ||
+	   mode == .Alloc_Non_Zeroed ||
+	   mode == .Resize ||
+	   mode == .Resize_Non_Zeroed {
 		state.count += 1
 
 		if state.count == state.fail_at {
@@ -236,7 +271,15 @@ outcome_fail_allocate :: proc(
 		}
 	}
 
-	return state.backing.procedure(state.backing.data, mode, size, alignment, old_memory, old_size, location)
+	return state.backing.procedure(
+		state.backing.data,
+		mode,
+		size,
+		alignment,
+		old_memory,
+		old_size,
+		location,
+	)
 }
 
 @(test)
@@ -247,7 +290,13 @@ partial_response_allocation_failures_release_all_owned_storage :: proc(t: ^testi
 	if !outcome_start(
 		t,
 		&peer,
-		{wire = fmt.tprintf("HTTP/1.1 503 Service Unavailable\r\nX-A: 1\r\nContent-Length: %d\r\n\r\n%s", len(body), body)},
+		{
+			wire = fmt.tprintf(
+				"HTTP/1.1 503 Service Unavailable\r\nX-A: 1\r\nContent-Length: %d\r\n\r\n%s",
+				len(body),
+				body,
+			),
+		},
 	) {
 		return
 	}
@@ -285,7 +334,11 @@ partial_response_allocation_failures_release_all_owned_storage :: proc(t: ^testi
 
 @(test)
 setup_timeout_retains_not_sent_before_tcp_connection :: proc(t: ^testing.T) {
-	error := surf.http_error_classify({kind = .Dial_Failed, network = net.Dial_Error.Timeout}, .Connect, .Not_Sent)
+	error := surf.http_error_classify(
+		{kind = .Dial_Failed, network = net.Dial_Error.Timeout},
+		.Connect,
+		.Not_Sent,
+	)
 	testing.expect_value(t, error.kind, .Dial_Failed)
 	testing.expect_value(t, error.phase, .Deadline)
 	testing.expect_value(t, error.write_effect, .Not_Sent)

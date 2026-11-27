@@ -5,9 +5,9 @@ import "core:strings"
 import "core:time"
 
 Capture :: struct {
-	file: ^os.File,
-	buf:  [dynamic]u8,
-	eof:  bool,
+	file:  ^os.File,
+	buf:   [dynamic]u8,
+	eof:   bool,
 	limit: int,
 }
 
@@ -44,12 +44,9 @@ spawn :: proc(command: []string, env: []string = nil) -> (child: Child, ok: bool
 	}
 	child.err_r = read_err
 	child.err_w = write_err
-	process, start_error := os.process_start({
-		command = command,
-		env = env,
-		stdout = child.out_w,
-		stderr = child.err_w,
-	})
+	process, start_error := os.process_start(
+		{command = command, env = env, stdout = child.out_w, stderr = child.err_w},
+	)
 	close_file(&child.out_w)
 	close_file(&child.err_w)
 	if start_error != nil {

@@ -111,7 +111,12 @@ budget_error :: proc(reason: async.Budget_Error) -> HTTP_Error {
 		kind = .Invalid_Config
 	}
 
-	return {kind = kind, budget = budget_failure(reason), phase = .Admission, write_effect = .Not_Sent}
+	return {
+		kind = kind,
+		budget = budget_failure(reason),
+		phase = .Admission,
+		write_effect = .Not_Sent,
+	}
 }
 
 budget_cleanup :: proc(ctx: ^Budget_Context) {
@@ -145,4 +150,3 @@ budget_temporary :: proc(ctx: ^Budget_Context, allocator: mem.Allocator) -> mem.
 
 	return mem.dynamic_arena_allocator(&ctx.temporary)
 }
-

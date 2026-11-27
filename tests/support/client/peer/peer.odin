@@ -57,7 +57,11 @@ main :: proc() {
 	if accept_error != nil {
 		fail("accept")
 	}
-	stream := Stream{fd = fd, encrypted = encrypted, conn = {fd = fd}}
+	stream := Stream {
+		fd = fd,
+		encrypted = encrypted,
+		conn = {fd = fd},
+	}
 	defer close_stream(&stream)
 	arm(&stream)
 	if encrypted {
@@ -77,7 +81,10 @@ main :: proc() {
 	}
 	copy_header, found := loopback.header_value(head.headers, "x-copy")
 	host, host_found := loopback.header_value(head.headers, "host")
-	if !found || copy_header != "original" || !host_found || !strings.has_prefix(host, "127.0.0.1:") {
+	if !found ||
+	   copy_header != "original" ||
+	   !host_found ||
+	   !strings.has_prefix(host, "127.0.0.1:") {
 		fail("caller inputs were not cloned")
 	}
 	body_n := len(head.body)
@@ -90,7 +97,10 @@ main :: proc() {
 		}
 	}
 	response_buf: [160]u8
-	response_n := copy(response_buf[:], "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nX-Sequence: A\r\nX-Connection: 1\r\n\r\nA")
+	response_n := copy(
+		response_buf[:],
+		"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nX-Sequence: A\r\nX-Connection: 1\r\n\r\nA",
+	)
 	manual := false
 	if mode == "keyupdate-inline" {
 		if !encrypted {
@@ -155,7 +165,11 @@ main :: proc() {
 			fail("second request not B")
 		}
 		requests = 2
-		if !send(&stream, manual, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nX-Sequence: B\r\nX-Connection: 1\r\n\r\nB") {
+		if !send(
+			&stream,
+			manual,
+			"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nX-Sequence: B\r\nX-Connection: 1\r\n\r\nB",
+		) {
 			fail("write")
 		}
 	} else {
@@ -214,7 +228,10 @@ run_progress :: proc(held: net.TCP_Socket) {
 	alpn := held_alpn
 	fmt.fprintf(os.stdout, `{{"mode":"progress","tls":%t,"alpn":"`, encrypted)
 	write_escaped(alpn)
-	fmt.fprint(os.stdout, `","requests":2,"held_body":true,"cheap_before_release":true,"named_requests":0}` + "\n")
+	fmt.fprint(
+		os.stdout,
+		`","requests":2,"held_body":true,"cheap_before_release":true,"named_requests":0}` + "\n",
+	)
 	_ = os.flush(os.stdout)
 }
 
@@ -225,7 +242,11 @@ serve_held :: proc(box: ^net.TCP_Socket) {
 	if accept_error != nil {
 		fail("held accept")
 	}
-	stream := Stream{fd = fd, encrypted = encrypted, conn = {fd = fd}}
+	stream := Stream {
+		fd = fd,
+		encrypted = encrypted,
+		conn = {fd = fd},
+	}
 	defer close_stream(&stream)
 	arm(&stream)
 	if encrypted {
@@ -242,7 +263,11 @@ serve_held :: proc(box: ^net.TCP_Socket) {
 	if !got || head.path != "/hold" {
 		fail("hold route")
 	}
-	if !send(&stream, false, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nX-Connection: held\r\n\r\nhe") {
+	if !send(
+		&stream,
+		false,
+		"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nX-Connection: held\r\n\r\nhe",
+	) {
 		fail("held write")
 	}
 	if !write_marker("held", "body") {
@@ -265,7 +290,9 @@ serve_cheap :: proc(box: ^net.TCP_Socket) {
 	_ = net.set_option(fd, .TCP_Nodelay, true)
 	_ = net.set_option(fd, .Receive_Timeout, 12 * time.Second)
 	_ = net.set_option(fd, .Send_Timeout, 12 * time.Second)
-	stream := Stream{fd = fd}
+	stream := Stream {
+		fd = fd,
+	}
 	head, got := read_request(&stream, 1024)
 	if !got || head.path != "/cheap" {
 		fail("cheap route")
@@ -274,22 +301,43 @@ serve_cheap :: proc(box: ^net.TCP_Socket) {
 	if os.exists(child(marker[:], "release")) {
 		fail("cheap happened after held release")
 	}
-	if !write_raw(&stream, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nX-Connection: cheap\r\n\r\nok") {
+	if !write_raw(
+		&stream,
+		"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nX-Connection: cheap\r\n\r\nok",
+	) {
 		fail("cheap write")
 	}
 }
 
-emit_result :: proc(conn: ^loopback.Conn, alpn: string, requests, body_n: int, method, copy_header, path: string, manual: bool) {
+emit_result :: proc(
+	conn: ^loopback.Conn,
+	alpn: string,
+	requests, body_n: int,
+	method, copy_header, path: string,
+	manual: bool,
+) {
 	manual_report := manual || mode == "partial" || mode == "separate"
 	fmt.fprintf(os.stdout, `{{"mode":"%s","tls":%t,"alpn":"`, mode, encrypted)
 	write_escaped(alpn)
-	fmt.fprintf(os.stdout, `","requests":%d,"first_body_bytes":%d,"first_method":"`, requests, body_n)
+	fmt.fprintf(
+		os.stdout,
+		`","requests":%d,"first_body_bytes":%d,"first_method":"`,
+		requests,
+		body_n,
+	)
 	write_escaped(method)
 	fmt.fprint(os.stdout, `","first_copy_header":"`)
 	write_escaped(copy_header)
 	fmt.fprint(os.stdout, `","first_path":"`)
 	write_escaped(path)
-	fmt.fprintf(os.stdout, `","application_records":%d,"manual_rfc8446":%t,"key_updates":%d,"client_key_updates":%d,"manual_sequences":[`, conn.app_records, manual_report, conn.updates, conn.client_updates)
+	fmt.fprintf(
+		os.stdout,
+		`","application_records":%d,"manual_rfc8446":%t,"key_updates":%d,"client_key_updates":%d,"manual_sequences":[`,
+		conn.app_records,
+		manual_report,
+		conn.updates,
+		conn.client_updates,
+	)
 	for i in 0 ..< conn.manual_n {
 		if i > 0 {
 			fmt.fprint(os.stdout, ",")
@@ -302,7 +350,10 @@ emit_result :: proc(conn: ^loopback.Conn, alpn: string, requests, body_n: int, m
 
 read_request :: proc(stream: ^Stream, body_cap: int) -> (head: loopback.Head, ok: bool) {
 	for {
-		parsed, complete, overflow, valid := loopback.take_request(stream.pending[:stream.n], body_cap)
+		parsed, complete, overflow, valid := loopback.take_request(
+			stream.pending[:stream.n],
+			body_cap,
+		)
 		if !valid || overflow {
 			return {}, false
 		}

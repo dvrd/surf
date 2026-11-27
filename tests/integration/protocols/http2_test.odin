@@ -7,17 +7,28 @@ import "shared:surf"
 CONN_EVENT :: "\"event\":\"conn\""
 REQUEST_EVENT :: "\"event\":\"request\""
 
-h2_client :: proc(t: ^testing.T, c: ^surf.Client, roots: ^surf.Trust_Roots, timeout: time.Duration, limit := 0) -> bool {
+h2_client :: proc(
+	t: ^testing.T,
+	c: ^surf.Client,
+	roots: ^surf.Trust_Roots,
+	timeout: time.Duration,
+	limit := 0,
+) -> bool {
 	config := surf.Config {
-		tls           = {roots = roots},
-		timeout       = timeout,
+		tls = {roots = roots},
+		timeout = timeout,
 		max_body_size = limit,
 	}
 
 	return testing.expect_value(t, surf.client_start(c, {http = config}).kind, .None)
 }
 
-h2_wait :: proc(c: ^surf.Client, handles: []surf.Request_Handle, errors: []surf.HTTP_Error, limit: time.Duration) -> bool {
+h2_wait :: proc(
+	c: ^surf.Client,
+	handles: []surf.Request_Handle,
+	errors: []surf.HTTP_Error,
+	limit: time.Duration,
+) -> bool {
 	pending := len(handles)
 	started := time.tick_now()
 
@@ -73,7 +84,10 @@ http2_alpn_multiplexes_requests_on_one_connection :: proc(t: ^testing.T) {
 	}
 	defer peer_roots_free(roots)
 
-	once, once_error := surf.execute({method = .GET, url = peer_url(peer, "/echo")}, {tls = {roots = roots}, timeout = 8 * time.Second})
+	once, once_error := surf.execute(
+		{method = .GET, url = peer_url(peer, "/echo")},
+		{tls = {roots = roots}, timeout = 8 * time.Second},
+	)
 	testing.expect_value(t, once_error.kind, .None)
 	testing.expect_value(t, once.status, 200)
 	testing.expect_value(t, string(once.body), "/echo")
@@ -88,13 +102,20 @@ http2_alpn_multiplexes_requests_on_one_connection :: proc(t: ^testing.T) {
 
 	conns := peer_count(peer, CONN_EVENT)
 	echo, echo_submitted := surf.client_submit(&c, {method = .GET, url = peer_url(peer, "/echo")})
-	blob, blob_submitted := surf.client_submit(&c, {method = .GET, url = peer_url(peer, "/blob?n=70000")})
+	blob, blob_submitted := surf.client_submit(
+		&c,
+		{method = .GET, url = peer_url(peer, "/blob?n=70000")},
+	)
 	testing.expect_value(t, echo_submitted.kind, .None)
 	testing.expect_value(t, blob_submitted.kind, .None)
 	handles := [2]surf.Request_Handle{echo, blob}
 	errors: [2]surf.HTTP_Error
 
-	if !testing.expect(t, h2_wait(&c, handles[:], errors[:], 10 * time.Second), "both requests complete") {
+	if !testing.expect(
+		t,
+		h2_wait(&c, handles[:], errors[:], 10 * time.Second),
+		"both requests complete",
+	) {
 		return
 	}
 
@@ -119,7 +140,10 @@ http2_alpn_multiplexes_requests_on_one_connection :: proc(t: ^testing.T) {
 	testing.expect(t, reset_error.kind != .None)
 	testing.expect_value(t, reset_error.write_effect, .Unknown)
 	testing.expect_value(t, peer_count(peer, "\"path\":\"/reset\"") - resets, 1)
-	after, after_error := surf.client_execute(&c, {method = .GET, url = peer_url(peer, "/after-reset")})
+	after, after_error := surf.client_execute(
+		&c,
+		{method = .GET, url = peer_url(peer, "/after-reset")},
+	)
 	testing.expect_value(t, after_error.kind, .None)
 	testing.expect_value(t, string(after.body), "/after-reset")
 	surf.response_destroy(&after)
@@ -151,7 +175,10 @@ http2_deadline_cancellation_and_body_limit_keep_their_phases :: proc(t: ^testing
 	}
 
 	started := time.tick_now()
-	stalled, stall_error := surf.client_execute(&stall, {method = .GET, url = peer_url(peer, "/stall")})
+	stalled, stall_error := surf.client_execute(
+		&stall,
+		{method = .GET, url = peer_url(peer, "/stall")},
+	)
 	elapsed := time.tick_since(started)
 	surf.response_destroy(&stalled)
 	testing.expect_value(t, stall_error.kind, .Deadline_Failed)
@@ -167,7 +194,10 @@ http2_deadline_cancellation_and_body_limit_keep_their_phases :: proc(t: ^testing
 	defer surf.client_destroy(&canceller)
 
 	seen := peer_count(peer, "\"path\":\"/cancel\"")
-	handle, submitted := surf.client_submit(&canceller, {method = .GET, url = peer_url(peer, "/cancel")})
+	handle, submitted := surf.client_submit(
+		&canceller,
+		{method = .GET, url = peer_url(peer, "/cancel")},
+	)
 
 	if !testing.expect_value(t, submitted.kind, .None) {
 		return
@@ -190,7 +220,10 @@ http2_deadline_cancellation_and_body_limit_keep_their_phases :: proc(t: ^testing
 	}
 	defer surf.client_destroy(&capped)
 
-	big, big_error := surf.client_execute(&capped, {method = .GET, url = peer_url(peer, "/blob?n=2000")})
+	big, big_error := surf.client_execute(
+		&capped,
+		{method = .GET, url = peer_url(peer, "/blob?n=2000")},
+	)
 	testing.expect_value(t, big_error.kind, .Body_Oversized)
 	testing.expect_value(t, big_error.phase, .Body_Limit)
 	testing.expect_value(t, len(big.body), 0)
@@ -249,7 +282,10 @@ http2_peer_selecting_http1_is_spoken_over_http1 :: proc(t: ^testing.T) {
 	}
 	defer peer_roots_free(roots)
 
-	once, once_error := surf.execute({method = .GET, url = peer_url(peer, "/plain")}, {tls = {roots = roots}, timeout = 8 * time.Second})
+	once, once_error := surf.execute(
+		{method = .GET, url = peer_url(peer, "/plain")},
+		{tls = {roots = roots}, timeout = 8 * time.Second},
+	)
 	testing.expect_value(t, once_error.kind, .None)
 	testing.expect_value(t, once.status, 200)
 	testing.expect_value(t, string(once.body), "/plain")
@@ -293,7 +329,10 @@ http2_missing_alpn_stays_on_http1 :: proc(t: ^testing.T) {
 	}
 	defer peer_roots_free(roots)
 
-	response, error := surf.execute({method = .GET, url = peer_url(peer, "/plain")}, {tls = {roots = roots}, timeout = 8 * time.Second})
+	response, error := surf.execute(
+		{method = .GET, url = peer_url(peer, "/plain")},
+		{tls = {roots = roots}, timeout = 8 * time.Second},
+	)
 	testing.expect_value(t, error.kind, .None)
 	testing.expect_value(t, response.status, 200)
 	testing.expect_value(t, string(response.body), "/plain")

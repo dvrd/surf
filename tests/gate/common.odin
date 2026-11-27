@@ -1,7 +1,6 @@
 package main
 
 import "../support/loopback"
-import "support"
 import "core:c"
 import "core:encoding/json"
 import "core:fmt"
@@ -12,11 +11,20 @@ import "core:strings"
 import "core:sys/posix"
 import "core:thread"
 import "core:time"
+import "support"
 
 DIR_PERM :: os.Permissions{.Read_User, .Write_User, .Execute_User}
 FILE_PERM :: os.Permissions{.Read_User, .Write_User}
 
-read_some :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, dst: []u8) -> (int, net.TCP_Recv_Error) {
+read_some :: proc(
+	fd: net.TCP_Socket,
+	conn: ^loopback.Conn,
+	encrypted: bool,
+	dst: []u8,
+) -> (
+	int,
+	net.TCP_Recv_Error,
+) {
 	if encrypted {
 		n, status := loopback.tls_read(conn, dst)
 		if status == .Ok {
@@ -30,7 +38,12 @@ read_some :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, dst
 	return net.recv_tcp(fd, dst)
 }
 
-write_all :: proc(fd: net.TCP_Socket, conn: ^loopback.Conn, encrypted: bool, text: string) -> bool {
+write_all :: proc(
+	fd: net.TCP_Socket,
+	conn: ^loopback.Conn,
+	encrypted: bool,
+	text: string,
+) -> bool {
 	if encrypted {
 		return loopback.tls_write(conn, transmute([]u8)text)
 	}
@@ -56,24 +69,24 @@ Capture :: struct {
 }
 
 Session :: struct {
-	transport:     string,
-	mode:          string,
-	peer:          os.Process,
-	fixture:       os.Process,
-	peer_live:     bool,
-	fixture_live:  bool,
-	out_r:         ^os.File,
-	out_w:         ^os.File,
-	err_r:         ^os.File,
-	err_w:         ^os.File,
-	fix_r:         ^os.File,
-	fix_w:         ^os.File,
-	fix_err_r:     ^os.File,
-	fix_err_w:     ^os.File,
-	peer_out:      Capture,
-	peer_err:      Capture,
-	fixture_out:   Capture,
-	fixture_err:   Capture,
+	transport:    string,
+	mode:         string,
+	peer:         os.Process,
+	fixture:      os.Process,
+	peer_live:    bool,
+	fixture_live: bool,
+	out_r:        ^os.File,
+	out_w:        ^os.File,
+	err_r:        ^os.File,
+	err_w:        ^os.File,
+	fix_r:        ^os.File,
+	fix_w:        ^os.File,
+	fix_err_r:    ^os.File,
+	fix_err_w:    ^os.File,
+	peer_out:     Capture,
+	peer_err:     Capture,
+	fixture_out:  Capture,
+	fixture_err:  Capture,
 }
 
 session_cleanup :: proc(s: ^Session) {
@@ -97,7 +110,13 @@ session_cleanup :: proc(s: ^Session) {
 	close_file(&s.fix_err_w)
 }
 
-wait_line :: proc(process: os.Process, out, err: ^Capture, live: ^bool, dest: []u8, limit: time.Duration) -> int {
+wait_line :: proc(
+	process: os.Process,
+	out, err: ^Capture,
+	live: ^bool,
+	dest: []u8,
+	limit: time.Duration,
+) -> int {
 	deadline := time.time_add(time.now(), limit)
 	for {
 		pump(out)
@@ -127,7 +146,15 @@ wait_line :: proc(process: os.Process, out, err: ^Capture, live: ^bool, dest: []
 	}
 }
 
-wait_proc :: proc(process: os.Process, out, err: ^Capture, live: ^bool, limit: time.Duration) -> (os.Process_State, bool) {
+wait_proc :: proc(
+	process: os.Process,
+	out, err: ^Capture,
+	live: ^bool,
+	limit: time.Duration,
+) -> (
+	os.Process_State,
+	bool,
+) {
 	deadline := time.time_add(time.now(), limit)
 	for {
 		pump(out)
@@ -227,7 +254,11 @@ field_at :: proc(text, key: string) -> (string, bool) {
 		}
 		start := j
 		k := start
-		for k < len(text) && text[k] != ',' && text[k] != '}' && text[k] != '\n' && text[k] != ' ' {
+		for k < len(text) &&
+		    text[k] != ',' &&
+		    text[k] != '}' &&
+		    text[k] != '\n' &&
+		    text[k] != ' ' {
 			k += 1
 		}
 		return text[start:k], k > start
@@ -269,7 +300,16 @@ build :: proc(compiler, shared, pkg, binary, sanitizer: string) -> bool {
 	defer delete(collection)
 	command := make([dynamic]string)
 	defer delete(command)
-	append(&command, compiler, "build", pkg, "-thread-count:1", "-warnings-as-errors", collection, out_flag)
+	append(
+		&command,
+		compiler,
+		"build",
+		pkg,
+		"-thread-count:1",
+		"-warnings-as-errors",
+		collection,
+		out_flag,
+	)
 	sanitize := ""
 	if sanitizer != "" && sanitizer != "none" {
 		sanitize = fmt.aprintf("-sanitize:%s", sanitizer)
@@ -278,7 +318,9 @@ build :: proc(compiler, shared, pkg, binary, sanitizer: string) -> bool {
 	defer if sanitize != "" {
 		delete(sanitize)
 	}
-	process, start_error := os.process_start({command = command[:], stdout = os.stdout, stderr = os.stderr})
+	process, start_error := os.process_start(
+		{command = command[:], stdout = os.stdout, stderr = os.stderr},
+	)
 	if start_error != nil {
 		return false
 	}
@@ -305,7 +347,9 @@ parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 		}
 	}
 	if compiler == "" || shared == "" || report == "" {
-		fail("usage: --odin <compiler> --shared <collection> --report <path> [--sanitize address|none]")
+		fail(
+			"usage: --odin <compiler> --shared <collection> --report <path> [--sanitize address|none]",
+		)
 	}
 	return
 }
@@ -431,4 +475,3 @@ rows_or_empty :: proc(value: json.Value, key: string) -> (items: json.Array, ok:
 	}
 	return array, true
 }
-

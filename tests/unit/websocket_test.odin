@@ -71,39 +71,39 @@ Ws_Peer :: struct {
 // The session ends through its operations: a failed open, or a read that
 // ended with the session once no close is outstanding.
 Ws_Test :: struct {
-	client:                                              Client,
-	handle:                                              WebSocket_Handle,
-	ready:                                               int,
-	peer:                                                Ws_Peer,
-	open:                                                WebSocket_Op,
-	read:                                                WebSocket_Op,
-	write_a:                                             WebSocket_Op,
-	write_b:                                             WebSocket_Op,
-	close:                                               WebSocket_Op,
-	protocols:                                           [1]string,
-	src:                                                 [32]u8,
-	dst:                                                 [128]u8,
-	payload6:                                            [6]u8,
-	payload1:                                            [1]u8,
-	subprotocol:                                         [16]u8,
-	subprotocol_n:                                       int,
-	write_text:                                          string,
-	expect_read:                                         string,
-	open_error, read_error, write_error, close_error:    WebSocket_Error,
-	write_errors:                                        [2]WebSocket_Error,
-	write_ns:                                            [2]int,
+	client:                                               Client,
+	handle:                                               WebSocket_Handle,
+	ready:                                                int,
+	peer:                                                 Ws_Peer,
+	open:                                                 WebSocket_Op,
+	read:                                                 WebSocket_Op,
+	write_a:                                              WebSocket_Op,
+	write_b:                                              WebSocket_Op,
+	close:                                                WebSocket_Op,
+	protocols:                                            [1]string,
+	src:                                                  [32]u8,
+	dst:                                                  [128]u8,
+	payload6:                                             [6]u8,
+	payload1:                                             [1]u8,
+	subprotocol:                                          [16]u8,
+	subprotocol_n:                                        int,
+	write_text:                                           string,
+	expect_read:                                          string,
+	open_error, read_error, write_error, close_error:     WebSocket_Error,
+	write_errors:                                         [2]WebSocket_Error,
+	write_ns:                                             [2]int,
 	reject_bytes, reject_count, reject_utf8, reject_size: Client_Error_Kind,
-	cancel_close:                                        Client_Error_Kind,
-	src_n, read_n, write_n, saw_open, saw_write:         int,
-	saw_close, write_count, done:                        int,
-	read_ok, write_ok, read_is_text, close_once, clean:  bool,
-	read_ended, close_pending:                           bool,
-	client_up, listener_up:                              bool,
-	worker:                                              ^thread.Thread,
-	policy_host:                                         [32]u8,
-	policy_host_n:                                       int,
-	policy_endpoint:                                     net.Endpoint,
-	policy_calls:                                        int,
+	cancel_close:                                         Client_Error_Kind,
+	src_n, read_n, write_n, saw_open, saw_write:          int,
+	saw_close, write_count, done:                         int,
+	read_ok, write_ok, read_is_text, close_once, clean:   bool,
+	read_ended, close_pending:                            bool,
+	client_up, listener_up:                               bool,
+	worker:                                               ^thread.Thread,
+	policy_host:                                          [32]u8,
+	policy_host_n:                                        int,
+	policy_endpoint:                                      net.Endpoint,
+	policy_calls:                                         int,
 }
 
 @(test)
@@ -161,7 +161,11 @@ websocket_open_rejects_bad_requests_synchronously :: proc(t: ^testing.T) {
 		user_data = &done,
 	}
 	buffer: [8]u8
-	testing.expect_value(t, client_websocket_read(&c, stale, &read_op, buffer[:]).kind, .Invalid_Handle)
+	testing.expect_value(
+		t,
+		client_websocket_read(&c, stale, &read_op, buffer[:]).kind,
+		.Invalid_Handle,
+	)
 
 	// The listener never accepts, so the upgrade stays in flight.
 	handle, opened := client_websocket_open(&c, url, {ping_interval = WEBSOCKET_PING_OFF}, &op)
@@ -172,14 +176,34 @@ websocket_open_rejects_bad_requests_synchronously :: proc(t: ^testing.T) {
 
 	_, full := client_websocket_open(&c, url, {}, &read_op)
 	testing.expect_value(t, full.kind, .Capacity)
-	testing.expect_value(t, client_websocket_read(&c, handle, &read_op, buffer[:]).kind, .Invalid_State)
-	testing.expect_value(t, client_websocket_write(&c, handle, &read_op, .Text, buffer[:1]).kind, .Invalid_State)
+	testing.expect_value(
+		t,
+		client_websocket_read(&c, handle, &read_op, buffer[:]).kind,
+		.Invalid_State,
+	)
+	testing.expect_value(
+		t,
+		client_websocket_write(&c, handle, &read_op, .Text, buffer[:1]).kind,
+		.Invalid_State,
+	)
 	testing.expect_value(t, client_websocket_close(&c, handle, &read_op).kind, .Invalid_State)
-	testing.expect_value(t, client_websocket_close(&c, handle, &read_op, 1005).kind, .Invalid_Config)
+	testing.expect_value(
+		t,
+		client_websocket_close(&c, handle, &read_op, 1005).kind,
+		.Invalid_Config,
+	)
 	long_reason := strings.repeat("r", 124, context.temp_allocator)
-	testing.expect_value(t, client_websocket_close(&c, handle, &read_op, 1000, long_reason).kind, .Invalid_Config)
+	testing.expect_value(
+		t,
+		client_websocket_close(&c, handle, &read_op, 1000, long_reason).kind,
+		.Invalid_Config,
+	)
 	bad := [1]u8{0xff}
-	testing.expect_value(t, client_websocket_write(&c, handle, &read_op, .Text, bad[:]).kind, .Invalid_Config)
+	testing.expect_value(
+		t,
+		client_websocket_write(&c, handle, &read_op, .Text, bad[:]).kind,
+		.Invalid_Config,
+	)
 	testing.expect_value(t, client_websocket_read(&c, handle, &op, buffer[:]).kind, .Invalid_State)
 	testing.expect_value(t, client_websocket_cancel(&c, handle, &read_op).kind, .Invalid_State)
 	testing.expect_value(t, client_websocket_cancel(&c, handle, &op).kind, .None)
@@ -193,7 +217,11 @@ websocket_open_rejects_bad_requests_synchronously :: proc(t: ^testing.T) {
 	testing.expect_value(t, client_websocket_read(&c, handle, &read_op, buffer[:]).kind, .Closed)
 	testing.expect_value(t, client_websocket_release(&c, handle).kind, .None)
 	testing.expect_value(t, client_websocket_release(&c, handle).kind, .Invalid_Handle)
-	testing.expect_value(t, client_websocket_read(&c, handle, &read_op, buffer[:]).kind, .Invalid_Handle)
+	testing.expect_value(
+		t,
+		client_websocket_read(&c, handle, &read_op, buffer[:]).kind,
+		.Invalid_Handle,
+	)
 }
 
 ws_count_callback :: proc(op: ^WebSocket_Op) {
@@ -416,13 +444,27 @@ ws_case_options :: proc(h: ^Ws_Test, mode: Ws_Peer_Mode) -> WebSocket_Options {
 		options.max_message_size = 16
 	case .Slow:
 		options.handshake_timeout = time.Second
-	case .Bad_Accept, .Unauthorized, .Bad_UTF8, .Masked, .Cancel, .Wakes, .Stall_Message, .Stall_Frame, .Idle:
+	case .Bad_Accept,
+	     .Unauthorized,
+	     .Bad_UTF8,
+	     .Masked,
+	     .Cancel,
+	     .Wakes,
+	     .Stall_Message,
+	     .Stall_Frame,
+	     .Idle:
 	}
 
 	return options
 }
 
-ws_client_start :: proc(t: ^testing.T, h: ^Ws_Test, config: Config, url: string, options: WebSocket_Options) -> bool {
+ws_client_start :: proc(
+	t: ^testing.T,
+	h: ^Ws_Test,
+	config: Config,
+	url: string,
+	options: WebSocket_Options,
+) -> bool {
 	start_error := client_start(&h.client, {http = config}, rt.heap_allocator())
 	testing.expect_value(t, start_error.kind, .None)
 	if start_error.kind != .None {
@@ -473,7 +515,13 @@ ws_cancel_when_accepted :: proc(t: ^testing.T, h: ^Ws_Test) -> bool {
 	return cancel_error.kind == .None
 }
 
-ws_until :: proc(t: ^testing.T, flag: ^int, value: int, limit: time.Duration, what: string) -> bool {
+ws_until :: proc(
+	t: ^testing.T,
+	flag: ^int,
+	value: int,
+	limit: time.Duration,
+	what: string,
+) -> bool {
 	start := time.tick_now()
 
 	for intrinsics.atomic_load_explicit(flag, .Acquire) < value {
@@ -747,7 +795,8 @@ ws_queue_probe :: proc(h: ^Ws_Test) {
 	h.write_b.callback = ws_on_write
 	h.write_b.user_data = h
 	first := client_websocket_write(&h.client, handle, &h.write_a, .Text, h.payload6[:])
-	h.reject_bytes = client_websocket_write(&h.client, handle, &h.write_b, .Text, h.payload6[:4]).kind
+	h.reject_bytes =
+		client_websocket_write(&h.client, handle, &h.write_b, .Text, h.payload6[:4]).kind
 	second := client_websocket_write(&h.client, handle, &h.write_b, .Text, h.payload1[:])
 	extra := WebSocket_Op {
 		callback  = ws_on_write,
@@ -896,7 +945,10 @@ ws_peer_serve :: proc(peer: ^Ws_Peer) {
 	case .Bad_Accept:
 		response_n = ws_peer_101(response[:], "AAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
 	case .Unauthorized:
-		response_n = copy(response[:], "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		response_n = copy(
+			response[:],
+			"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+		)
 	case .Echo, .Queue, .Bad_UTF8, .Masked, .Too_Big, .Wakes, .Stall_Message, .Stall_Frame, .Idle:
 		protocol := "chat" if strings.index(header, "Sec-WebSocket-Protocol: chat") >= 0 else ""
 		accept: [64]u8
@@ -930,7 +982,9 @@ ws_peer_serve :: proc(peer: ^Ws_Peer) {
 		frame_n = ws_peer_put(frames[:], 0, false, WS_OP_TEXT, transmute([]u8)string("par"), {})
 	case .Stall_Frame:
 		// The header promises ten bytes; three follow.
-		frame_n = ws_peer_put(frames[:], 0, true, WS_OP_TEXT, transmute([]u8)string("0123456789"), {}) - 7
+		frame_n =
+			ws_peer_put(frames[:], 0, true, WS_OP_TEXT, transmute([]u8)string("0123456789"), {}) -
+			7
 	case .Queue, .Bad_Accept, .Unauthorized, .Slow, .Cancel, .Wakes, .Idle:
 	}
 
@@ -1042,7 +1096,10 @@ ws_peer_accept :: proc(key: string, dst: []u8) -> string {
 }
 
 ws_peer_101 :: proc(dst: []u8, accept, protocol: string) -> int {
-	wrote := copy(dst, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ")
+	wrote := copy(
+		dst,
+		"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ",
+	)
 	wrote += copy(dst[wrote:], accept)
 	wrote += copy(dst[wrote:], "\r\n")
 
@@ -1301,7 +1358,14 @@ Ws_Dns :: struct {
 	answer:  bool,
 }
 
-ws_dns_start :: proc(t: ^testing.T, dns: ^Ws_Dns) -> (server: net.Endpoint, worker: ^thread.Thread, ok: bool) {
+ws_dns_start :: proc(
+	t: ^testing.T,
+	dns: ^Ws_Dns,
+) -> (
+	server: net.Endpoint,
+	worker: ^thread.Thread,
+	ok: bool,
+) {
 	socket, socket_error := net.make_bound_udp_socket(net.IP4_Loopback, 0)
 	testing.expect(t, socket_error == nil)
 	if socket_error != nil {
@@ -1494,9 +1558,9 @@ ws_policy_run :: proc(
 	}
 
 	config := Config {
-		allow_http          = true,
-		resolver            = {name_servers = harness.servers[:]},
-		address_policy      = ws_policy_decide,
+		allow_http = true,
+		resolver = {name_servers = harness.servers[:]},
+		address_policy = ws_policy_decide,
 		address_policy_data = harness,
 	}
 	start_error := client_start(&harness.client, {http = config}, rt.heap_allocator())
@@ -1512,7 +1576,12 @@ ws_policy_run :: proc(
 	harness.open.callback = ws_policy_open
 	harness.open.user_data = harness
 	url := fmt.tprintf("ws://%s:%d/", host, endpoint.port)
-	handle, open_error := client_websocket_open(&harness.client, url, {handshake_timeout = 2 * time.Second}, &harness.open)
+	handle, open_error := client_websocket_open(
+		&harness.client,
+		url,
+		{handshake_timeout = 2 * time.Second},
+		&harness.open,
+	)
 	testing.expect_value(t, open_error.kind, .None)
 
 	if open_error.kind != .None {
@@ -1526,7 +1595,15 @@ ws_policy_run :: proc(
 	return harness, worker, true
 }
 
-ws_policy_case :: proc(t: ^testing.T, allow: bool, answer: bool, host: string) -> (harness: ^Ws_Policy_Harness, dns: ^Ws_Dns) {
+ws_policy_case :: proc(
+	t: ^testing.T,
+	allow: bool,
+	answer: bool,
+	host: string,
+) -> (
+	harness: ^Ws_Policy_Harness,
+	dns: ^Ws_Dns,
+) {
 	dns = new(Ws_Dns)
 	dns.answer = answer
 	server, dns_worker, dns_ok := ws_dns_start(t, dns)
@@ -1754,14 +1831,25 @@ ws_owa_start :: proc(t: ^testing.T, owa: ^Ws_Owa) -> bool {
 		return false
 	}
 
-	client_error := client_init(&owa.client, &owa.rt, {http = {allow_http = true}}, rt.heap_allocator())
+	client_error := client_init(
+		&owa.client,
+		&owa.rt,
+		{http = {allow_http = true}},
+		rt.heap_allocator(),
+	)
 	testing.expect_value(t, client_error.kind, .None)
 	owa.client_up = client_error.kind == .None
 
 	return owa.client_up
 }
 
-ws_owa_connect :: proc(t: ^testing.T, owa: ^Ws_Owa, mode: Ws_Peer_Mode, want: int, options: WebSocket_Options) -> bool {
+ws_owa_connect :: proc(
+	t: ^testing.T,
+	owa: ^Ws_Owa,
+	mode: Ws_Peer_Mode,
+	want: int,
+	options: WebSocket_Options,
+) -> bool {
 	conn := &owa.conns[owa.count]
 	owa.count += 1
 	conn.owner = owa
@@ -1822,7 +1910,8 @@ ws_owa_stop :: proc(owa: ^Ws_Owa) {
 		intrinsics.atomic_store_explicit(&owa.stop, 1, .Release)
 		_ = async.signal_wake(owa.wake)
 		start := time.tick_now()
-		for intrinsics.atomic_load_explicit(&owa.task_done, .Acquire) == 0 && time.tick_since(start) < 2 * time.Second {
+		for intrinsics.atomic_load_explicit(&owa.task_done, .Acquire) == 0 &&
+		    time.tick_since(start) < 2 * time.Second {
 			time.sleep(time.Millisecond)
 		}
 

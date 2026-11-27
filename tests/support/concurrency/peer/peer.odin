@@ -188,7 +188,9 @@ serve :: proc(job: ^Job) {
 	defer free(job)
 	defer net.close(job.fd)
 	defer drop_active()
-	conn := loopback.Conn{fd = job.fd}
+	conn := loopback.Conn {
+		fd = job.fd,
+	}
 	defer loopback.conn_wipe(&conn)
 	version := 0
 	alpn := ""
@@ -227,7 +229,12 @@ serve :: proc(job: ^Job) {
 		}
 		record(job.id, version, alpn, head, text, id)
 		reply: [128]u8
-		wrote := fmt.bprintf(reply[:], "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nX-Connection: %d\r\n\r\n", len(text), job.id)
+		wrote := fmt.bprintf(
+			reply[:],
+			"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nX-Connection: %d\r\n\r\n",
+			len(text),
+			job.id,
+		)
 		if !write_some(job, &conn, wrote) {
 			return
 		}
@@ -264,7 +271,13 @@ work_id :: proc(head: loopback.Head) -> (text: string, id: int, ok: bool) {
 	return text, parsed, true
 }
 
-record :: proc(connection, version: int, alpn: string, head: loopback.Head, text: string, id: int) {
+record :: proc(
+	connection, version: int,
+	alpn: string,
+	head: loopback.Head,
+	text: string,
+	id: int,
+) {
 	sync.lock(&mu)
 	defer sync.unlock(&mu)
 	if seen[id] {
@@ -386,7 +399,13 @@ emit_json :: proc() {
 		write_escaped(string(row.alpn[:row.alpn_n]))
 		fmt.fprint(os.stdout, `"}`)
 	}
-	fmt.fprintf(os.stdout, `],"connections":%d,"peak":%d,"tls":%t,"mode":"`, connections, peak, encrypted)
+	fmt.fprintf(
+		os.stdout,
+		`],"connections":%d,"peak":%d,"tls":%t,"mode":"`,
+		connections,
+		peak,
+		encrypted,
+	)
 	write_escaped(mode)
 	fmt.fprint(os.stdout, "\"}\n")
 	_ = os.flush(os.stdout)

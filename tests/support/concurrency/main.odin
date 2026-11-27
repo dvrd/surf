@@ -1,25 +1,25 @@
 package main
-import "shared:async"
-import "shared:surf"
-import rt "base:runtime"
 import "base:intrinsics"
-import "shared:async/tls"
+import rt "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:sync"
-import "shared:async/budget"
 import "core:sys/posix"
 import "core:thread"
 import "core:time"
+import "shared:async"
+import "shared:async/budget"
+import "shared:async/tls"
+import "shared:surf"
 
 Record :: struct {
 	handle:                  surf.Request_Handle,
 	accepted, claimed, done: bool,
-	connection:     int,
-	error:          surf.HTTP_Error,
+	connection:              int,
+	error:                   surf.HTTP_Error,
 }
 State :: struct {
 	client:                                  surf.Client,
@@ -71,7 +71,12 @@ produce :: proc(p: ^Producer) {
 		for {
 			h, error := surf.client_submit(
 				&s.client,
-				{method = .POST, url = url, headers = {{name = "X-Id", value = body}}, body = transmute([]u8)body},
+				{
+					method = .POST,
+					url = url,
+					headers = {{name = "X-Id", value = body}},
+					body = transmute([]u8)body,
+				},
 				cutoff,
 			)
 
@@ -235,7 +240,8 @@ main :: proc() {
 	}
 
 	assert(
-		async.init(&s.runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind == .None,
+		async.init(&s.runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind ==
+		.None,
 	)
 	config := surf.Client_Config {
 		http = {allow_http = true, timeout = 10 * time.Second, scope = scope},
@@ -323,7 +329,10 @@ main :: proc() {
 
 	accepted := intrinsics.atomic_load(&s.accepted)
 	finished := intrinsics.atomic_load(&s.finished)
-	assert(accepted == finished && (s.shutdown && accepted > 0 && accepted <= 8 || !s.shutdown && accepted == 64))
+	assert(
+		accepted == finished &&
+		(s.shutdown && accepted > 0 && accepted <= 8 || !s.shutdown && accepted == 64),
+	)
 	_, phantom := surf.client_poll(&s.client)
 	assert(!phantom)
 
@@ -337,7 +346,9 @@ main :: proc() {
 			thread.yield()
 		}
 
-		assert(async.wait_idle(&s.runtime).kind == .None && async.destroy(&s.runtime).kind == .None)
+		assert(
+			async.wait_idle(&s.runtime).kind == .None && async.destroy(&s.runtime).kind == .None,
+		)
 	}
 
 	assert(surf.client_quiescent(&s.client) && surf.client_destroy(&s.client).kind == .None)

@@ -140,7 +140,9 @@ parse_arguments :: proc(arguments: []string) -> []string {
 		case "--":
 			return arguments[index + 1:]
 		case "--help", "-h":
-			say("Usage: task test [PACKAGE=owner] [INTERNAL=1] [ODIN=path] [SHARED=dir] -- [odin flags]\n")
+			say(
+				"Usage: task test [PACKAGE=owner] [INTERNAL=1] [ODIN=path] [SHARED=dir] -- [odin flags]\n",
+			)
 			say("       task gate [GATE=name] [VERBOSE=1] [ODIN=path] [SHARED=dir]\n")
 			finish(0)
 		case:

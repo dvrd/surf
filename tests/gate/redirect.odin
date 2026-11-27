@@ -3,19 +3,43 @@
 
 package main
 
-import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:time"
+import "support"
 
 // downgrade is TLS-only. The peer mode is "downgrade", not "tls-downgrade".
-redirect_TCP_MODES :: [?]string{
-	"get301", "get302", "get303", "get307", "get308",
-	"head301", "head302", "head303", "head307", "head308",
-	"post301", "post302", "post303", "post307", "post308",
-	"disabled", "relative", "cross-public", "cross-auth", "cross-cookie", "cross-custom",
-	"cross-policy", "loop", "hopcap", "bodycap", "cutoff", "dns32", "cancel", "close",
+redirect_TCP_MODES :: [?]string {
+	"get301",
+	"get302",
+	"get303",
+	"get307",
+	"get308",
+	"head301",
+	"head302",
+	"head303",
+	"head307",
+	"head308",
+	"post301",
+	"post302",
+	"post303",
+	"post307",
+	"post308",
+	"disabled",
+	"relative",
+	"cross-public",
+	"cross-auth",
+	"cross-cookie",
+	"cross-custom",
+	"cross-policy",
+	"loop",
+	"hopcap",
+	"bodycap",
+	"cutoff",
+	"dns32",
+	"cancel",
+	"close",
 }
 
 run_redirect :: proc() {
@@ -44,7 +68,8 @@ run_redirect :: proc() {
 		if transport != "tls" {
 			continue
 		}
-		if reason := redirect_cell(&g, peer_bin, fixture_bin, transport, "downgrade"); reason != "" {
+		if reason := redirect_cell(&g, peer_bin, fixture_bin, transport, "downgrade");
+		   reason != "" {
 			support.fail(&g, reason)
 		}
 		cells += 1
@@ -112,10 +137,14 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 	if !support.eq_int(native, "completed", 1) || !support.eq_int(native, "workers", 1) {
 		return "terminal"
 	}
-	if !support.is_true(native, "same_handle") || !support.is_true(native, "terminal_once") || !support.is_true(native, "cap_one") {
+	if !support.is_true(native, "same_handle") ||
+	   !support.is_true(native, "terminal_once") ||
+	   !support.is_true(native, "cap_one") {
 		return "handle"
 	}
-	if !support.is_true(native, "heap_zero") || !support.is_true(native, "scope_zero") || !support.is_true(native, "fd_zero") {
+	if !support.is_true(native, "heap_zero") ||
+	   !support.is_true(native, "scope_zero") ||
+	   !support.is_true(native, "fd_zero") {
 		return "cleanup"
 	}
 	if !support.eq_string(peer, "mode", mode) {
@@ -146,13 +175,18 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 			return "warmup"
 		}
 		w := warmups[0]
-		if !support.eq_string(w, "method", "GET") || !support.eq_string(w, "path", "/warmup") || !support.eq_string(w, "body", "") {
+		if !support.eq_string(w, "method", "GET") ||
+		   !support.eq_string(w, "path", "/warmup") ||
+		   !support.eq_string(w, "body", "") {
 			return "warmup request"
 		}
-		if !support.eq_int(w, "response_status", 200) || !support.gt_int(w, "response_bytes", 0) || !support.gt_int(w, "request_bytes", 0) {
+		if !support.eq_int(w, "response_status", 200) ||
+		   !support.gt_int(w, "response_bytes", 0) ||
+		   !support.gt_int(w, "request_bytes", 0) {
 			return "warmup response"
 		}
-		if !support.eq_string(w, "alpn", "http/1.1") || !support.eq_int(w, "negotiated_tls", 0x304) {
+		if !support.eq_string(w, "alpn", "http/1.1") ||
+		   !support.eq_int(w, "negotiated_tls", 0x304) {
 			return "warmup tls"
 		}
 		first, first_ok := support.int_field(events[0], "connection_id")
@@ -175,15 +209,22 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 		if expected < 1 || expected > 3 {
 			return "cutoff count"
 		}
-		if !support.eq_string(native, "error", "Deadline_Failed") || !support.eq_string(native, "phase", "Deadline") || !support.eq_int(native, "status", 302) {
+		if !support.eq_string(native, "error", "Deadline_Failed") ||
+		   !support.eq_string(native, "phase", "Deadline") ||
+		   !support.eq_int(native, "status", 302) {
 			return "cutoff"
 		}
 		effect, effect_ok := support.string_field(native, "write_effect")
 		elapsed, elapsed_ok := support.int_field(native, "elapsed_ms")
-		if !effect_ok || (effect != "Unknown" && effect != "Response_Received") || !elapsed_ok || elapsed >= 350 {
+		if !effect_ok ||
+		   (effect != "Unknown" && effect != "Response_Received") ||
+		   !elapsed_ok ||
+		   elapsed >= 350 {
 			return "cutoff"
 		}
-		if !support.eq_int(events[0], "response_status", 302) || !support.gt_int(events[0], "response_bytes", 0) || !support.is_true(events[0], "old_stream_closed") {
+		if !support.eq_int(events[0], "response_status", 302) ||
+		   !support.gt_int(events[0], "response_bytes", 0) ||
+		   !support.is_true(events[0], "old_stream_closed") {
 			return "cutoff row"
 		}
 	}
@@ -221,7 +262,8 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 		if !support.eq_string(event, "method", method) || !support.eq_string(event, "body", body) {
 			return "method"
 		}
-		if !support.eq_string(event, "alpn", want_alpn) || !support.eq_int(event, "negotiated_tls", want_tls) {
+		if !support.eq_string(event, "alpn", want_alpn) ||
+		   !support.eq_int(event, "negotiated_tls", want_tls) {
 			return "tls"
 		}
 		quiet := (mode == "cancel" || mode == "close" || mode == "cutoff") && order == expected
@@ -238,7 +280,8 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 			}
 		}
 	}
-	if (mode == "cancel" || mode == "close") && !support.eq_string(native, "held_stage", "Reading") {
+	if (mode == "cancel" || mode == "close") &&
+	   !support.eq_string(native, "held_stage", "Reading") {
 		return "held stage"
 	}
 	if mode == "relative" {
@@ -270,7 +313,14 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 		if !names_ok || !redirect_names_cover(names, want[:]) {
 			return "dns names"
 		}
-		hosts := [?]string{"one.redirect.test", "two.redirect.test", "three.redirect.test", "three.redirect.test", "three.redirect.test", "three.redirect.test"}
+		hosts := [?]string {
+			"one.redirect.test",
+			"two.redirect.test",
+			"three.redirect.test",
+			"three.redirect.test",
+			"three.redirect.test",
+			"three.redirect.test",
+		}
 		for event, i in events {
 			host, host_ok := support.string_field(event, "host")
 			if !host_ok || hostname(host) != hosts[i] {
@@ -285,7 +335,19 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 
 single_wire :: proc(mode: string) -> bool {
 	switch mode {
-	case "disabled", "bodycap", "downgrade", "cross-auth", "cross-cookie", "cross-custom", "cross-policy", "post301", "post302", "post303", "head301", "head302", "head303":
+	case "disabled",
+	     "bodycap",
+	     "downgrade",
+	     "cross-auth",
+	     "cross-cookie",
+	     "cross-custom",
+	     "cross-policy",
+	     "post301",
+	     "post302",
+	     "post303",
+	     "head301",
+	     "head302",
+	     "head303":
 		return true
 	}
 	return false

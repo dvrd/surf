@@ -48,7 +48,11 @@ upload_producer :: proc(
 }
 
 alpn_roots :: proc(t: ^testing.T, roots: ^surf.Trust_Roots) -> bool {
-	return testing.expect_value(t, surf.trust_roots_load_file(roots, "tests/support/http3/localhost.pem"), surf.Trust_Roots_Error.None)
+	return testing.expect_value(
+		t,
+		surf.trust_roots_load_file(roots, "tests/support/http3/localhost.pem"),
+		surf.Trust_Roots_Error.None,
+	)
 }
 
 // Over TLS the client offers h2 and http/1.1 and speaks whichever the server
@@ -66,11 +70,7 @@ alpn_tls_speaks_the_protocol_the_server_selects :: proc(t: ^testing.T) {
 	for sample in ([]struct {
 			protocols: bit_set[async.Protocol],
 			expected:  string,
-		} {
-			{{.HTTP1}, "HTTP/1.1"},
-			{{.H2}, "HTTP/2"},
-			{{.HTTP1, .H2}, "HTTP/2"},
-		}) {
+		}{{{.HTTP1}, "HTTP/1.1"}, {{.H2}, "HTTP/2"}, {{.HTTP1, .H2}, "HTTP/2"}}) {
 		s := new(site.Site)
 		defer free(s)
 

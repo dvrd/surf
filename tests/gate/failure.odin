@@ -4,11 +4,11 @@
 
 package main
 
-import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:time"
+import "support"
 
 run_failure :: proc() {
 	gate_label = "failure"
@@ -58,7 +58,14 @@ run_failure :: proc() {
 	fmt.println(cells, "failure cells passed")
 }
 
-failure_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin: string, point, mode: int) -> (calls: int, reason: string) {
+failure_cell :: proc(
+	g: ^support.Gate,
+	peer_bin, fixture_bin: string,
+	point, mode: int,
+) -> (
+	calls: int,
+	reason: string,
+) {
 	support.note(g, fmt.tprintf("p%d m%d", point, mode))
 	dir := support.path(g, fmt.tprintf("p%d-m%d", point, mode))
 	defer delete(dir)
@@ -110,7 +117,9 @@ failure_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin: string, point, mod
 }
 
 failure_verify :: proc(mode: int, native, peer: json.Value) -> (calls: int, reason: string) {
-	if !support.is_true(native, "header_freed") || !support.is_true(native, "heap_zero") || !support.is_true(native, "fd_zero") {
+	if !support.is_true(native, "header_freed") ||
+	   !support.is_true(native, "heap_zero") ||
+	   !support.is_true(native, "fd_zero") {
 		return 0, "cleanup"
 	}
 	events, events_ok := support.array_field(peer, "events")
@@ -131,11 +140,16 @@ failure_verify :: proc(mode: int, native, peer: json.Value) -> (calls: int, reas
 	// hop's connection open before any byte of the request went out.
 	connections, connections_ok := support.int_field(peer, "connections")
 	spare := 1 if mode == 8 || mode == 10 else 0
-	if !connections_ok || connections < len(events) || connections > len(events) + spare || !distinct_connections(events) {
+	if !connections_ok ||
+	   connections < len(events) ||
+	   connections > len(events) + spare ||
+	   !distinct_connections(events) {
 		return 0, "connections"
 	}
 	if mode == 0 {
-		if !support.eq_string(native, "error", "None") || len(events) != 2 || !support.eq_int(native, "hits", 0) {
+		if !support.eq_string(native, "error", "None") ||
+		   len(events) != 2 ||
+		   !support.eq_int(native, "hits", 0) {
 			return 0, "healthy"
 		}
 		return census(native)
@@ -149,7 +163,9 @@ failure_verify :: proc(mode: int, native, peer: json.Value) -> (calls: int, reas
 			return 0, "allocation"
 		}
 	case 8:
-		cancelled := support.eq_string(native, "error", "IO_Failed") && support.eq_string(native, "phase", "Cancellation")
+		cancelled :=
+			support.eq_string(native, "error", "IO_Failed") &&
+			support.eq_string(native, "phase", "Cancellation")
 		finished := support.eq_string(native, "error", "None") && two
 		// Point 4 waits on the network afterwards, so its cancel always lands
 		// first. A later point may finish before the cancel does.
@@ -169,7 +185,12 @@ census :: proc(native: json.Value) -> (calls: int, reason: string) {
 	n, calls_ok := support.int_field(native, "calls")
 	sizes, sizes_ok := support.array_field(native, "sizes")
 	alignments, alignments_ok := support.array_field(native, "alignments")
-	if !calls_ok || !sizes_ok || !alignments_ok || n <= 0 || n != len(sizes) || n != len(alignments) {
+	if !calls_ok ||
+	   !sizes_ok ||
+	   !alignments_ok ||
+	   n <= 0 ||
+	   n != len(sizes) ||
+	   n != len(alignments) {
 		return 0, "census"
 	}
 	for item in alignments {

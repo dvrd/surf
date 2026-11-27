@@ -1,11 +1,11 @@
 package main
 
-import "shared:surf"
 import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "shared:surf"
 
 perform :: proc(
 	base, path, file_path: string,
@@ -66,7 +66,9 @@ main :: proc() {
 	defer delete(file_path)
 	defer delete(short_path)
 	defer delete(root_path)
-	assert(http_url != "" && tls_url != "" && file_path != "" && short_path != "" && root_path != "")
+	assert(
+		http_url != "" && tls_url != "" && file_path != "" && short_path != "" && root_path != "",
+	)
 	plain := surf.Config {
 		allow_http    = true,
 		max_body_size = 8,

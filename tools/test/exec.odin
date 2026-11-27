@@ -97,7 +97,8 @@ spawn_grouped :: proc(command: []string, working_dir: string, log: string = "") 
 		}
 
 		if output != -1 {
-			if posix.dup2(output, posix.STDOUT_FILENO) == -1 || posix.dup2(output, posix.STDERR_FILENO) == -1 {
+			if posix.dup2(output, posix.STDOUT_FILENO) == -1 ||
+			   posix.dup2(output, posix.STDERR_FILENO) == -1 {
 				child_fail(ends[1])
 			}
 		}
@@ -237,11 +238,9 @@ capture :: proc(command: []string) -> (text: string, status: int) {
 		finish(1)
 	}
 
-	process, start_err := os.process_start({
-		command = command,
-		stdout = write_end,
-		stderr = os.stderr,
-	})
+	process, start_err := os.process_start(
+		{command = command, stdout = write_end, stderr = os.stderr},
+	)
 	os.close(write_end)
 	if start_err != nil {
 		os.close(read_end)

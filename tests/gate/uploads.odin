@@ -17,12 +17,12 @@ import "core:thread"
 import "core:time"
 
 uploads_Record :: struct {
-	method:    string,
-	path:      string,
-	declared:  int,
-	consumed:  int,
-	digest:    [32]u8,
-	stalled:   bool,
+	method:   string,
+	path:     string,
+	declared: int,
+	consumed: int,
+	digest:   [32]u8,
+	stalled:  bool,
 }
 
 uploads_Peer :: struct {
@@ -94,7 +94,9 @@ run_uploads :: proc() {
 	if os.write_entire_file(report_path, transmute([]u8)text, FILE_PERM) != nil {
 		fail("report")
 	}
-	fmt.println("Methods, declared lengths, SHA-256 bodies, prefix cursor and no redirect replay verified.")
+	fmt.println(
+		"Methods, declared lengths, SHA-256 bodies, prefix cursor and no redirect replay verified.",
+	)
 }
 
 uploads_start_peer :: proc(encrypted: bool) -> ^uploads_Peer {
@@ -142,7 +144,9 @@ uploads_handle :: proc(job: ^uploads_Job) {
 	_ = net.set_option(fd, .TCP_Nodelay, true)
 	_ = net.set_option(fd, .Receive_Timeout, 25 * time.Second)
 	_ = net.set_option(fd, .Send_Timeout, 25 * time.Second)
-	conn := loopback.Conn{fd = fd}
+	conn := loopback.Conn {
+		fd = fd,
+	}
 	defer loopback.conn_wipe(&conn)
 	if peer.encrypted {
 		if !loopback.handshake(&conn, .HTTP1) {
@@ -213,20 +217,34 @@ uploads_handle :: proc(job: ^uploads_Job) {
 		location = "Location: /must-not-replay\r\n"
 	}
 	header: [160]u8
-	text := fmt.bprintf(header[:], "HTTP/1.1 %s\r\n%sContent-Length: 2\r\nConnection: close\r\n\r\nok", status, location)
+	text := fmt.bprintf(
+		header[:],
+		"HTTP/1.1 %s\r\n%sContent-Length: 2\r\nConnection: close\r\n\r\nok",
+		status,
+		location,
+	)
 	_ = write_all(fd, &conn, peer.encrypted, text)
 }
 
-uploads_note :: proc(peer: ^uploads_Peer, method, path: string, declared, consumed, _: int, digest: [32]u8, stalled: bool) {
+uploads_note :: proc(
+	peer: ^uploads_Peer,
+	method, path: string,
+	declared, consumed, _: int,
+	digest: [32]u8,
+	stalled: bool,
+) {
 	sync.lock(&peer.mu)
-	append(&peer.records, uploads_Record{
-		method = strings.clone(method),
-		path = strings.clone(path),
-		declared = declared,
-		consumed = consumed,
-		digest = digest,
-		stalled = stalled,
-	})
+	append(
+		&peer.records,
+		uploads_Record {
+			method = strings.clone(method),
+			path = strings.clone(path),
+			declared = declared,
+			consumed = consumed,
+			digest = digest,
+			stalled = stalled,
+		},
+	)
 	sync.unlock(&peer.mu)
 }
 
@@ -280,7 +298,7 @@ request_of :: proc(head: string) -> (method, path: string, length: int, ok: bool
 }
 
 uploads_check :: proc(plain, secure: ^uploads_Peer) {
-	expected := [?]Expect{
+	expected := [?]Expect {
 		{"/put", "PUT", 65 * 1024 * 1024},
 		{"/post", "POST", 17},
 		{"/delete", "DELETE", 0},
@@ -369,7 +387,10 @@ uploads_write_payload :: proc(path: string, chunks: int, extra: bool) {
 	}
 }
 
-uploads_child_env :: proc(plain, secure: ^uploads_Peer, file_path, short_path, cert: string) -> [dynamic]string {
+uploads_child_env :: proc(
+	plain, secure: ^uploads_Peer,
+	file_path, short_path, cert: string,
+) -> [dynamic]string {
 	base, err := os.environ(context.allocator)
 	if err != nil {
 		fail("environ")
@@ -386,12 +407,9 @@ uploads_child_env :: proc(plain, secure: ^uploads_Peer, file_path, short_path, c
 }
 
 run_fixture :: proc(binary: string, env: [dynamic]string) -> bool {
-	process, start_error := os.process_start({
-		command = []string{binary},
-		env = env[:],
-		stdout = os.stdout,
-		stderr = os.stderr,
-	})
+	process, start_error := os.process_start(
+		{command = []string{binary}, env = env[:], stdout = os.stdout, stderr = os.stderr},
+	)
 	if start_error != nil {
 		return false
 	}
@@ -406,11 +424,22 @@ uploads_build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 	defer delete(collection)
 	command := make([dynamic]string)
 	defer delete(command)
-	append(&command, compiler, "build", "tests/support/uploads", "-thread-count:1", "-warnings-as-errors", collection, out_flag)
+	append(
+		&command,
+		compiler,
+		"build",
+		"tests/support/uploads",
+		"-thread-count:1",
+		"-warnings-as-errors",
+		collection,
+		out_flag,
+	)
 	if sanitizer != "" && sanitizer != "none" {
 		append(&command, fmt.aprintf("-sanitize:%s", sanitizer))
 	}
-	process, start_error := os.process_start({command = command[:], stdout = os.stdout, stderr = os.stderr})
+	process, start_error := os.process_start(
+		{command = command[:], stdout = os.stdout, stderr = os.stderr},
+	)
 	if start_error != nil {
 		return false
 	}
@@ -475,8 +504,9 @@ uploads_parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 		}
 	}
 	if compiler == "" || shared == "" || report == "" {
-		fail("usage: --odin <compiler> --shared <collection> --report <path> [--sanitize address|thread]")
+		fail(
+			"usage: --odin <compiler> --shared <collection> --report <path> [--sanitize address|thread]",
+		)
 	}
 	return
 }
-

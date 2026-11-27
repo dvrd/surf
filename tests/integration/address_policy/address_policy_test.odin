@@ -118,7 +118,9 @@ Address_Hops :: struct {
 
 // first answers every request with a redirect to location; second answers 200.
 address_hops_start :: proc(t: ^testing.T, hops: ^Address_Hops, location: string) -> bool {
-	hops.second.answer = {wire = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"}
+	hops.second.answer = {
+		wire = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+	}
 
 	if !testing.expect(t, loopback.server_start(&hops.second)) {
 		return false
@@ -126,7 +128,10 @@ address_hops_start :: proc(t: ^testing.T, hops: ^Address_Hops, location: string)
 
 	target := fmt.tprintf(location, hops.second.port)
 	hops.first.answer = {
-		wire = fmt.aprintf("HTTP/1.1 302 Found\r\nLocation: %s\r\nContent-Length: 0\r\n\r\n", target),
+		wire = fmt.aprintf(
+			"HTTP/1.1 302 Found\r\nLocation: %s\r\nContent-Length: 0\r\n\r\n",
+			target,
+		),
 	}
 
 	if !testing.expect(t, loopback.server_start(&hops.first)) {

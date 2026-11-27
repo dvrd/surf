@@ -3,22 +3,22 @@
 
 package main
 
-import "support"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "support"
 
 cancel_Case :: struct {
-	name:               string,
-	phase:              string,
-	transport:          string,
-	action:             string,
-	layer:              string,
-	expected_stage:     string,
-	expected_terminal:  string,
-	expected_runtime:   string,
+	name:              string,
+	phase:             string,
+	transport:         string,
+	action:            string,
+	layer:             string,
+	expected_stage:    string,
+	expected_terminal: string,
+	expected_runtime:  string,
 }
 
 run_cancel :: proc() {
@@ -119,7 +119,8 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	if !encrypted && !support.is_false(peer, "tls") {
 		return "peer case"
 	}
-	if !support.eq_string(native, "expected_stage", item.expected_stage) || !support.eq_string(native, "observed_stage", item.expected_stage) {
+	if !support.eq_string(native, "expected_stage", item.expected_stage) ||
+	   !support.eq_string(native, "observed_stage", item.expected_stage) {
 		return "stage"
 	}
 	if !support.eq_string(native, "phase", item.expected_terminal) {
@@ -132,7 +133,13 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	if !support.eq_int(native, "workers", 1) {
 		return "workers"
 	}
-	facts := [?]string{"cheap_before_release", "terminal_once", "heap_zero", "scope_zero", "fd_zero"}
+	facts := [?]string {
+		"cheap_before_release",
+		"terminal_once",
+		"heap_zero",
+		"scope_zero",
+		"fd_zero",
+	}
 	for fact in facts {
 		if !support.is_true(native, fact) {
 			return fact
@@ -156,7 +163,8 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 		}
 		if id == 100 {
 			cheap += 1
-			if !support.eq_string(event, "path", "/cheap") || !support.gt_int(event, "response_bytes", 0) {
+			if !support.eq_string(event, "path", "/cheap") ||
+			   !support.gt_int(event, "response_bytes", 0) {
 				return "cheap request"
 			}
 			continue
@@ -178,12 +186,14 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 			continue
 		}
 		method := "POST" if item.phase == "write" else "GET"
-		if !support.gt_int(event, "request_bytes", 0) || !support.eq_string(event, "method", method) {
+		if !support.gt_int(event, "request_bytes", 0) ||
+		   !support.eq_string(event, "method", method) {
 			return "request"
 		}
 		want_alpn := "http/1.1" if encrypted else ""
 		want_tls := 0x304 if encrypted else 0
-		if !support.eq_string(event, "alpn", want_alpn) || !support.eq_int(event, "negotiated_tls", want_tls) {
+		if !support.eq_string(event, "alpn", want_alpn) ||
+		   !support.eq_int(event, "negotiated_tls", want_tls) {
 			return "tls"
 		}
 	}
@@ -244,7 +254,12 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 		length, length_ok := support.int_field(first_held, "content_length")
 		sent, sent_ok := support.int_field(first_held, "request_bytes")
 		response, response_ok := support.int_field(first_held, "response_bytes")
-		if !length_ok || length != 18 << 20 || !sent_ok || sent >= length || !response_ok || response != 0 {
+		if !length_ok ||
+		   length != 18 << 20 ||
+		   !sent_ok ||
+		   sent >= length ||
+		   !response_ok ||
+		   response != 0 {
 			return "pending write"
 		}
 	}
@@ -254,12 +269,16 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 		}
 	}
 	if item.phase == "redirect" {
-		if held != 2 || held_paths[0] != "/held" || held_paths[1] != "/redirected" || !support.eq_int(native, "status", 307) {
+		if held != 2 ||
+		   held_paths[0] != "/held" ||
+		   held_paths[1] != "/redirected" ||
+		   !support.eq_int(native, "status", 307) {
 			return "redirect"
 		}
 	}
 	if item.phase == "body" {
-		if !support.eq_int(native, "status", 200) || !support.eq_string(native, "write_effect", "Response_Received") {
+		if !support.eq_int(native, "status", 200) ||
+		   !support.eq_string(native, "write_effect", "Response_Received") {
 			return "partial classification"
 		}
 	}
@@ -277,7 +296,10 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	deadline := item.action == "total" || item.action == "setup" || item.action == "close"
 	if deadline {
 		elapsed, elapsed_ok := support.f64_field(native, "elapsed_ms")
-		if !support.eq_string(native, "error", "Deadline_Failed") || !support.eq_string(native, "phase", "Deadline") || !elapsed_ok || elapsed >= 2000 {
+		if !support.eq_string(native, "error", "Deadline_Failed") ||
+		   !support.eq_string(native, "phase", "Deadline") ||
+		   !elapsed_ok ||
+		   elapsed >= 2000 {
 			return "deadline"
 		}
 	} else if !support.eq_string(native, "phase", "Cancellation") {
@@ -288,7 +310,8 @@ cancel_verify :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 
 verify_raw :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	encrypted := item.transport == "tls"
-	if !support.eq_string(native, "layer", "runtime_connect_slot") || !support.eq_string(native, "mode", item.action) {
+	if !support.eq_string(native, "layer", "runtime_connect_slot") ||
+	   !support.eq_string(native, "mode", item.action) {
 		return "raw layer"
 	}
 	if encrypted && !support.is_true(native, "cheap_tls") {
@@ -300,10 +323,12 @@ verify_raw :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	if !support.eq_string(native, "error", item.expected_runtime) {
 		return "runtime error"
 	}
-	if !support.eq_int(native, "workers", 1) || !support.eq_int(native, "client_completions", 1) || !support.eq_int(native, "owner_done_calls", 1) {
+	if !support.eq_int(native, "workers", 1) ||
+	   !support.eq_int(native, "client_completions", 1) ||
+	   !support.eq_int(native, "owner_done_calls", 1) {
 		return "workers"
 	}
-	facts := [?]string{
+	facts := [?]string {
 		"cheap_before_release",
 		"peer_accepted",
 		"connecting_slot_held",
@@ -318,13 +343,15 @@ verify_raw :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 		}
 	}
 	later := item.action == "later_finish"
-	if support.is_true(native, "original_cutoff_retained") != later || support.is_true(native, "later_budget_rejected") != later {
+	if support.is_true(native, "original_cutoff_retained") != later ||
+	   support.is_true(native, "later_budget_rejected") != later {
 		return "later budget"
 	}
 	if support.is_true(native, "earlier_budget_selected") != (item.action == "earlier_finish") {
 		return "earlier budget"
 	}
-	if !support.eq_string(peer, "phase", "rawconnect") || !support.is_true(peer, "cheap_before_release") {
+	if !support.eq_string(peer, "phase", "rawconnect") ||
+	   !support.is_true(peer, "cheap_before_release") {
 		return "raw peer"
 	}
 	if encrypted && !support.is_true(peer, "tls") {
@@ -361,15 +388,21 @@ verify_raw :: proc(item: cancel_Case, native, peer: json.Value) -> string {
 	if raw_n != 1 || cheap_n != 1 {
 		return "raw events"
 	}
-	if !support.eq_int(raw, "request_bytes", 0) || !support.eq_int(raw, "response_bytes", 0) || !support.eq_int(raw, "negotiated_tls", 0) || !support.eq_string(raw, "alpn", "") {
+	if !support.eq_int(raw, "request_bytes", 0) ||
+	   !support.eq_int(raw, "response_bytes", 0) ||
+	   !support.eq_int(raw, "negotiated_tls", 0) ||
+	   !support.eq_string(raw, "alpn", "") {
 		return "raw socket"
 	}
-	if !support.eq_string(cheap, "method", "GET") || !support.eq_string(cheap, "path", "/cheap") || !support.gt_int(cheap, "response_bytes", 0) {
+	if !support.eq_string(cheap, "method", "GET") ||
+	   !support.eq_string(cheap, "path", "/cheap") ||
+	   !support.gt_int(cheap, "response_bytes", 0) {
 		return "cheap request"
 	}
 	want_alpn := "http/1.1" if encrypted else ""
 	want_tls := 0x304 if encrypted else 0
-	if !support.eq_string(cheap, "alpn", want_alpn) || !support.eq_int(cheap, "negotiated_tls", want_tls) {
+	if !support.eq_string(cheap, "alpn", want_alpn) ||
+	   !support.eq_int(cheap, "negotiated_tls", want_tls) {
 		return "cheap tls"
 	}
 	return ""
@@ -446,7 +479,14 @@ load_cases :: proc() -> (cases: [dynamic]cancel_Case, ok: bool) {
 covers :: proc(cases: []cancel_Case) -> bool {
 	phases := [?]string{"dns", "tls", "write", "header", "body", "redirect", "queued"}
 	actions := [?]string{"cancel", "total", "close", "shutdown"}
-	raw_actions := [?]string{"release_success", "owner_cancel", "close_connect", "runtime_shutdown", "later_finish", "earlier_finish"}
+	raw_actions := [?]string {
+		"release_success",
+		"owner_cancel",
+		"close_connect",
+		"runtime_shutdown",
+		"later_finish",
+		"earlier_finish",
+	}
 	seen := 0
 	for phase in phases {
 		transports := [?]string{"tcp", "tls"}
