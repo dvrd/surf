@@ -10,7 +10,7 @@ import "core:time"
 
 // Acceptance gates. task gate stages shared:surf, then runs tests/gate with
 // the compiler, that collection, and a report file filled in.
-GATE_NAMES :: [?]string{
+GATE_NAMES :: [?]string {
 	"budgets",
 	"cancel",
 	"client",
@@ -74,7 +74,13 @@ run_gates :: proc(staged: Staged) {
 	gate_color = use_color()
 	say("%s\n", paint(DIM, "Building tests/gate"))
 	build: [dynamic]string
-	append(&build, staged.wrapper, "build", join(staged.repository, "tests/gate"), concat("-out:", binary))
+	append(
+		&build,
+		staged.wrapper,
+		"build",
+		join(staged.repository, "tests/gate"),
+		concat("-out:", binary),
+	)
 	spawn_grouped(build[:], staged.repository, "" if gate_verbose else build_log)
 	status := wait_grouped("tests/gate")
 	if status != 0 {
@@ -89,7 +95,10 @@ run_gates :: proc(staged: Staged) {
 		width = max(width, len(name))
 	}
 
-	say("%s\n\n", paint(DIM, fmt.tprintf("Running %d gate%s", len(names), "" if len(names) == 1 else "s")))
+	say(
+		"%s\n\n",
+		paint(DIM, fmt.tprintf("Running %d gate%s", len(names), "" if len(names) == 1 else "s")),
+	)
 	results: [dynamic]Gate_Result
 	started := time.tick_now()
 	for name in names {
@@ -135,9 +144,20 @@ run_gate :: proc(binary, name: string, staged: Staged, width: int) -> Gate_Resul
 	}
 
 	if gate_verbose {
-		say("%s %s  %s  %s\n\n", paint(BOLD, concat("── ", name)), verdict(result.passed), result.detail, paint(DIM, seconds(result.elapsed)))
+		say(
+			"%s %s  %s  %s\n\n",
+			paint(BOLD, concat("── ", name)),
+			verdict(result.passed),
+			result.detail,
+			paint(DIM, seconds(result.elapsed)),
+		)
 	} else {
-		say("%s  %-28s %s\n", verdict(result.passed), result.detail, paint(DIM, seconds(result.elapsed)))
+		say(
+			"%s  %-28s %s\n",
+			verdict(result.passed),
+			result.detail,
+			paint(DIM, seconds(result.elapsed)),
+		)
 	}
 
 	if !result.passed && !gate_verbose {

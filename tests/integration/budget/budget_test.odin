@@ -26,7 +26,9 @@ Budget_Peer :: struct {
 }
 
 budget_peer_start :: proc(t: ^testing.T, peer: ^Budget_Peer, wire: string) -> bool {
-	peer.server.answer = {wire = wire}
+	peer.server.answer = {
+		wire = wire,
+	}
 
 	if !testing.expect(t, loopback.server_start(&peer.server)) {
 		return false
@@ -69,7 +71,9 @@ budget_fetch :: proc(
 // longer fits fails after its head, and the bytes come back once the body chunk
 // is destroyed.
 @(test)
-managed_results_charge_full_backing_transfer_without_duplication_and_recover :: proc(t: ^testing.T) {
+managed_results_charge_full_backing_transfer_without_duplication_and_recover :: proc(
+	t: ^testing.T,
+) {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, runtime.heap_allocator(), runtime.heap_allocator())
 	defer mem.tracking_allocator_destroy(&track)
@@ -108,7 +112,10 @@ managed_results_charge_full_backing_transfer_without_duplication_and_recover :: 
 	surf.response_destroy(&failed)
 	chunk, taken := surf.response_take_body(&response)
 	assert(taken.kind == .None)
-	info, known := async.budget_allocation_info(chunk._owned.allocator, raw_data(chunk._owned.storage))
+	info, known := async.budget_allocation_info(
+		chunk._owned.allocator,
+		raw_data(chunk._owned.storage),
+	)
 	assert(known)
 	testing.expect_value(t, info.size, len(chunk._owned.storage))
 	async.budget_release_scope(&a)
@@ -161,7 +168,9 @@ stream_exhaustion_and_foreign_allocator_reject_before_any_write :: proc(t: ^test
 }
 
 @(test)
-covered_arena_is_not_double_wrapped_and_retains_actual_backing_until_arena_destroy :: proc(t: ^testing.T) {
+covered_arena_is_not_double_wrapped_and_retains_actual_backing_until_arena_destroy :: proc(
+	t: ^testing.T,
+) {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, runtime.heap_allocator(), runtime.heap_allocator())
 	defer mem.tracking_allocator_destroy(&track)
@@ -179,7 +188,10 @@ covered_arena_is_not_double_wrapped_and_retains_actual_backing_until_arena_destr
 	assert(ae == .None)
 	b, be := async.budget_create_child(root, {bytes = 65536, streams = 1})
 	assert(be == .None)
-	binding, created := async.budget_binding_create(a, {backing = allocator, metadata_allocator = allocator})
+	binding, created := async.budget_binding_create(
+		a,
+		{backing = allocator, metadata_allocator = allocator},
+	)
 	assert(created.kind == .None)
 	managed := async.budget_allocator(binding)
 	arena: mem.Dynamic_Arena
@@ -238,14 +250,20 @@ surf_body_bytes_round_trip_through_the_async_http_exchange :: proc(t: ^testing.T
 	assert(fetched.kind == .None)
 	chunk, taken := surf.response_take_body(&response)
 	assert(taken.kind == .None)
-	_, known := async.budget_allocation_info(chunk._owned.allocator, raw_data(chunk._owned.storage))
+	_, known := async.budget_allocation_info(
+		chunk._owned.allocator,
+		raw_data(chunk._owned.storage),
+	)
 	assert(known)
 	surf.response_destroy(&response)
 	moved, copy_error := async.owned_copy_bounded(chunk.data, len(chunk.data), allocator)
 	assert(copy_error.kind == .None)
 	http_root, http_root_error := async.budget_create_root({bytes = 65536, streams = 1}, allocator)
 	assert(http_root_error == .None)
-	http_scope, http_scope_error := async.budget_create_child(http_root, {bytes = 65536, streams = 1})
+	http_scope, http_scope_error := async.budget_create_child(
+		http_root,
+		{bytes = 65536, streams = 1},
+	)
 	assert(http_scope_error == .None)
 	ex: async.Exchange_Body
 	assert(async.exchange_init(&ex, .GET, {scope = http_scope}, allocator).kind == .None)
@@ -298,11 +316,21 @@ budget_free_owner :: proc(
 		state.freed = true
 	}
 
-	return state.backing.procedure(state.backing.data, mode, size, alignment, old_memory, old_size, location)
+	return state.backing.procedure(
+		state.backing.data,
+		mode,
+		size,
+		alignment,
+		old_memory,
+		old_size,
+		location,
+	)
 }
 
 @(test)
-managed_response_destructor_detaches_before_callback_can_free_response_frame :: proc(t: ^testing.T) {
+managed_response_destructor_detaches_before_callback_can_free_response_frame :: proc(
+	t: ^testing.T,
+) {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, runtime.heap_allocator(), runtime.heap_allocator())
 	defer mem.tracking_allocator_destroy(&track)

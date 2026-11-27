@@ -300,4 +300,3 @@ redirect_path_normalize :: proc(dst: []u8, target: string) -> int {
 
 	return at
 }
-

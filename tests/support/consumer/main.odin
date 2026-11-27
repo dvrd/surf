@@ -71,7 +71,11 @@ serve_connection :: proc(server: ^Server, socket: net.TCP_Socket) {
 			parts := strings.fields(line, context.temp_allocator)
 			target := parts[1] if len(parts) > 1 else "/"
 			sync.atomic_add(&server.requests, 1)
-			reply := fmt.tprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s", len(target), target)
+			reply := fmt.tprintf(
+				"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s",
+				len(target),
+				target,
+			)
 			if _, sent := net.send_tcp(socket, transmute([]u8)reply); sent != nil {
 				return
 			}
@@ -116,7 +120,11 @@ main :: proc() {
 		timeout    = 5 * time.Second,
 	}
 
-	response, error := surf.execute({method = .GET, url = url(&server, "/execute")}, config, allocator)
+	response, error := surf.execute(
+		{method = .GET, url = url(&server, "/execute")},
+		config,
+		allocator,
+	)
 	assert(error.kind == .None && response.status == 200 && string(response.body) == "/execute")
 	surf.response_destroy(&response)
 
@@ -124,7 +132,11 @@ main :: proc() {
 	assert(surf.client_start(&started, {http = config}, allocator).kind == .None)
 
 	for path in ([?]string{"/started/1", "/started/2"}) {
-		response, error = surf.client_execute(&started, {method = .GET, url = url(&server, path)}, allocator)
+		response, error = surf.client_execute(
+			&started,
+			{method = .GET, url = url(&server, path)},
+			allocator,
+		)
 		assert(error.kind == .None && response.status == 200 && string(response.body) == path)
 		surf.response_destroy(&response)
 	}
@@ -132,7 +144,10 @@ main :: proc() {
 	assert(surf.client_destroy(&started).kind == .None)
 
 	runtime: async.Runtime
-	assert(async.init(&runtime, {workers = 1, task_capacity = 8, io_capacity = 64, allocator = allocator}).kind == .None)
+	assert(
+		async.init(&runtime, {workers = 1, task_capacity = 8, io_capacity = 64, allocator = allocator}).kind ==
+		.None,
+	)
 	assert(async.start(&runtime).kind == .None)
 	owned: surf.Client
 	assert(surf.client_init(&owned, &runtime, {http = config}, allocator).kind == .None)
@@ -169,7 +184,11 @@ main :: proc() {
 	async.shutdown(&runtime)
 	assert(async.join(&runtime).kind == .None)
 	assert(async.destroy(&runtime).kind == .None)
-	assert(track.current_memory_allocated == 0 && len(track.allocation_map) == 0 && len(track.bad_free_array) == 0)
+	assert(
+		track.current_memory_allocated == 0 &&
+		len(track.allocation_map) == 0 &&
+		len(track.bad_free_array) == 0,
+	)
 	mem.tracking_allocator_destroy(&track)
 
 	server_stop(&server)
@@ -184,5 +203,8 @@ main :: proc() {
 	delete(server.workers)
 	net.close(listener)
 	assert(sync.atomic_load(&server.requests) == 4)
-	fmt.printf("CONSUMER execute=true client_start=true client_init=true requests=%d heap_zero=true\n", server.requests)
+	fmt.printf(
+		"CONSUMER execute=true client_start=true client_init=true requests=%d heap_zero=true\n",
+		server.requests,
+	)
 }

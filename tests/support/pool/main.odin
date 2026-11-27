@@ -1,18 +1,18 @@
 package main
-import runtime_async "shared:async"
-import "shared:surf"
-import http "shared:async/http"
 import rt "base:runtime"
-import "shared:async/tls"
 import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
-import "shared:async/budget"
 import "core:strconv"
 import "core:sys/posix"
 import "core:thread"
 import "core:time"
+import runtime_async "shared:async"
+import "shared:async/budget"
+import http "shared:async/http"
+import "shared:async/tls"
+import "shared:surf"
 
 fd_count :: proc() -> int {
 	n := 0
@@ -46,7 +46,11 @@ wait :: proc(c: ^surf.Client, h: surf.Request_Handle) -> surf.Completion {
 		thread.yield()
 	}
 }
-submit :: proc(c: ^surf.Client, r: ^runtime_async.Runtime, request: surf.Request) -> surf.Request_Handle {
+submit :: proc(
+	c: ^surf.Client,
+	r: ^runtime_async.Runtime,
+	request: surf.Request,
+) -> surf.Request_Handle {
 	h, error := surf.client_submit(c, request, time.tick_add(time.tick_now(), 3 * time.Second))
 	assert(error.kind == .None)
 
@@ -66,14 +70,16 @@ main :: proc() {
 	roots: surf.Trust_Roots
 
 	if encrypted {
-		raw, error := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator); assert(error == nil)
+		raw, error := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
+		assert(error == nil)
 		assert(surf.trust_roots_parse(&roots, raw, allocator) == .None); delete(raw, allocator)
 	}
 
 	before := fd_count()
 	r: runtime_async.Runtime
 	assert(
-		runtime_async.init(&r, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind == .None,
+		runtime_async.init(&r, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind ==
+		.None,
 	)
 	c: surf.Client
 	config := surf.Client_Config {
@@ -168,7 +174,12 @@ main :: proc() {
 			result := wait(&c, h)
 
 			if result.error.kind != item.failure {
-				fmt.eprintf("pool case %s got %v expected %v\n", item.path, result.error.kind, item.failure)
+				fmt.eprintf(
+					"pool case %s got %v expected %v\n",
+					item.path,
+					result.error.kind,
+					item.failure,
+				)
 			}
 
 			assert(result.error.kind == item.failure)
@@ -298,7 +309,11 @@ run_mode :: proc(
 		result.completed = 2
 		return result
 	}
-	if mode == "stale" || mode == "peer-close" || mode == "partial" || mode == "separate" || mode == "keyupdate" {
+	if mode == "stale" ||
+	   mode == "peer-close" ||
+	   mode == "partial" ||
+	   mode == "separate" ||
+	   mode == "keyupdate" {
 		assert(os.write_entire_file(fmt.tprintf("%s/A.done", dir), "done") == nil)
 		start := time.tick_now()
 
@@ -345,14 +360,20 @@ run_mode :: proc(
 		second_scheme := scheme
 
 		if mode == "ports" {
-			raw, cause := os.read_entire_file(fmt.tprintf("%s/second.endpoint", dir), allocator); assert(cause == nil)
-			other, valid := net.parse_endpoint(string(raw)); assert(valid); second_port = other.port
+			raw, cause := os.read_entire_file(fmt.tprintf("%s/second.endpoint", dir), allocator)
+			assert(cause == nil)
+			other, valid := net.parse_endpoint(string(raw)); assert(valid)
+			second_port = other.port
 			delete(raw, allocator)
 		} else {
 			assert(encrypted); second_scheme = "http"
 		}
 
-		second, cause := fetch(c, r, fmt.tprintf("%s://127.0.0.1:%d/B", second_scheme, second_port))
+		second, cause := fetch(
+			c,
+			r,
+			fmt.tprintf("%s://127.0.0.1:%d/B", second_scheme, second_port),
+		)
 		assert(cause.kind == .None && second != first)
 		third, success := fetch(c, r, fmt.tprintf("%s://127.0.0.1:%d/C", scheme, endpoint.port))
 		assert(success.kind == .None && third == first)
@@ -367,7 +388,8 @@ run_mode :: proc(
 		wrong: surf.Trust_Roots
 
 		if mode == "trust" {
-			raw, cause := os.read_entire_file(fmt.tprintf("%s/wrong.pem", dir), allocator); assert(cause == nil)
+			raw, cause := os.read_entire_file(fmt.tprintf("%s/wrong.pem", dir), allocator)
+			assert(cause == nil)
 			assert(surf.trust_roots_parse(&wrong, raw, allocator) == .None); delete(raw, allocator)
 			other.http.tls.roots = &wrong
 		}

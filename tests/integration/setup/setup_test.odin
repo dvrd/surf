@@ -9,7 +9,10 @@ import "shared:surf"
 
 @(test)
 setup_negative_timeout_rejected_before_io :: proc(t: ^testing.T) {
-	response, error := surf.execute({method = .POST, url = "https://fixture.invalid/"}, {setup_timeout = -time.Second})
+	response, error := surf.execute(
+		{method = .POST, url = "https://fixture.invalid/"},
+		{setup_timeout = -time.Second},
+	)
 	defer surf.response_destroy(&response)
 	testing.expect_value(t, error.kind, .Invalid_Config)
 	testing.expect_value(t, error.phase, .Configuration)

@@ -101,7 +101,15 @@ allocate :: proc(
 			actual = size + 1
 		}
 
-		raw, error := p.allocator.procedure(p.allocator.data, mode, actual, max(16, alignment), nil, 0, location)
+		raw, error := p.allocator.procedure(
+			p.allocator.data,
+			mode,
+			actual,
+			max(16, alignment),
+			nil,
+			0,
+			location,
+		)
 		assert(error == nil)
 		view := raw
 
@@ -189,7 +197,12 @@ allocate :: proc(
 		sync.unlock(&p.mu)
 		return result, error
 	case .Query_Features:
-		(cast(^mem.Allocator_Mode_Set)old_memory)^ = {.Alloc, .Alloc_Non_Zeroed, .Free, .Query_Features}
+		(cast(^mem.Allocator_Mode_Set)old_memory)^ = {
+			.Alloc,
+			.Alloc_Non_Zeroed,
+			.Free,
+			.Query_Features,
+		}
 		return nil, nil
 	case .Free_All, .Resize, .Resize_Non_Zeroed, .Query_Info:
 		return nil, .Mode_Not_Implemented
@@ -224,7 +237,10 @@ main :: proc() {
 	mem.tracking_allocator_init(&track, runtime.heap_allocator(), runtime.heap_allocator())
 	allocator := mem.tracking_allocator(&track)
 	r: async.Runtime
-	assert(async.init(&r, {workers = 1, task_capacity = 2, io_capacity = 8, allocator = allocator}).kind == .None)
+	assert(
+		async.init(&r, {workers = 1, task_capacity = 2, io_capacity = 8, allocator = allocator}).kind ==
+		.None,
+	)
 	p := Backing {
 		allocator = allocator,
 		point     = point,

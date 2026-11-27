@@ -58,7 +58,15 @@ dial_dns_question :: proc(query: []u8) -> (qtype: int, question_end: int, ok: bo
 	return qtype, at + 4, true
 }
 
-dial_dns_reply :: proc(question: []u8, qtype: int, v4: [][4]u8, v6: [][16]u8) -> (reply: [512]u8, n: int) {
+dial_dns_reply :: proc(
+	question: []u8,
+	qtype: int,
+	v4: [][4]u8,
+	v6: [][16]u8,
+) -> (
+	reply: [512]u8,
+	n: int,
+) {
 	n = copy(reply[:], question)
 	reply[2] = 0x81
 	reply[3] = 0x80
@@ -77,8 +85,22 @@ dial_dns_reply :: proc(question: []u8, qtype: int, v4: [][4]u8, v6: [][16]u8) ->
 			}
 
 			record := [16]u8 {
-				0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 1, 0, 4,
-				v4[i][0], v4[i][1], v4[i][2], v4[i][3],
+				0xc0,
+				0x0c,
+				0,
+				1,
+				0,
+				1,
+				0,
+				0,
+				0,
+				1,
+				0,
+				4,
+				v4[i][0],
+				v4[i][1],
+				v4[i][2],
+				v4[i][3],
 			}
 			n += copy(reply[n:], record[:])
 		} else {
@@ -404,7 +426,11 @@ address_policy_public_only_refuses_non_global_ranges :: proc(t: ^testing.T) {
 	testing.expect(t, surf.address_policy_public_only("example.test", both[:], nil))
 	response, error := surf.execute(
 		{method = .GET, url = "http://127.0.0.1:1/secret"},
-		{allow_http = true, timeout = time.Second, address_policy = surf.address_policy_public_only},
+		{
+			allow_http = true,
+			timeout = time.Second,
+			address_policy = surf.address_policy_public_only,
+		},
 	)
 	defer surf.response_destroy(&response)
 	testing.expect_value(t, error.kind, .Address_Rejected)
@@ -437,9 +463,7 @@ header_reserved_exports_the_request_fields_rejected_on_submit :: proc(t: ^testin
 	testing.expect(t, !surf.header_reserved("Content-Type"))
 	testing.expect(t, !surf.header_reserved("Accept"))
 	testing.expect(t, !surf.header_reserved(""))
-	headers := [1]surf.Header {
-		{name = "Host", value = "example.test"},
-	}
+	headers := [1]surf.Header{{name = "Host", value = "example.test"}}
 	response, error := surf.execute(
 		{method = .GET, url = "http://127.0.0.1:1/", headers = headers[:]},
 		{allow_http = true, timeout = time.Second},
@@ -600,7 +624,11 @@ tcp_dials_the_endpoint_the_policy_checked :: proc(t: ^testing.T) {
 	roots: surf.Trust_Roots
 	defer surf.trust_roots_destroy(&roots)
 
-	if !testing.expect_value(t, surf.trust_roots_load_file(&roots, "tests/support/credentials/root.pem"), surf.Trust_Roots_Error.None) {
+	if !testing.expect_value(
+		t,
+		surf.trust_roots_load_file(&roots, "tests/support/credentials/root.pem"),
+		surf.Trust_Roots_Error.None,
+	) {
 		return
 	}
 

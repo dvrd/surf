@@ -63,7 +63,9 @@ Job :: struct {
 serve :: proc(job: ^Job) {
 	defer free(job)
 	defer net.close(job.fd)
-	conn := loopback.Conn{fd = job.fd}
+	conn := loopback.Conn {
+		fd = job.fd,
+	}
 	defer loopback.conn_wipe(&conn)
 	if !loopback.handshake(&conn, job.mode) {
 		if conn.reason != "" {
@@ -327,13 +329,24 @@ blob_count :: proc(query: string) -> (int, bool) {
 
 http1_write :: proc(conn: ^loopback.Conn, body: string) -> bool {
 	head: [128]u8
-	written := fmt.bprintf(head[:], "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n", len(body))
-	return loopback.tls_write(conn, transmute([]u8)written) && loopback.tls_write(conn, transmute([]u8)body)
+	written := fmt.bprintf(
+		head[:],
+		"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n",
+		len(body),
+	)
+	return(
+		loopback.tls_write(conn, transmute([]u8)written) &&
+		loopback.tls_write(conn, transmute([]u8)body) \
+	)
 }
 
 http1_blob :: proc(conn: ^loopback.Conn, count: int) -> bool {
 	head: [128]u8
-	written := fmt.bprintf(head[:], "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n", count)
+	written := fmt.bprintf(
+		head[:],
+		"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n",
+		count,
+	)
 	if !loopback.tls_write(conn, transmute([]u8)written) {
 		return false
 	}
@@ -383,10 +396,41 @@ serve_goaway :: proc(conn: ^loopback.Conn) {
 	}
 	// Empty SETTINGS, SETTINGS ACK, GOAWAY with a zero last-stream and error.
 	frames := [?]u8 {
-		0, 0, 0, 4, 0, 0, 0, 0, 0,
-		0, 0, 0, 4, 1, 0, 0, 0, 0,
-		0, 0, 8, 7, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0,
+		0,
+		0,
+		0,
+		4,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		4,
+		1,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		8,
+		7,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
 	}
 	if !loopback.tls_write(conn, frames[:]) {
 		return

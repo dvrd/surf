@@ -67,7 +67,13 @@ run_setup :: proc() {
 	if silent_thread == nil {
 		fail("thread")
 	}
-	run_mode(binary, "tls-dns", setup_port_of(silent), cert, fmt.tprintf("%d", setup_port_of(dns.socket)))
+	run_mode(
+		binary,
+		"tls-dns",
+		setup_port_of(silent),
+		cert,
+		fmt.tprintf("%d", setup_port_of(dns.socket)),
+	)
 	stop_tcp(silent, silent_thread)
 	stop_dns(dns)
 
@@ -284,7 +290,9 @@ hold_tls :: proc(fd: net.TCP_Socket) {
 	defer net.close(fd)
 	_ = net.set_option(fd, .Receive_Timeout, 2 * time.Second)
 	_ = net.set_option(fd, .Send_Timeout, 2 * time.Second)
-	conn := loopback.Conn{fd = fd}
+	conn := loopback.Conn {
+		fd = fd,
+	}
 	defer loopback.conn_wipe(&conn)
 	// One handshake at a time. The identity key is process-global.
 	sync.lock(&handshake_mu)
@@ -299,7 +307,10 @@ hold_tls :: proc(fd: net.TCP_Socket) {
 }
 
 listen_tcp :: proc(backlog: int) -> net.TCP_Socket {
-	endpoint := net.Endpoint{address = net.IP4_Loopback, port = 0}
+	endpoint := net.Endpoint {
+		address = net.IP4_Loopback,
+		port    = 0,
+	}
 	socket: net.TCP_Socket
 	err: net.Network_Error
 	if backlog > 0 {
@@ -361,7 +372,9 @@ run_mode :: proc(binary, mode: string, port: int, cert, extra: string) {
 	}
 	fmt.eprintf("setup: %s\n", mode)
 	_ = os.flush(os.stderr)
-	process, start_error := os.process_start({command = command[:], stdout = os.stdout, stderr = os.stderr})
+	process, start_error := os.process_start(
+		{command = command[:], stdout = os.stdout, stderr = os.stderr},
+	)
 	if start_error != nil {
 		fail(mode)
 	}
@@ -378,11 +391,22 @@ setup_build :: proc(compiler, shared, binary, sanitizer: string) -> bool {
 	defer delete(collection)
 	command := make([dynamic]string)
 	defer delete(command)
-	append(&command, compiler, "build", "tests/support/setup", "-thread-count:1", "-warnings-as-errors", collection, out_flag)
+	append(
+		&command,
+		compiler,
+		"build",
+		"tests/support/setup",
+		"-thread-count:1",
+		"-warnings-as-errors",
+		collection,
+		out_flag,
+	)
 	if sanitizer != "" && sanitizer != "none" {
 		append(&command, fmt.aprintf("-sanitize:%s", sanitizer))
 	}
-	process, start_error := os.process_start({command = command[:], stdout = os.stdout, stderr = os.stderr})
+	process, start_error := os.process_start(
+		{command = command[:], stdout = os.stdout, stderr = os.stderr},
+	)
 	if start_error != nil {
 		return false
 	}
@@ -417,8 +441,9 @@ setup_parse_args :: proc() -> (compiler, shared, report, sanitizer: string) {
 		}
 	}
 	if compiler == "" || shared == "" || report == "" {
-		fail("usage: --odin <compiler> --shared <collection> --report <path> [--sanitize address|none]")
+		fail(
+			"usage: --odin <compiler> --shared <collection> --report <path> [--sanitize address|none]",
+		)
 	}
 	return
 }
-

@@ -94,8 +94,8 @@ start :: proc(s: ^Site, protocols: bit_set[async.Protocol]) -> bool {
 
 	s.port = shared_port()
 	s.config = {
-		endpoint  = {net.IP4_Loopback, s.port},
-		tls       = async.Accept_TLS_Config{store = store},
+		endpoint = {net.IP4_Loopback, s.port},
+		tls = async.Accept_TLS_Config{store = store},
 		protocols = protocols,
 		quic_port = s.port,
 	}
@@ -163,7 +163,11 @@ site_resume :: proc(data: rawptr) -> async.Resume_Result {
 	return async.server_resume(&s.server)
 }
 
-handler :: proc(r: ^async.Server_Request, w: ^async.Server_Response, user: rawptr) -> async.Resume_Result {
+handler :: proc(
+	r: ^async.Server_Request,
+	w: ^async.Server_Response,
+	user: rawptr,
+) -> async.Resume_Result {
 	s := cast(^Site)user
 	a := cast(^Answer)r.user
 
@@ -224,7 +228,8 @@ handler :: proc(r: ^async.Server_Request, w: ^async.Server_Response, user: rawpt
 		return .Done
 	}
 
-	if async.exchange_respond(&a.x, {status = 200, content_length = i64(len(body))}).kind != .None {
+	if async.exchange_respond(&a.x, {status = 200, content_length = i64(len(body))}).kind !=
+	   .None {
 		return .Done
 	}
 

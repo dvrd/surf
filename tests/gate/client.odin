@@ -95,7 +95,9 @@ client_cell :: proc(peer_bin, fixture_bin, root, transport, mode: string) {
 		append(&command, "-tls")
 	}
 	start_error: os.Error
-	s.peer, start_error = os.process_start({command = command[:], stdout = s.out_w, stderr = s.err_w})
+	s.peer, start_error = os.process_start(
+		{command = command[:], stdout = s.out_w, stderr = s.err_w},
+	)
 	close_file(&s.out_w)
 	close_file(&s.err_w)
 	if start_error != nil {
@@ -105,7 +107,14 @@ client_cell :: proc(peer_bin, fixture_bin, root, transport, mode: string) {
 	s.peer_out.file = s.out_r
 	s.peer_err.file = s.err_r
 	endpoint_buf: [128]u8
-	endpoint_n := wait_line(s.peer, &s.peer_out, &s.peer_err, &s.peer_live, endpoint_buf[:], 10 * time.Second)
+	endpoint_n := wait_line(
+		s.peer,
+		&s.peer_out,
+		&s.peer_err,
+		&s.peer_live,
+		endpoint_buf[:],
+		10 * time.Second,
+	)
 	if endpoint_n <= 0 {
 		client_session_abort(&s, "readiness")
 	}
@@ -125,7 +134,9 @@ client_cell :: proc(peer_bin, fixture_bin, root, transport, mode: string) {
 	fixture_command := make([dynamic]string)
 	defer delete(fixture_command)
 	append(&fixture_command, fixture_bin, endpoint, mode, transport, dir)
-	s.fixture, start_error = os.process_start({command = fixture_command[:], stdout = s.fix_w, stderr = s.fix_err_w})
+	s.fixture, start_error = os.process_start(
+		{command = fixture_command[:], stdout = s.fix_w, stderr = s.fix_err_w},
+	)
 	close_file(&s.fix_w)
 	close_file(&s.fix_err_w)
 	if start_error != nil {
@@ -134,11 +145,23 @@ client_cell :: proc(peer_bin, fixture_bin, root, transport, mode: string) {
 	s.fixture_live = true
 	s.fixture_out.file = s.fix_r
 	s.fixture_err.file = s.fix_err_r
-	fixture_state, fixture_ok := wait_proc(s.fixture, &s.fixture_out, &s.fixture_err, &s.fixture_live, 25 * time.Second)
+	fixture_state, fixture_ok := wait_proc(
+		s.fixture,
+		&s.fixture_out,
+		&s.fixture_err,
+		&s.fixture_live,
+		25 * time.Second,
+	)
 	if !fixture_ok || fixture_state.exit_code != 0 {
 		client_session_abort(&s, "fixture")
 	}
-	peer_state, peer_ok := wait_proc(s.peer, &s.peer_out, &s.peer_err, &s.peer_live, 8 * time.Second)
+	peer_state, peer_ok := wait_proc(
+		s.peer,
+		&s.peer_out,
+		&s.peer_err,
+		&s.peer_live,
+		8 * time.Second,
+	)
 	if !peer_ok || peer_state.exit_code != 0 {
 		client_session_abort(&s, "peer")
 	}
@@ -165,7 +188,7 @@ client_check :: proc(native, oracle: string, encrypted: bool, mode: string) {
 		if !workers_ok || workers != 1 {
 			fail("workers")
 		}
-		facts := [?]string{
+		facts := [?]string {
 			"held_body",
 			"cheap_before_release",
 			"waiting_expired",
@@ -180,7 +203,7 @@ client_check :: proc(native, oracle: string, encrypted: bool, mode: string) {
 			}
 		}
 	} else {
-		facts := [?]string{
+		facts := [?]string {
 			"old_cutoff_expired",
 			"copied_input",
 			"late_response",
@@ -217,7 +240,12 @@ client_check :: proc(native, oracle: string, encrypted: bool, mode: string) {
 	method, method_ok := field_string(oracle, "first_method")
 	copied, copied_ok := field_string(oracle, "first_copy_header")
 	body_n, body_ok := field_int(oracle, "first_body_bytes")
-	if !method_ok || method != "POST" || !copied_ok || copied != "original" || !body_ok || body_n != 11 {
+	if !method_ok ||
+	   method != "POST" ||
+	   !copied_ok ||
+	   copied != "original" ||
+	   !body_ok ||
+	   body_n != 11 {
 		fail("copied request")
 	}
 }
@@ -240,4 +268,3 @@ object :: proc(text: string) -> (string, bool) {
 	}
 	return "", false
 }
-

@@ -2,10 +2,10 @@
 
 package main
 
-import "support"
 import "core:fmt"
 import "core:strings"
 import "core:time"
+import "support"
 
 MARKER :: "CONSUMER execute=true client_start=true client_init=true requests=4 heap_zero=true"
 

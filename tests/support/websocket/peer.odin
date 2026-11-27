@@ -51,7 +51,9 @@ handle :: proc(fd: net.TCP_Socket, echo: bool) {
 	_ = net.set_option(fd, .TCP_Nodelay, true)
 	_ = net.set_option(fd, .Send_Timeout, 15 * time.Second)
 	loopback.set_recv_timeout(fd, 15 * time.Second)
-	conn := loopback.Conn{fd = fd}
+	conn := loopback.Conn {
+		fd = fd,
+	}
 	defer loopback.conn_wipe(&conn)
 	if !loopback.handshake(&conn, .HTTP1_NoALPN) {
 		return

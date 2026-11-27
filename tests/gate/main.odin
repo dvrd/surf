@@ -45,7 +45,9 @@ main :: proc() {
 usage :: proc() {
 	fmt.eprintf("usage: task gate [GATE=name] [VERBOSE=1]\n")
 	fmt.eprintf("       gate <name> --odin <compiler> --shared <collection> --report <path>\n")
-	fmt.eprintf("names: budgets cancel client concurrency consumer failure outcomes pool redirect setup stream uploads\n")
+	fmt.eprintf(
+		"names: budgets cancel client concurrency consumer failure outcomes pool redirect setup stream uploads\n",
+	)
 	os.exit(2)
 }
 

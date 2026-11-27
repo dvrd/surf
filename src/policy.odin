@@ -112,4 +112,3 @@ address_policy_public_only :: proc(_: string, addresses: []net.Endpoint, _: rawp
 
 	return true
 }
-

@@ -77,7 +77,10 @@ main :: proc() {
 
 	fd_before := fd_count()
 	runtime: async.Runtime
-	assert(async.init(&runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind == .None)
+	assert(
+		async.init(&runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind ==
+		.None,
+	)
 	c: surf.Client
 	config := surf.Client_Config {
 		http = {allow_http = true, timeout = 2 * time.Second, scope = scope},
@@ -102,7 +105,11 @@ main :: proc() {
 	value := [8]u8{'o', 'r', 'i', 'g', 'i', 'n', 'a', 'l'}
 	fields := [1]surf.Header{{name = "X-Copy", value = string(value[:])}}
 	cutoff := time.tick_add(time.tick_now(), 600 * time.Millisecond)
-	handle, error := surf.client_submit(&c, {method = .POST, url = url, headers = fields[:], body = body[:]}, cutoff)
+	handle, error := surf.client_submit(
+		&c,
+		{method = .POST, url = url, headers = fields[:], body = body[:]},
+		cutoff,
+	)
 	assert(error.kind == .None)
 	// No runtime worker can have written the source before this overwrite. The
 	// peer must receive the accepted clone after Runtime.start below.
@@ -180,7 +187,11 @@ main :: proc() {
 	freed, _ := budget.snapshot(scope)
 	assert(freed.used == (budget.Usage{}))
 	budget.release_scope(&scope)
-	assert(track.current_memory_allocated == 0 && len(track.allocation_map) == 0 && len(track.bad_free_array) == 0)
+	assert(
+		track.current_memory_allocated == 0 &&
+		len(track.allocation_map) == 0 &&
+		len(track.bad_free_array) == 0,
+	)
 	mem.tracking_allocator_destroy(&track)
 	fmt.print("{")
 	fmt.printf(
@@ -193,7 +204,11 @@ Public_Completions :: struct {
 	items: [8]surf.Completion,
 	count: int,
 }
-collect :: proc(c: ^surf.Client, pending: ^Public_Completions, want: surf.Request_Handle) -> surf.Completion {
+collect :: proc(
+	c: ^surf.Client,
+	pending: ^Public_Completions,
+	want: surf.Request_Handle,
+) -> surf.Completion {
 	started := time.tick_now()
 
 	for {
@@ -238,14 +253,20 @@ run_progress :: proc(endpoint: net.Endpoint, encrypted: bool, dir: string) {
 		delete(root, allocator)
 	}
 
-	cheap_bytes, cheap_error := os.read_entire_file(fmt.tprintf("%s/cheap.endpoint", dir), allocator)
+	cheap_bytes, cheap_error := os.read_entire_file(
+		fmt.tprintf("%s/cheap.endpoint", dir),
+		allocator,
+	)
 	assert(cheap_error == nil)
 	cheap, valid_endpoint := net.parse_endpoint(string(cheap_bytes))
 	assert(valid_endpoint)
 	delete(cheap_bytes, allocator)
 	fd_before := fd_count()
 	runtime: async.Runtime
-	assert(async.init(&runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind == .None)
+	assert(
+		async.init(&runtime, {workers = 1, task_capacity = 8, io_capacity = 16, allocator = allocator}).kind ==
+		.None,
+	)
 	c: surf.Client
 	config := surf.Client_Config {
 		http = {allow_http = true, timeout = 3 * time.Second, scope = scope},
@@ -309,10 +330,15 @@ run_progress :: proc(endpoint: net.Endpoint, encrypted: bool, dir: string) {
 	surf.response_destroy(&response)
 	assert(!os.exists(fmt.tprintf("%s/release", dir)))
 	expired_result := collect(&c, &pending, expired)
-	assert(expired_result.error.kind == .Deadline_Failed && expired_result.error.phase == .Deadline)
+	assert(
+		expired_result.error.kind == .Deadline_Failed && expired_result.error.phase == .Deadline,
+	)
 	assert(surf.client_release(&c, expired).kind == .None)
 	cancelled_result := collect(&c, &pending, cancelled)
-	assert(cancelled_result.error.phase == .Cancellation && cancelled_result.error.write_effect == .Not_Sent)
+	assert(
+		cancelled_result.error.phase == .Cancellation &&
+		cancelled_result.error.write_effect == .Not_Sent,
+	)
 	assert(surf.client_release(&c, cancelled).kind == .None)
 	assert(surf.client_cancel(&c, held).kind == .None)
 	held_result := collect(&c, &pending, held)
@@ -338,7 +364,11 @@ run_progress :: proc(endpoint: net.Endpoint, encrypted: bool, dir: string) {
 	state, _ := budget.snapshot(scope)
 	assert(state.used == (budget.Usage{}))
 	budget.release_scope(&scope)
-	assert(track.current_memory_allocated == 0 && len(track.allocation_map) == 0 && len(track.bad_free_array) == 0)
+	assert(
+		track.current_memory_allocated == 0 &&
+		len(track.allocation_map) == 0 &&
+		len(track.bad_free_array) == 0,
+	)
 	mem.tracking_allocator_destroy(&track)
 	fmt.print("{")
 	fmt.printf(

@@ -54,7 +54,11 @@ peer_build :: proc(t: ^testing.T) -> bool {
 		directory = "/tmp"
 	}
 
-	peer_binary = fmt.bprintf(peer_binary_buffer[:], "%s/surf-h2-peer", strings.trim_right(directory, "/"))
+	peer_binary = fmt.bprintf(
+		peer_binary_buffer[:],
+		"%s/surf-h2-peer",
+		strings.trim_right(directory, "/"),
+	)
 	process, start_error := os.process_start(
 		{
 			command = {compiler, "build", ".", fmt.tprintf("-out:%s", peer_binary)},
@@ -228,7 +232,11 @@ peer_url :: proc(peer: ^Peer, path: string) -> string {
 peer_roots :: proc(t: ^testing.T, path: string) -> ^surf.Trust_Roots {
 	pool := new(surf.Trust_Roots)
 
-	if !testing.expect_value(t, surf.trust_roots_load_file(pool, path), surf.Trust_Roots_Error.None) {
+	if !testing.expect_value(
+		t,
+		surf.trust_roots_load_file(pool, path),
+		surf.Trust_Roots_Error.None,
+	) {
 		free(pool)
 		return nil
 	}

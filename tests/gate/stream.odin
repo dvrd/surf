@@ -3,50 +3,88 @@
 
 package main
 
-import "support"
 import "core:crypto/hash"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:time"
+import "support"
 
 stream_Case :: struct {
 	mode: string,
 	size: int,
 }
 
-CASES :: [?]stream_Case{
-	{"known", 32 << 20}, {"chunked", 32 << 20}, {"eof", 32 << 20},
-	{"fragmented", 4096}, {"short-length", 65536},
-	{"buffered-gzip", 65536}, {"buffered-short", 65536},
-	{"allocation-engine", 2}, {"allocation-head-fields", 2},
-	{"head-gzip", 12345}, {"no-content-gzip", 12345}, {"not-modified-gzip", 12345},
-	{"coding-unsupported", 3}, {"coding-chain", 3}, {"coding-repeated", 3},
-	{"chunk-invalid-size", 65536}, {"chunk-invalid-crlf", 65536},
-	{"chunk-truncated", 65536}, {"chunk-missing-terminal", 65536},
-	{"chunk-trailer-invalid", 65536}, {"conflicting-framing", 65536},
-	{"credit", 131072}, {"late-head", 131072}, {"late-chunk", 131072},
-	{"late-both", 131072}, {"timeout", 32 << 20}, {"cancel", 32 << 20},
+CASES :: [?]stream_Case {
+	{"known", 32 << 20},
+	{"chunked", 32 << 20},
+	{"eof", 32 << 20},
+	{"fragmented", 4096},
+	{"short-length", 65536},
+	{"buffered-gzip", 65536},
+	{"buffered-short", 65536},
+	{"allocation-engine", 2},
+	{"allocation-head-fields", 2},
+	{"head-gzip", 12345},
+	{"no-content-gzip", 12345},
+	{"not-modified-gzip", 12345},
+	{"coding-unsupported", 3},
+	{"coding-chain", 3},
+	{"coding-repeated", 3},
+	{"chunk-invalid-size", 65536},
+	{"chunk-invalid-crlf", 65536},
+	{"chunk-truncated", 65536},
+	{"chunk-missing-terminal", 65536},
+	{"chunk-trailer-invalid", 65536},
+	{"conflicting-framing", 65536},
+	{"credit", 131072},
+	{"late-head", 131072},
+	{"late-chunk", 131072},
+	{"late-both", 131072},
+	{"timeout", 32 << 20},
+	{"cancel", 32 << 20},
 	{"fairness", 32 << 20},
-	{"upload", 4 << 20}, {"upload-backing", 3}, {"upload-empty", 4096},
-	{"upload-oversize", 65536}, {"upload-overrun", 4096},
-	{"upload-short", 131072}, {"upload-source-error", 131072},
+	{"upload", 4 << 20},
+	{"upload-backing", 3},
+	{"upload-empty", 4096},
+	{"upload-oversize", 65536},
+	{"upload-overrun", 4096},
+	{"upload-short", 131072},
+	{"upload-source-error", 131072},
 	{"upload-source-error-blocked", 32 << 20},
-	{"upload-cancel", 131072}, {"early-final", 32 << 20},
-	{"early-final-prefix", 32 << 20}, {"early-final-blocked", 32 << 20},
-	{"gzip", 4 << 20}, {"gzip-chunked", 4 << 20}, {"gzip-eof", 4 << 20},
-	{"gzip-fragmented", 65536}, {"gzip-metadata", 65536},
-	{"gzip-fhcrc", 65536}, {"gzip-fhcrc-invalid", 65536},
-	{"gzip-crc", 65536}, {"gzip-crc-held", 65536}, {"gzip-size", 65536},
-	{"gzip-truncated", 65536}, {"gzip-trailing", 65536},
-	{"gzip-members", 65536}, {"gzip-encoded-exact", 65536},
-	{"gzip-decoded-exact", 65536}, {"decoded-exact", 65536},
-	{"gzip-encoded-limit", 65536}, {"gzip-decoded-limit", 65536},
+	{"upload-cancel", 131072},
+	{"early-final", 32 << 20},
+	{"early-final-prefix", 32 << 20},
+	{"early-final-blocked", 32 << 20},
+	{"gzip", 4 << 20},
+	{"gzip-chunked", 4 << 20},
+	{"gzip-eof", 4 << 20},
+	{"gzip-fragmented", 65536},
+	{"gzip-metadata", 65536},
+	{"gzip-fhcrc", 65536},
+	{"gzip-fhcrc-invalid", 65536},
+	{"gzip-crc", 65536},
+	{"gzip-crc-held", 65536},
+	{"gzip-size", 65536},
+	{"gzip-truncated", 65536},
+	{"gzip-trailing", 65536},
+	{"gzip-members", 65536},
+	{"gzip-encoded-exact", 65536},
+	{"gzip-decoded-exact", 65536},
+	{"decoded-exact", 65536},
+	{"gzip-encoded-limit", 65536},
+	{"gzip-decoded-limit", 65536},
 	{"gzip-amplification", 4 << 20},
-	{"encoded-limit", 65536}, {"decoded-limit", 65536},
-	{"redirect", 2}, {"redirect-cross", 2}, {"redirect-cross-auth", 2}, {"redirect-loop", 2},
-	{"redirect-malformed", 2}, {"redirect-gzip-invalid", 2},
-	{"redirect-deadline", 2}, {"redirect-downgrade", 2},
+	{"encoded-limit", 65536},
+	{"decoded-limit", 65536},
+	{"redirect", 2},
+	{"redirect-cross", 2},
+	{"redirect-cross-auth", 2},
+	{"redirect-loop", 2},
+	{"redirect-malformed", 2},
+	{"redirect-gzip-invalid", 2},
+	{"redirect-deadline", 2},
+	{"redirect-downgrade", 2},
 }
 
 HEX :: "0123456789abcdef"
@@ -68,7 +106,14 @@ run_stream :: proc() {
 	if !support.build(&g, "tests/support/stream/peer", peer_bin, false) {
 		support.fail(&g, "peer build")
 	}
-	if !support.build(&g, "tests/support/stream", fixture_bin, true, "-vet", "-vet-packages:main") {
+	if !support.build(
+		&g,
+		"tests/support/stream",
+		fixture_bin,
+		true,
+		"-vet",
+		"-vet-packages:main",
+	) {
 		support.fail(&g, "fixture build")
 	}
 	cells := 0
@@ -80,7 +125,8 @@ run_stream :: proc() {
 			if strings.has_prefix(item.mode, "allocation-") && transport == "tls" {
 				continue
 			}
-			if reason := stream_cell(&g, peer_bin, fixture_bin, transport, item.mode, item.size); reason != "" {
+			if reason := stream_cell(&g, peer_bin, fixture_bin, transport, item.mode, item.size);
+			   reason != "" {
 				support.fail(&g, reason)
 			}
 			cells += 1
@@ -95,7 +141,11 @@ run_stream :: proc() {
 	fmt.println(cells, "stream cells passed")
 }
 
-stream_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: string, size: int) -> string {
+stream_cell :: proc(
+	g: ^support.Gate,
+	peer_bin, fixture_bin, transport, mode: string,
+	size: int,
+) -> string {
 	support.note(g, fmt.tprintf("%s %s", transport, mode))
 	dir := support.path(g, fmt.tprintf("%s-%s", transport, mode))
 	defer delete(dir)
@@ -129,7 +179,9 @@ stream_cell :: proc(g: ^support.Gate, peer_bin, fixture_bin, transport, mode: st
 	if !fix_started {
 		return "fixture start"
 	}
-	long := (strings.has_prefix(mode, "gzip") && size >= 4 << 20 && mode != "gzip-amplification") || (mode == "fragmented" && transport == "tls")
+	long :=
+		(strings.has_prefix(mode, "gzip") && size >= 4 << 20 && mode != "gzip-amplification") ||
+		(mode == "fragmented" && transport == "tls")
 	limit := 25 * time.Second
 	if long {
 		limit = 40 * time.Second
@@ -160,10 +212,14 @@ validate :: proc(mode: string, size: int, encrypted: bool, native, peer: json.Va
 		return "case"
 	}
 	if encrypted {
-		if !support.is_true(native, "tls") || !support.is_true(peer, "tls") || !support.eq_string(peer, "alpn", "http/1.1") {
+		if !support.is_true(native, "tls") ||
+		   !support.is_true(peer, "tls") ||
+		   !support.eq_string(peer, "alpn", "http/1.1") {
 			return "transport"
 		}
-	} else if !support.is_false(native, "tls") || !support.is_false(peer, "tls") || !support.eq_string(peer, "alpn", "") {
+	} else if !support.is_false(native, "tls") ||
+	   !support.is_false(peer, "tls") ||
+	   !support.eq_string(peer, "alpn", "") {
 		return "transport"
 	}
 	if !support.is_true(native, "heap_zero") || !support.is_true(native, "fd_zero") {
@@ -187,7 +243,8 @@ validate :: proc(mode: string, size: int, encrypted: bool, native, peer: json.Va
 		return "error kind"
 	}
 	if mode == "upload-empty" || mode == "upload-oversize" || mode == "upload-overrun" {
-		if !support.is_true(native, "occupied_preserved") || !support.gt_int(native, "source_rejected", 0) {
+		if !support.is_true(native, "occupied_preserved") ||
+		   !support.gt_int(native, "source_rejected", 0) {
 			return "rejected upload"
 		}
 	}
@@ -197,14 +254,17 @@ validate :: proc(mode: string, size: int, encrypted: bool, native, peer: json.Va
 		}
 		return validate_error(mode, size, native, peer)
 	}
-	if !support.is_true(native, "ended") || kind != "" || !support.is_true(native, "head_received") {
+	if !support.is_true(native, "ended") ||
+	   kind != "" ||
+	   !support.is_true(native, "head_received") {
 		return "terminal"
 	}
 	if mode == "buffered-gzip" {
 		if !support.eq_string(peer, "accept_encoding", "identity") {
 			return "buffered identity"
 		}
-		if !same_int(native, "bytes", peer, "wire_body_bytes") || !same_string(native, "sha256", peer, "body_sha256") {
+		if !same_int(native, "bytes", peer, "wire_body_bytes") ||
+		   !same_string(native, "sha256", peer, "body_sha256") {
 			return "buffered body"
 		}
 	} else if mode == "head-gzip" || mode == "no-content-gzip" || mode == "not-modified-gzip" {
@@ -214,7 +274,9 @@ validate :: proc(mode: string, size: int, encrypted: bool, native, peer: json.Va
 		} else if mode == "not-modified-gzip" {
 			status = 304
 		}
-		if !support.eq_int(native, "status", status) || !support.eq_int(native, "bytes", 0) || !support.eq_int(native, "chunks", 0) {
+		if !support.eq_int(native, "status", status) ||
+		   !support.eq_int(native, "bytes", 0) ||
+		   !support.eq_int(native, "chunks", 0) {
 			return "bodyless"
 		}
 		if !support.eq_int(native, "wire_content_length", size) {
@@ -228,7 +290,9 @@ validate :: proc(mode: string, size: int, encrypted: bool, native, peer: json.Va
 		if !support.eq_int(native, "bytes", 2) || !support.eq_int(native, "status", 200) {
 			return "redirect"
 		}
-		if !support.eq_int(peer, "requests", 2) || !support.is_true(peer, "intermediate_sent") || !support.is_true(native, "intermediate_hidden") {
+		if !support.eq_int(peer, "requests", 2) ||
+		   !support.is_true(peer, "intermediate_sent") ||
+		   !support.is_true(native, "intermediate_hidden") {
 			return "redirect hops"
 		}
 		if !same_string(native, "sha256", peer, "body_sha256") {
@@ -238,17 +302,20 @@ validate :: proc(mode: string, size: int, encrypted: bool, native, peer: json.Va
 			return "authorization"
 		}
 	} else {
-		if !support.eq_int(native, "bytes", size) || !same_string(native, "sha256", peer, "body_sha256") {
+		if !support.eq_int(native, "bytes", size) ||
+		   !same_string(native, "sha256", peer, "body_sha256") {
 			return "body"
 		}
 		if mode == "known" || mode == "chunked" || mode == "eof" {
-			if !support.is_true(peer, "first_chunk_barrier") || !support.is_true(native, "first_chunk_barrier") {
+			if !support.is_true(peer, "first_chunk_barrier") ||
+			   !support.is_true(native, "first_chunk_barrier") {
 				return "barrier"
 			}
 		}
 	}
 	if mode == "credit" {
-		if !support.is_true(native, "chunk_credit_held") || !support.is_true(native, "credit_reopened") {
+		if !support.is_true(native, "chunk_credit_held") ||
+		   !support.is_true(native, "credit_reopened") {
 			return "credit"
 		}
 	}
@@ -263,7 +330,8 @@ validate :: proc(mode: string, size: int, encrypted: bool, native, peer: json.Va
 
 validate_error :: proc(mode: string, size: int, native, peer: json.Value) -> string {
 	if detail, decoded := decoder_detail(mode); decoded {
-		if !support.eq_string(native, "http_kind", "Content_Decoding_Failed") || !support.eq_string(native, "decoding", detail) {
+		if !support.eq_string(native, "http_kind", "Content_Decoding_Failed") ||
+		   !support.eq_string(native, "decoding", detail) {
 			return "decoder"
 		}
 	}
@@ -296,7 +364,8 @@ validate_error :: proc(mode: string, size: int, native, peer: json.Value) -> str
 		}
 	}
 	if mode == "upload-overrun" {
-		if !support.eq_string(native, "http_kind", "Invalid_Config") || !support.eq_string(native, "phase", "Write") {
+		if !support.eq_string(native, "http_kind", "Invalid_Config") ||
+		   !support.eq_string(native, "phase", "Write") {
 			return "overrun"
 		}
 		if !support.is_false(peer, "upload_complete") {
@@ -304,7 +373,8 @@ validate_error :: proc(mode: string, size: int, native, peer: json.Value) -> str
 		}
 	}
 	if mode == "upload-source-error" || mode == "upload-source-error-blocked" {
-		if !support.eq_string(native, "source_io", "Unexpected_EOF") || !support.eq_string(native, "phase", "Write") {
+		if !support.eq_string(native, "source_io", "Unexpected_EOF") ||
+		   !support.eq_string(native, "phase", "Write") {
 			return "source error"
 		}
 	}
@@ -313,15 +383,26 @@ validate_error :: proc(mode: string, size: int, native, peer: json.Value) -> str
 		blocked, blocked_ok := support.i64_field(native, "upload_blocked_after_bytes")
 		done, done_ok := support.i64_field(native, "source_error_completed_ns")
 		uploaded, uploaded_ok := support.i64_field(peer, "upload_bytes")
-		if !stall_ok || stall < 100_000_000 || !blocked_ok || blocked <= 0 || !done_ok || done <= 0 || done >= 2_000_000_000 {
+		if !stall_ok ||
+		   stall < 100_000_000 ||
+		   !blocked_ok ||
+		   blocked <= 0 ||
+		   !done_ok ||
+		   done <= 0 ||
+		   done >= 2_000_000_000 {
 			return "upload stall"
 		}
-		if !uploaded_ok || uploaded >= i64(size) || !support.eq_int(peer, "requests", 1) || !support.is_false(native, "head_received") {
+		if !uploaded_ok ||
+		   uploaded >= i64(size) ||
+		   !support.eq_int(peer, "requests", 1) ||
+		   !support.is_false(native, "head_received") {
 			return "upload stall"
 		}
 	}
 	if mode == "fairness" {
-		if !support.is_true(native, "cheap_before_release") || !support.is_true(peer, "cheap_before_release") || !support.eq_int(peer, "requests", 2) {
+		if !support.is_true(native, "cheap_before_release") ||
+		   !support.is_true(peer, "cheap_before_release") ||
+		   !support.eq_int(peer, "requests", 2) {
 			return "fairness"
 		}
 	}
@@ -333,10 +414,13 @@ validate_error :: proc(mode: string, size: int, native, peer: json.Value) -> str
 			point = 1
 		}
 		sizes, sizes_ok := support.array_field(native, "allocation_sizes")
-		if !support.eq_string(native, "http_kind", "Allocation_Failed") || !support.eq_int(native, "allocation_hits", 1) {
+		if !support.eq_string(native, "http_kind", "Allocation_Failed") ||
+		   !support.eq_int(native, "allocation_hits", 1) {
 			return "allocation"
 		}
-		if !support.is_false(native, "head_received") || !support.eq_int(native, "bytes", 0) || !support.eq_int(native, "allocation_calls", point) {
+		if !support.is_false(native, "head_received") ||
+		   !support.eq_int(native, "bytes", 0) ||
+		   !support.eq_int(native, "allocation_calls", point) {
 			return "allocation"
 		}
 		if !sizes_ok || point - 1 >= len(sizes) {
@@ -355,12 +439,14 @@ validate_error :: proc(mode: string, size: int, native, peer: json.Value) -> str
 		}
 	}
 	if strings.has_prefix(mode, "coding-") {
-		if !support.eq_string(native, "http_kind", "Unsupported_Content_Encoding") || !support.is_false(native, "head_received") {
+		if !support.eq_string(native, "http_kind", "Unsupported_Content_Encoding") ||
+		   !support.is_false(native, "head_received") {
 			return "coding"
 		}
 	}
 	if mode == "redirect-cross-auth" {
-		if !support.eq_string(native, "http_kind", "Unsafe_Redirect") || !support.eq_int(native, "status", 302) {
+		if !support.eq_string(native, "http_kind", "Unsafe_Redirect") ||
+		   !support.eq_int(native, "status", 302) {
 			return "unsafe redirect"
 		}
 		if !support.eq_int(peer, "requests", 1) || !support.is_true(peer, "authorization_gone") {
@@ -373,7 +459,8 @@ validate_error :: proc(mode: string, size: int, native, peer: json.Value) -> str
 		}
 	}
 	if mode == "gzip-decoded-limit" || mode == "gzip-amplification" {
-		if !support.eq_string(native, "http_kind", "Body_Oversized") || !support.eq_string(native, "phase", "Body_Limit") {
+		if !support.eq_string(native, "http_kind", "Body_Oversized") ||
+		   !support.eq_string(native, "phase", "Body_Limit") {
 			return "decoded limit"
 		}
 	}
@@ -407,7 +494,10 @@ validate_upload :: proc(mode: string, size: int, native, peer: json.Value) -> st
 	}
 	if strings.has_prefix(mode, "early-final") {
 		uploaded, uploaded_ok := support.i64_field(peer, "upload_bytes")
-		if !support.is_true(peer, "early_final") || !uploaded_ok || uploaded >= i64(size) || !support.eq_int(native, "status", 413) {
+		if !support.is_true(peer, "early_final") ||
+		   !uploaded_ok ||
+		   uploaded >= i64(size) ||
+		   !support.eq_int(native, "status", 413) {
 			return "early final"
 		}
 		if mode == "early-final-blocked" {
@@ -418,7 +508,8 @@ validate_upload :: proc(mode: string, size: int, native, peer: json.Value) -> st
 			}
 		}
 	} else {
-		if !support.is_true(peer, "upload_complete") || !support.eq_int(peer, "upload_bytes", size) {
+		if !support.is_true(peer, "upload_complete") ||
+		   !support.eq_int(peer, "upload_bytes", size) {
 			return "upload bytes"
 		}
 		if !support.gt_int(native, "source_accepted", 0) {
@@ -426,7 +517,8 @@ validate_upload :: proc(mode: string, size: int, native, peer: json.Value) -> st
 		}
 	}
 	if mode == "upload-backing" {
-		if !support.is_true(native, "credit_preserved") || !support.gt_int(native, "source_rejected", 0) {
+		if !support.is_true(native, "credit_preserved") ||
+		   !support.gt_int(native, "source_rejected", 0) {
 			return "upload backing"
 		}
 	}
@@ -435,16 +527,45 @@ validate_upload :: proc(mode: string, size: int, native, peer: json.Value) -> st
 
 is_error :: proc(mode: string) -> bool {
 	switch mode {
-	case "short-length", "buffered-short", "chunk-invalid-size", "chunk-invalid-crlf", "chunk-truncated",
-	     "allocation-engine", "allocation-head-fields",
-	     "chunk-missing-terminal", "chunk-trailer-invalid", "conflicting-framing",
-	     "timeout", "cancel", "upload-short", "upload-source-error", "upload-cancel", "upload-overrun",
-	     "upload-source-error-blocked", "fairness",
-	     "gzip-fhcrc-invalid", "gzip-crc", "gzip-crc-held", "gzip-size", "gzip-truncated", "gzip-trailing",
-	     "gzip-members", "gzip-encoded-limit", "gzip-decoded-limit", "gzip-amplification",
-	     "encoded-limit", "decoded-limit", "redirect-loop", "redirect-malformed",
-	     "coding-unsupported", "coding-chain", "coding-repeated",
-	     "redirect-gzip-invalid", "redirect-deadline", "redirect-downgrade", "redirect-cross-auth":
+	case "short-length",
+	     "buffered-short",
+	     "chunk-invalid-size",
+	     "chunk-invalid-crlf",
+	     "chunk-truncated",
+	     "allocation-engine",
+	     "allocation-head-fields",
+	     "chunk-missing-terminal",
+	     "chunk-trailer-invalid",
+	     "conflicting-framing",
+	     "timeout",
+	     "cancel",
+	     "upload-short",
+	     "upload-source-error",
+	     "upload-cancel",
+	     "upload-overrun",
+	     "upload-source-error-blocked",
+	     "fairness",
+	     "gzip-fhcrc-invalid",
+	     "gzip-crc",
+	     "gzip-crc-held",
+	     "gzip-size",
+	     "gzip-truncated",
+	     "gzip-trailing",
+	     "gzip-members",
+	     "gzip-encoded-limit",
+	     "gzip-decoded-limit",
+	     "gzip-amplification",
+	     "encoded-limit",
+	     "decoded-limit",
+	     "redirect-loop",
+	     "redirect-malformed",
+	     "coding-unsupported",
+	     "coding-chain",
+	     "coding-repeated",
+	     "redirect-gzip-invalid",
+	     "redirect-deadline",
+	     "redirect-downgrade",
+	     "redirect-cross-auth":
 		return true
 	}
 	return false
@@ -471,13 +592,23 @@ at_most :: proc(value: json.Value, key: string, limit: int) -> bool {
 	return ok && got <= limit
 }
 
-same_int :: proc(left: json.Value, left_key: string, right: json.Value, right_key: string) -> bool {
+same_int :: proc(
+	left: json.Value,
+	left_key: string,
+	right: json.Value,
+	right_key: string,
+) -> bool {
 	a, a_ok := support.i64_field(left, left_key)
 	b, b_ok := support.i64_field(right, right_key)
 	return a_ok && b_ok && a == b
 }
 
-same_string :: proc(left: json.Value, left_key: string, right: json.Value, right_key: string) -> bool {
+same_string :: proc(
+	left: json.Value,
+	left_key: string,
+	right: json.Value,
+	right_key: string,
+) -> bool {
 	a, a_ok := support.string_field(left, left_key)
 	b, b_ok := support.string_field(right, right_key)
 	return a_ok && b_ok && a == b

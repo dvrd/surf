@@ -25,3 +25,5 @@ plans/
 *.sqlite-journal
 *.db
 *.db-*
+
+test

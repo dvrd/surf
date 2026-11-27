@@ -96,7 +96,9 @@ concurrency_cell :: proc(peer_bin, fixture_bin, root, transport, mode: string) {
 		append(&command, "-tls")
 	}
 	start_error: os.Error
-	s.peer, start_error = os.process_start({command = command[:], stdout = s.out_w, stderr = s.err_w})
+	s.peer, start_error = os.process_start(
+		{command = command[:], stdout = s.out_w, stderr = s.err_w},
+	)
 	close_file(&s.out_w)
 	close_file(&s.err_w)
 	if start_error != nil {
@@ -106,7 +108,14 @@ concurrency_cell :: proc(peer_bin, fixture_bin, root, transport, mode: string) {
 	s.peer_out.file = s.out_r
 	s.peer_err.file = s.err_r
 	endpoint_buf: [128]u8
-	endpoint_n := wait_line(s.peer, &s.peer_out, &s.peer_err, &s.peer_live, endpoint_buf[:], 10 * time.Second)
+	endpoint_n := wait_line(
+		s.peer,
+		&s.peer_out,
+		&s.peer_err,
+		&s.peer_live,
+		endpoint_buf[:],
+		10 * time.Second,
+	)
 	if endpoint_n <= 0 {
 		concurrency_session_abort(&s, "readiness")
 	}
@@ -126,7 +135,9 @@ concurrency_cell :: proc(peer_bin, fixture_bin, root, transport, mode: string) {
 	fixture_command := make([dynamic]string)
 	defer delete(fixture_command)
 	append(&fixture_command, fixture_bin, endpoint, mode, transport, dir)
-	s.fixture, start_error = os.process_start({command = fixture_command[:], stdout = s.fix_w, stderr = s.fix_err_w})
+	s.fixture, start_error = os.process_start(
+		{command = fixture_command[:], stdout = s.fix_w, stderr = s.fix_err_w},
+	)
 	close_file(&s.fix_w)
 	close_file(&s.fix_err_w)
 	if start_error != nil {
@@ -135,11 +146,23 @@ concurrency_cell :: proc(peer_bin, fixture_bin, root, transport, mode: string) {
 	s.fixture_live = true
 	s.fixture_out.file = s.fix_r
 	s.fixture_err.file = s.fix_err_r
-	fixture_state, fixture_ok := wait_proc(s.fixture, &s.fixture_out, &s.fixture_err, &s.fixture_live, 30 * time.Second)
+	fixture_state, fixture_ok := wait_proc(
+		s.fixture,
+		&s.fixture_out,
+		&s.fixture_err,
+		&s.fixture_live,
+		30 * time.Second,
+	)
 	if !fixture_ok || fixture_state.exit_code != 0 {
 		concurrency_session_abort(&s, "fixture")
 	}
-	peer_state, peer_ok := wait_proc(s.peer, &s.peer_out, &s.peer_err, &s.peer_live, 10 * time.Second)
+	peer_state, peer_ok := wait_proc(
+		s.peer,
+		&s.peer_out,
+		&s.peer_err,
+		&s.peer_live,
+		10 * time.Second,
+	)
 	if !peer_ok || peer_state.exit_code != 0 {
 		concurrency_session_abort(&s, "peer")
 	}
@@ -162,20 +185,20 @@ Native_Record :: struct {
 }
 
 Native :: struct {
-	mode:                         string,
-	tls:                          bool,
-	workers:                      int,
-	producer_threads:             int,
-	consumer_threads:             int,
-	accepted:                     int,
-	completed:                    int,
-	admission_rejections:         int,
-	runtime_gone_before_results:  bool,
-	late_response:                bool,
-	heap_zero:                    bool,
-	scope_zero:                   bool,
-	fd_zero:                      bool,
-	records:                      [dynamic]Native_Record,
+	mode:                        string,
+	tls:                         bool,
+	workers:                     int,
+	producer_threads:            int,
+	consumer_threads:            int,
+	accepted:                    int,
+	completed:                   int,
+	admission_rejections:        int,
+	runtime_gone_before_results: bool,
+	late_response:               bool,
+	heap_zero:                   bool,
+	scope_zero:                  bool,
+	fd_zero:                     bool,
+	records:                     [dynamic]Native_Record,
 }
 
 concurrency_Wire :: struct {
@@ -207,7 +230,10 @@ concurrency_check :: proc(native_doc, oracle_doc: string, encrypted: bool, mode:
 		fail("peer json")
 	}
 	defer release_oracle(&oracle)
-	if native.mode != mode || oracle.mode != mode || native.tls != encrypted || oracle.tls != encrypted {
+	if native.mode != mode ||
+	   oracle.mode != mode ||
+	   native.tls != encrypted ||
+	   oracle.tls != encrypted {
 		fail("identity")
 	}
 	if native.workers != 1 || native.producer_threads != 4 || native.consumer_threads != 2 {
@@ -257,7 +283,10 @@ concurrency_check :: proc(native_doc, oracle_doc: string, encrypted: bool, mode:
 		}
 	}
 	if mode == "success" {
-		if len(native.records) != 64 || len(oracle.requests) != 64 || native.runtime_gone_before_results || !native.late_response {
+		if len(native.records) != 64 ||
+		   len(oracle.requests) != 64 ||
+		   native.runtime_gone_before_results ||
+		   !native.late_response {
 			fail("success set")
 		}
 		for rec in native.records {
@@ -268,7 +297,11 @@ concurrency_check :: proc(native_doc, oracle_doc: string, encrypted: bool, mode:
 		}
 		return
 	}
-	if mode != "shutdown" || len(native.records) < 1 || len(native.records) > 8 || len(oracle.requests) < 1 || !native.runtime_gone_before_results {
+	if mode != "shutdown" ||
+	   len(native.records) < 1 ||
+	   len(native.records) > 8 ||
+	   len(oracle.requests) < 1 ||
+	   !native.runtime_gone_before_results {
 		fail("shutdown")
 	}
 }

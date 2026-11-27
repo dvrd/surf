@@ -39,7 +39,11 @@ refuse_other :: proc(_: string, addresses: []net.Endpoint, _: rawptr) -> bool {
 	return true
 }
 
-wait_completion :: proc(c: ^surf.Client, want: surf.Request_Handle, started: time.Tick) -> surf.Completion {
+wait_completion :: proc(
+	c: ^surf.Client,
+	want: surf.Request_Handle,
+	started: time.Tick,
+) -> surf.Completion {
 	for {
 		result, available := surf.client_poll(c)
 
@@ -74,7 +78,10 @@ main :: proc() {
 
 	fd_before := fd_count()
 	r: async.Runtime
-	assert(async.init(&r, {workers = 1, task_capacity = 4, io_capacity = 64, allocator = allocator}).kind == .None)
+	assert(
+		async.init(&r, {workers = 1, task_capacity = 4, io_capacity = 64, allocator = allocator}).kind ==
+		.None,
+	)
 	c: surf.Client
 	config := surf.Client_Config {
 		http = {allow_http = true, timeout = 2 * time.Second, max_redirects = 5, scope = scope},
@@ -193,7 +200,11 @@ main :: proc() {
 		cutoff = time.tick_add(time.tick_now(), 200 * time.Millisecond)
 	}
 
-	handle, error := surf.client_submit(&c, {method = method, url = url, headers = fields[:], body = body}, cutoff)
+	handle, error := surf.client_submit(
+		&c,
+		{method = method, url = url, headers = fields[:], body = body},
+		cutoff,
+	)
 	assert(error.kind == .None)
 	started := time.tick_now()
 
@@ -337,7 +348,11 @@ main :: proc() {
 	state, e := budget.snapshot(scope)
 	assert(e == .None && state.used == (budget.Usage{}))
 	budget.release_scope(&scope)
-	assert(track.current_memory_allocated == 0 && len(track.allocation_map) == 0 && len(track.bad_free_array) == 0)
+	assert(
+		track.current_memory_allocated == 0 &&
+		len(track.allocation_map) == 0 &&
+		len(track.bad_free_array) == 0,
+	)
 	mem.tracking_allocator_destroy(&track)
 	assert(os.write_entire_file(fmt.tprintf("%s/done", dir), "done") == nil)
 	fmt.print("{")

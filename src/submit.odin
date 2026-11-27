@@ -218,7 +218,11 @@ client_execute_upload :: proc(
 	}
 
 	// Config.scope charges the Response the caller keeps, as execute does.
-	ctx, call_allocator, admission := budget_begin(s.config.scope, s.config.allocator_scope, allocator)
+	ctx, call_allocator, admission := budget_begin(
+		s.config.scope,
+		s.config.allocator_scope,
+		allocator,
+	)
 	if admission.kind != .None {
 		admission.status, admission.write_effect = response.status, .Response_Received
 		response_destroy(&response)
@@ -392,7 +396,12 @@ execute_once :: proc(
 		upload  = upload,
 	}
 	worker := thread.create_and_start_with_poly_data(&job, proc(job: ^Execute_Job) {
-		job.response, job.error = execute_run(job.request, job.config, job.upload, runtime.heap_allocator())
+		job.response, job.error = execute_run(
+			job.request,
+			job.config,
+			job.upload,
+			runtime.heap_allocator(),
+		)
 	})
 
 	if worker == nil {
@@ -423,7 +432,8 @@ execute_run :: proc(
 ) {
 	r: async.Runtime
 
-	if error := async.init(&r, {workers = 1, task_capacity = 8, io_capacity = 256}); error.kind != .None {
+	if error := async.init(&r, {workers = 1, task_capacity = 8, io_capacity = 256});
+	   error.kind != .None {
 		return {}, {kind = .IO_Failed, phase = .Configuration, write_effect = .Not_Sent}
 	}
 	defer async.destroy(&r)
@@ -438,8 +448,12 @@ execute_run :: proc(
 		websockets             = 1,
 	}
 
-	if error := client_init(&c, &r, {http = config, capacities = capacities}, runtime.heap_allocator());
-	   error.kind != .None {
+	if error := client_init(
+		&c,
+		&r,
+		{http = config, capacities = capacities},
+		runtime.heap_allocator(),
+	); error.kind != .None {
 		return {}, client_error_http(error)
 	}
 
@@ -449,7 +463,8 @@ execute_run :: proc(
 	options: Submit_Options
 
 	if upload != nil {
-		options.upload, options.upload_length, options.source = .Source, upload.content_length, upload
+		options.upload, options.upload_length, options.source =
+			.Source, upload.content_length, upload
 	}
 
 	handle, submitted := submit(&c, request, {}, options)
@@ -532,7 +547,10 @@ submit :: proc(
 	if deadline == {} {
 		slot.deadline = async.deadline_after(s.runtime, effective_timeout(s.config))
 	} else {
-		slot.deadline = async.deadline_after(s.runtime, max(time.tick_diff(time.tick_now(), deadline), 0))
+		slot.deadline = async.deadline_after(
+			s.runtime,
+			max(time.tick_diff(time.tick_now(), deadline), 0),
+		)
 	}
 
 	slot.phase = .Pending
@@ -582,7 +600,8 @@ request_validate :: proc(config: Config, request: Request, options: Submit_Optio
 			return refuse(.Invalid_Config)
 		}
 
-		if options.upload_length > 0 && !async.http_request_body_allowed(method_async(request.method)) {
+		if options.upload_length > 0 &&
+		   !async.http_request_body_allowed(method_async(request.method)) {
 			return refuse(.Invalid_Method)
 		}
 	}
@@ -591,7 +610,12 @@ request_validate :: proc(config: Config, request: Request, options: Submit_Optio
 }
 
 // Copies request into the slot.
-slot_fill :: proc(s: ^Client_State, slot: ^Slot, request: Request, options: Submit_Options) -> Client_Error {
+slot_fill :: proc(
+	s: ^Client_State,
+	slot: ^Slot,
+	request: Request,
+	options: Submit_Options,
+) -> Client_Error {
 	size := len(request.url) + len(request.body)
 
 	for h in request.headers {
@@ -624,7 +648,10 @@ slot_fill :: proc(s: ^Client_State, slot: ^Slot, request: Request, options: Subm
 		value := storage[at:][:len(h.value)]
 		copy(value, h.value)
 		at += len(h.value)
-		slot.headers[i] = {name = string(name), value = string(value)}
+		slot.headers[i] = {
+			name  = string(name),
+			value = string(value),
+		}
 	}
 
 	slot.method = method_async(request.method)
