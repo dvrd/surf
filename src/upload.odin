@@ -15,14 +15,14 @@ Upload_Source :: struct {
 }
 
 
-upload_validate :: proc(request: async.Http_Request, source: Upload_Source) -> HTTP_Error {
+upload_validate :: proc(request: Request, source: Upload_Source) -> HTTP_Error {
 	if source.content_length < 0 ||
 	   (source.content_length > 0 && source.stream.procedure == nil) ||
 	   len(request.body) != 0 {
 		return {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent}
 	}
 
-	if source.content_length > 0 && !async.http_request_body_allowed(request.method) {
+	if source.content_length > 0 && !async.http_request_body_allowed(method_async(request.method)) {
 		return {kind = .Invalid_Method, phase = .Configuration, write_effect = .Not_Sent}
 	}
 

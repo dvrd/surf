@@ -65,13 +65,13 @@ main :: proc() {
 	allocator := mem.tracking_allocator(&track)
 	scope, cause := budget.create_root({bytes = 32 << 20, streams = 2, jobs = 8}, allocator)
 	assert(cause == .None)
-	roots: tls.Root_Pool
+	roots: surf.Trust_Roots
 
 	if encrypted {
 		path := fmt.tprintf("%s/root.pem", dir)
 		root, error := os.read_entire_file(path, allocator)
 		assert(error == nil)
-		assert(tls.root_pool_parse(&roots, root, allocator) == nil)
+		assert(surf.trust_roots_parse(&roots, root, allocator) == .None)
 		delete(root, allocator)
 	}
 
@@ -100,8 +100,8 @@ main :: proc() {
 	url := fmt.bprintf(url_storage[:], "%s://127.0.0.1:%d/A", scheme, endpoint.port)
 	body := [11]u8{'c', 'o', 'p', 'i', 'e', 'd', '-', 'b', 'o', 'd', 'y'}
 	value := [8]u8{'o', 'r', 'i', 'g', 'i', 'n', 'a', 'l'}
-	fields := [1]async.Http_Header{{name = "X-Copy", value = string(value[:])}}
-	cutoff := async.deadline_after(&runtime, 600 * time.Millisecond)
+	fields := [1]surf.Header{{name = "X-Copy", value = string(value[:])}}
+	cutoff := time.tick_add(time.tick_now(), 600 * time.Millisecond)
 	handle, error := surf.client_submit(&c, {method = .POST, url = url, headers = fields[:], body = body[:]}, cutoff)
 	assert(error.kind == .None)
 	// No runtime worker can have written the source before this overwrite. The
@@ -137,7 +137,7 @@ main :: proc() {
 	assert(surf.client_release(&c, handle).kind == .Invalid_Handle)
 	assert(os.write_entire_file(fmt.tprintf("%s/A.done", dir), "done") == nil)
 
-	for async.deadline_after(&runtime, 0).at <= cutoff.at + 20 * i64(time.Millisecond) {
+	for time.tick_diff(cutoff, time.tick_now()) <= 20 * time.Millisecond {
 		time.sleep(time.Millisecond)
 	}
 
@@ -170,7 +170,7 @@ main :: proc() {
 	async.shutdown(&runtime)
 	assert(async.join(&runtime).kind == .None)
 	assert(async.destroy(&runtime).kind == .None)
-	tls.root_pool_destroy(&roots)
+	surf.trust_roots_destroy(&roots)
 	assert(fd_count() == fd_before)
 	retained, error_scope := budget.snapshot(scope)
 	assert(error_scope == .None && retained.used.streams == 0)
@@ -229,12 +229,12 @@ run_progress :: proc(endpoint: net.Endpoint, encrypted: bool, dir: string) {
 	allocator := mem.tracking_allocator(&track)
 	scope, cause := budget.create_root({bytes = 32 << 20, streams = 4, jobs = 16}, allocator)
 	assert(cause == .None)
-	roots: tls.Root_Pool
+	roots: surf.Trust_Roots
 
 	if encrypted {
 		root, error := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
 		assert(error == nil)
-		assert(tls.root_pool_parse(&roots, root, allocator) == nil)
+		assert(surf.trust_roots_parse(&roots, root, allocator) == .None)
 		delete(root, allocator)
 	}
 
@@ -276,7 +276,7 @@ run_progress :: proc(endpoint: net.Endpoint, encrypted: bool, dir: string) {
 	}
 
 	// The held exchange owns the origin's one connection: these two wait for it.
-	expiry := async.deadline_after(&runtime, 300 * time.Millisecond)
+	expiry := time.tick_add(time.tick_now(), 300 * time.Millisecond)
 	expired_url := fmt.tprintf("%s://127.0.0.1:%d/expired", scheme, endpoint.port)
 	expired, error_expired := surf.client_submit(&c, {method = .GET, url = expired_url}, expiry)
 	assert(error_expired.kind == .None)
@@ -333,7 +333,7 @@ run_progress :: proc(endpoint: net.Endpoint, encrypted: bool, dir: string) {
 	async.shutdown(&runtime)
 	assert(async.join(&runtime).kind == .None)
 	assert(async.destroy(&runtime).kind == .None)
-	tls.root_pool_destroy(&roots)
+	surf.trust_roots_destroy(&roots)
 	assert(fd_count() == fd_before)
 	state, _ := budget.snapshot(scope)
 	assert(state.used == (budget.Usage{}))

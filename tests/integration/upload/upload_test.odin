@@ -367,7 +367,7 @@ upload_wait :: proc(c: ^surf.Client, handle: surf.Request_Handle, limit: time.Du
 }
 
 upload_push :: proc(t: ^testing.T, c: ^surf.Client, handle: surf.Request_Handle, data: []u8) {
-	chunk, copied := async.owned_copy_bounded(data, len(data))
+	chunk, copied := surf.body_chunk_copy(data, len(data))
 	assert(copied.kind == .None)
 	status, pushed := surf.client_upload_submit(c, handle, &chunk)
 	testing.expect_value(t, pushed.kind, .None)
@@ -396,7 +396,7 @@ upload_expired_deadline_is_not_sent :: proc(t: ^testing.T) {
 		&u.client,
 		{method = .POST, url = upload_url(&peer, "/")},
 		{upload_length = 1},
-		async.deadline_after(&u.r, 0),
+		time.tick_now(),
 	)
 
 	if !testing.expect_value(t, submitted.kind, .None) {
@@ -441,7 +441,7 @@ upload_deadline_bounds_the_wait_for_chunks :: proc(t: ^testing.T) {
 		&u.client,
 		{method = .POST, url = upload_url(&peer, "/")},
 		{upload_length = 1},
-		async.deadline_after(&u.r, 300 * time.Millisecond),
+		time.tick_add(time.tick_now(), 300 * time.Millisecond),
 	)
 
 	if !testing.expect_value(t, submitted.kind, .None) {

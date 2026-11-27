@@ -164,7 +164,7 @@ websocket_open_rejects_bad_requests_synchronously :: proc(t: ^testing.T) {
 	testing.expect_value(t, client_websocket_read(&c, stale, &read_op, buffer[:]).kind, .Invalid_Handle)
 
 	// The listener never accepts, so the upgrade stays in flight.
-	handle, opened := client_websocket_open(&c, url, {ping_interval = async.WS_PING_OFF}, &op)
+	handle, opened := client_websocket_open(&c, url, {ping_interval = WEBSOCKET_PING_OFF}, &op)
 	testing.expect_value(t, opened.kind, .None)
 	if opened.kind != .None {
 		return
@@ -189,7 +189,7 @@ websocket_open_rejects_bad_requests_synchronously :: proc(t: ^testing.T) {
 	}
 
 	testing.expect_value(t, op.kind, WebSocket_Op_Kind.Open)
-	testing.expect_value(t, op.error.error.kind, async.Error_Kind.Cancelled)
+	testing.expect_value(t, op.error.kind, WebSocket_Error_Kind.Cancelled)
 	testing.expect_value(t, client_websocket_read(&c, handle, &read_op, buffer[:]).kind, .Closed)
 	testing.expect_value(t, client_websocket_release(&c, handle).kind, .None)
 	testing.expect_value(t, client_websocket_release(&c, handle).kind, .Invalid_Handle)
@@ -294,12 +294,12 @@ websocket_tls_loopback_by_address_and_by_name :: proc(t: ^testing.T) {
 		return
 	}
 
-	pool := new(async.Root_Pool)
+	pool := new(Trust_Roots)
 	defer free(pool)
-	defer async.root_pool_destroy(pool)
-	load_error := async.root_pool_load_file(pool, "tests/support/credentials/root.pem")
-	testing.expect(t, load_error == nil)
-	if load_error != nil {
+	defer trust_roots_destroy(pool)
+	load_error := trust_roots_load_file(pool, "tests/support/credentials/root.pem")
+	testing.expect(t, load_error == .None)
+	if load_error != .None {
 		return
 	}
 
@@ -521,7 +521,7 @@ ws_expect_case :: proc(t: ^testing.T, h: ^Ws_Test, mode: Ws_Peer_Mode) {
 		testing.expect(t, h.read_ok && h.read_is_text && h.write_ok)
 		testing.expect_value(t, h.write_n, len("hello-from-client"))
 		testing.expect(t, h.clean && h.saw_close == 1)
-		testing.expect_value(t, h.close_error.error.kind, async.Error_Kind.None)
+		testing.expect_value(t, h.close_error.kind, WebSocket_Error_Kind.None)
 		testing.expect_value(t, h.cancel_close, Client_Error_Kind.Invalid_State)
 		testing.expect_value(t, string(h.subprotocol[:h.subprotocol_n]), "chat")
 	case .Queue:
@@ -531,53 +531,53 @@ ws_expect_case :: proc(t: ^testing.T, h: ^Ws_Test, mode: Ws_Peer_Mode) {
 		testing.expect_value(t, h.reject_utf8, Client_Error_Kind.Invalid_Config)
 		testing.expect_value(t, h.reject_size, Client_Error_Kind.Invalid_Config)
 		testing.expect_value(t, h.write_count, 2)
-		testing.expect_value(t, h.write_errors[0].error.kind, async.Error_Kind.None)
-		testing.expect_value(t, h.write_errors[1].error.kind, async.Error_Kind.None)
+		testing.expect_value(t, h.write_errors[0].kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, h.write_errors[1].kind, WebSocket_Error_Kind.None)
 		testing.expect_value(t, h.write_ns[0], 6)
 		testing.expect_value(t, h.write_ns[1], 1)
 		testing.expect_value(t, h.peer.texts, 2)
-		testing.expect_value(t, h.read_error.error.kind, async.Error_Kind.Closed)
+		testing.expect_value(t, h.read_error.kind, WebSocket_Error_Kind.Closed)
 		testing.expect_value(t, h.read_error.close.peer_code, 1000)
 		testing.expect(t, h.clean)
-		testing.expect_value(t, h.close_error.error.kind, async.Error_Kind.None)
+		testing.expect_value(t, h.close_error.kind, WebSocket_Error_Kind.None)
 		testing.expect_value(t, string(h.subprotocol[:h.subprotocol_n]), "chat")
 	case .Bad_Accept:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect(t, h.open_error.error.kind != .None)
-		testing.expect_value(t, h.open_error.upgrade.upgrade, .Invalid_Accept)
+		testing.expect(t, h.open_error.kind != .None)
+		testing.expect_value(t, h.open_error.upgrade, .Invalid_Accept)
 		testing.expect(t, !h.clean)
 	case .Unauthorized:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.open_error.error.kind, async.Error_Kind.Refused)
-		testing.expect_value(t, h.open_error.upgrade.upgrade, .Invalid_Status)
-		testing.expect_value(t, h.open_error.upgrade.status, 401)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.Refused)
+		testing.expect_value(t, h.open_error.upgrade, .Invalid_Status)
+		testing.expect_value(t, h.open_error.status, 401)
 		testing.expect(t, !h.clean)
 	case .Bad_UTF8:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.open_error.error.kind, async.Error_Kind.None)
-		testing.expect_value(t, h.read_error.error.kind, async.Error_Kind.Network_Error)
-		testing.expect_value(t, h.read_error.close.reason, async.WS_Close_Reason.Invalid_Data)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, h.read_error.kind, WebSocket_Error_Kind.Protocol_Failed)
+		testing.expect_value(t, h.read_error.close.reason, WebSocket_Close_Reason.Invalid_Data)
 		testing.expect_value(t, h.read_error.close.code, 1007)
 		testing.expect(t, !h.clean)
 	case .Masked:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.open_error.error.kind, async.Error_Kind.None)
-		testing.expect_value(t, h.read_error.error.kind, async.Error_Kind.Network_Error)
-		testing.expect_value(t, h.read_error.close.frame, .Unexpected_Masking)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, h.read_error.kind, WebSocket_Error_Kind.Protocol_Failed)
+		testing.expect_value(t, h.read_error.close.reason, WebSocket_Close_Reason.Protocol_Error)
 		testing.expect(t, !h.clean)
 	case .Too_Big:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.open_error.error.kind, async.Error_Kind.None)
-		testing.expect_value(t, h.read_error.error.kind, async.Error_Kind.Capacity)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, h.read_error.kind, WebSocket_Error_Kind.Message_Oversized)
 		testing.expect_value(t, h.read_error.close.code, 1009)
 		testing.expect(t, !h.clean)
 	case .Slow:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.open_error.error.kind, async.Error_Kind.Timeout)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.Timeout)
 		testing.expect(t, !h.clean)
 	case .Cancel:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.open_error.error.kind, async.Error_Kind.Cancelled)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.Cancelled)
 		testing.expect(t, !h.clean)
 	case .Wakes, .Stall_Message, .Stall_Frame, .Idle:
 	}
@@ -585,7 +585,7 @@ ws_expect_case :: proc(t: ^testing.T, h: ^Ws_Test, mode: Ws_Peer_Mode) {
 
 // url is wss:// at the TLS peer; named checks that the hosts file gave
 // 127.0.0.1 for its host.
-ws_tls_echo :: proc(t: ^testing.T, url: string, roots: ^async.Root_Pool, named: bool) {
+ws_tls_echo :: proc(t: ^testing.T, url: string, roots: ^Trust_Roots, named: bool) {
 	h := new(Ws_Test)
 	defer free(h)
 	defer ws_test_stop(h)
@@ -620,10 +620,10 @@ ws_tls_echo :: proc(t: ^testing.T, url: string, roots: ^async.Root_Pool, named: 
 
 	ws_test_stop(h)
 	testing.expect_value(t, h.saw_open, 1)
-	testing.expect_value(t, h.open_error.error.kind, async.Error_Kind.None)
+	testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.None)
 	testing.expect(t, h.read_ok && h.read_is_text && h.write_ok && h.clean)
 	testing.expect_value(t, string(h.subprotocol[:h.subprotocol_n]), "chat")
-	testing.expect_value(t, h.close_error.error.kind, async.Error_Kind.None)
+	testing.expect_value(t, h.close_error.kind, WebSocket_Error_Kind.None)
 	if named {
 		v4, ok := h.policy_endpoint.address.(net.IP4_Address)
 		testing.expect_value(t, string(h.policy_host[:h.policy_host_n]), "LocalHost")
@@ -653,14 +653,14 @@ ws_tls_platform_roots :: proc(t: ^testing.T, port: int) {
 
 	ws_test_stop(h)
 	testing.expect_value(t, h.saw_open, 1)
-	testing.expect_value(t, h.open_error.error.kind, async.Error_Kind.Network_Error)
-	testing.expect(t, h.open_error.upgrade.tls != nil)
+	testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.TLS_Failed)
+	testing.expect(t, h.open_error.tls_error != .None)
 	testing.expect(t, h.read_n == 0 && !h.clean)
 }
 
 // wrong.example resolves to the peer through a stub name server; its
 // certificate names only localhost and 127.0.0.1.
-ws_tls_wrong_host :: proc(t: ^testing.T, port: int, roots: ^async.Root_Pool) {
+ws_tls_wrong_host :: proc(t: ^testing.T, port: int, roots: ^Trust_Roots) {
 	dns := new(Ws_Dns)
 	defer free(dns)
 	dns.answer = true
@@ -694,8 +694,8 @@ ws_tls_wrong_host :: proc(t: ^testing.T, port: int, roots: ^async.Root_Pool) {
 
 	ws_test_stop(h)
 	testing.expect_value(t, h.saw_open, 1)
-	testing.expect_value(t, h.open_error.error.kind, async.Error_Kind.Network_Error)
-	testing.expect(t, h.open_error.upgrade.tls != nil)
+	testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.TLS_Failed)
+	testing.expect(t, h.open_error.tls_error != .None)
 	testing.expect(t, h.read_n == 0 && !h.clean)
 }
 
@@ -703,7 +703,7 @@ ws_on_open :: proc(op: ^WebSocket_Op) {
 	h := cast(^Ws_Test)op.user_data
 	h.open_error = op.error
 	h.saw_open = 1
-	if op.error.error.kind != .None {
+	if op.error.kind != .None {
 		intrinsics.atomic_store_explicit(&h.done, 1, .Release)
 		return
 	}
@@ -773,7 +773,7 @@ ws_queue_probe :: proc(h: ^Ws_Test) {
 ws_on_read :: proc(op: ^WebSocket_Op) {
 	h := cast(^Ws_Test)op.user_data
 
-	if op.error.error.kind != .None {
+	if op.error.kind != .None {
 		h.read_error = op.error
 		h.read_ended = true
 		h.clean = h.clean || op.error.close.clean
@@ -809,7 +809,7 @@ ws_on_write :: proc(op: ^WebSocket_Op) {
 	h.write_error = op.error
 	h.write_n = op.n
 	h.saw_write = 1
-	h.write_ok = op.error.error.kind == .None && op.n == h.src_n
+	h.write_ok = op.error.kind == .None && op.n == h.src_n
 	if h.read_ok && h.write_ok {
 		ws_submit_close(h)
 	}
@@ -1562,8 +1562,8 @@ websocket_rejects_the_endpoint_before_connect :: proc(t: ^testing.T) {
 
 	defer free(harness)
 	defer free(dns)
-	testing.expect_value(t, harness.error.error.kind, async.Error_Kind.Refused)
-	testing.expect_value(t, harness.error.upgrade.status, 0)
+	testing.expect_value(t, harness.error.kind, WebSocket_Error_Kind.Address_Rejected)
+	testing.expect_value(t, harness.error.status, 0)
 	testing.expect_value(t, harness.calls, 1)
 	testing.expect_value(t, string(harness.host[:harness.host_n]), "ws.example")
 	testing.expect(t, ws_policy_loopback(harness))
@@ -1581,8 +1581,8 @@ websocket_connects_to_the_endpoint_the_policy_checked :: proc(t: ^testing.T) {
 
 	defer free(harness)
 	defer free(dns)
-	testing.expect(t, harness.error.error.kind != .Refused)
-	testing.expect(t, harness.error.error.kind != .None)
+	testing.expect(t, harness.error.kind != .Refused)
+	testing.expect(t, harness.error.kind != .None)
 	testing.expect_value(t, harness.calls, 1)
 	testing.expect_value(t, string(harness.host[:harness.host_n]), "ws.example")
 	testing.expect(t, ws_policy_loopback(harness))
@@ -1600,8 +1600,8 @@ websocket_unresolvable_name_fails_before_connect :: proc(t: ^testing.T) {
 
 	defer free(harness)
 	defer free(dns)
-	_, resolving := harness.error.error.network_cause.(net.Resolve_Error)
-	testing.expect_value(t, harness.error.error.kind, async.Error_Kind.Network_Error)
+	_, resolving := harness.error.network.(net.Resolve_Error)
+	testing.expect_value(t, harness.error.kind, WebSocket_Error_Kind.Resolve_Failed)
 	testing.expect(t, resolving)
 	testing.expect_value(t, harness.calls, 0)
 	testing.expect_value(t, ws_policy_accepts(harness), 0)
@@ -1677,7 +1677,7 @@ ws_owa_submit :: proc(owa: ^Ws_Owa, conn: ^Ws_Owa_Conn) {
 	   intrinsics.atomic_load_explicit(&conn.reading, .Acquire) != 0 ||
 	   intrinsics.atomic_load_explicit(&conn.failed, .Acquire) != 0 ||
 	   intrinsics.atomic_load_explicit(&conn.reads, .Acquire) >= conn.want ||
-	   conn.open_error.error.kind != .None {
+	   conn.open_error.kind != .None {
 		return
 	}
 
@@ -1702,7 +1702,7 @@ ws_owa_on_read :: proc(op: ^WebSocket_Op) {
 	conn := cast(^Ws_Owa_Conn)op.user_data
 	reads := intrinsics.atomic_load_explicit(&conn.reads, .Acquire)
 
-	if op.error.error.kind == .None && reads < len(conn.messages) {
+	if op.error.kind == .None && reads < len(conn.messages) {
 		conn.message_ns[reads] = copy(conn.messages[reads][:], conn.dst[:op.n])
 		intrinsics.atomic_store_explicit(&conn.reads, reads + 1, .Release)
 	} else {
@@ -1913,12 +1913,12 @@ websocket_read_survives_unrelated_wakes :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, string(conn.messages[0][:conn.message_ns[0]]), "first")
 	testing.expect_value(t, string(conn.messages[1][:conn.message_ns[1]]), "second")
-	testing.expect_value(t, conn.read_error.error.kind, async.Error_Kind.None)
+	testing.expect_value(t, conn.read_error.kind, WebSocket_Error_Kind.None)
 	if !ws_owa_close(t, owa, conn) {
 		return
 	}
 
-	testing.expect_value(t, conn.close_error.error.kind, async.Error_Kind.None)
+	testing.expect_value(t, conn.close_error.kind, WebSocket_Error_Kind.None)
 	testing.expect(t, conn.clean)
 	ws_owa_stop(owa)
 	testing.expect_value(t, conn.peer.status, WS_PEER_OK)
@@ -1962,8 +1962,8 @@ websocket_stalled_message_times_out_and_idle_session_stays_open :: proc(t: ^test
 			return
 		}
 
-		testing.expect_value(t, conn.open_error.error.kind, async.Error_Kind.None)
-		testing.expect_value(t, conn.read_error.error.kind, async.Error_Kind.Timeout)
+		testing.expect_value(t, conn.open_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, conn.read_error.kind, WebSocket_Error_Kind.Timeout)
 		testing.expect_value(t, conn.read_error.close.code, 1001)
 		testing.expect_value(t, intrinsics.atomic_load(&conn.reads), 0)
 		testing.expect_value(t, intrinsics.atomic_load(&conn.done), 1)
@@ -1981,7 +1981,7 @@ websocket_stalled_message_times_out_and_idle_session_stays_open :: proc(t: ^test
 		return
 	}
 
-	testing.expect_value(t, idle.read_error.error.kind, async.Error_Kind.Closed)
-	testing.expect_value(t, idle.close_error.error.kind, async.Error_Kind.None)
+	testing.expect_value(t, idle.read_error.kind, WebSocket_Error_Kind.Closed)
+	testing.expect_value(t, idle.close_error.kind, WebSocket_Error_Kind.None)
 	testing.expect(t, idle.clean)
 }

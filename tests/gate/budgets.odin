@@ -72,11 +72,9 @@ run_budgets :: proc() {
 	report := Report{sanitizer = sanitizer if sanitizer != "" else "none"}
 	cases := [?]struct{mode, scenario: string, size: int}{
 		{"native", "retained", 1024},
-		{"curl", "retained", 1024},
 		{"native", "oversize", 65537},
-		{"curl", "oversize", 65537},
-		{"curl", "legacy", 1024},
-		{"curl", "empty", 0},
+		{"native", "managed", 1024},
+		{"native", "empty", 0},
 		{"tls", "tls-allow", 1024},
 		{"tls", "tls-deny", 1024},
 	}

@@ -16,15 +16,15 @@ Record :: struct {
 	calls, descriptors_before, descriptors_after: int,
 	limit, peak:                                  u64,
 }
-roots: async.Root_Pool
+roots: surf.Trust_Roots
 main :: proc() {
 	assert(len(os.args) == 4 || len(os.args) == 5)
 
 	if len(os.args) == 5 {
-		assert(async.root_pool_load_file(&roots, os.args[4]) == nil)
+		assert(surf.trust_roots_load_file(&roots, os.args[4]) == .None)
 	}
 
-	defer async.root_pool_destroy(&roots)
+	defer surf.trust_roots_destroy(&roots)
 	mode, url, scenario := os.args[1], os.args[2], os.args[3]
 	warm, error := perform(mode, url, {}, rt.heap_allocator(), scenario)
 
@@ -54,8 +54,8 @@ main :: proc() {
 		tls_budget(url, scenario == "tls-deny", allocator, &record)
 	} else if scenario == "empty" {
 		empty(url, allocator, &record)
-	} else if scenario == "legacy" {
-		legacy(url, allocator, &record)
+	} else if scenario == "managed" {
+		managed(url, allocator, &record)
 	} else if scenario == "oversize" {
 		oversize(mode, url, allocator, &record)
 	} else {
@@ -123,20 +123,6 @@ perform :: proc(
 	surf.Response,
 	surf.HTTP_Error,
 ) {
-	if mode == "curl" || scenario == "legacy" {
-		response, result := surf.buffered_http_execute_owned(
-			"GET",
-			url,
-			nil,
-			nil,
-			"",
-			allow_http = true,
-			timeout_ms = 3000,
-			allocator = allocator,
-			scope = scope,
-		)
-		return response, result.error
-	}
 	return surf.execute(
 		{method = .GET, url = url},
 		{
@@ -180,7 +166,7 @@ retained :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) {
 	assert(usage(ctx.root).used.streams == 0 && usage(ctx.root).rejected > 0)
 	chunk, transferred := surf.response_take_body(&first)
 	assert(transferred.kind == .None)
-	info, known := async.budget_allocation_info(chunk.allocator, raw_data(chunk.storage))
+	info, known := async.budget_allocation_info(chunk._owned.allocator, raw_data(chunk._owned.storage))
 	assert(known)
 	async.budget_release_scope(&ctx.a)
 	surf.response_destroy(&first)
@@ -188,7 +174,7 @@ retained :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) {
 	for byte in chunk.data {
 		assert(byte == 'B')
 	}
-	async.owned_destroy(&chunk)
+	surf.body_chunk_release(&chunk)
 	assert(usage(ctx.root).used.bytes == 0)
 	recovered, retry := perform(mode, url, ctx.b, allocator)
 	record.calls += 1
@@ -210,9 +196,11 @@ oversize :: proc(mode, url: string, allocator: mem.Allocator, record: ^Record) {
 	assert(record.peak <= record.limit)
 	context_destroy(&ctx)
 }
-legacy :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
+managed :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 	block := block_cost(allocator)
-	ctx := context_create(65536 + block + 512, allocator)
+	// Only the arena blocks that hold retained responses are charged: room for
+	// three, so the peer's bound is never reached first.
+	ctx := context_create(3 * block + 512, allocator)
 	binding, created := async.budget_binding_create(ctx.a, {backing = allocator, metadata_allocator = allocator})
 	assert(created.kind == .None)
 	managed := async.budget_allocator(binding)
@@ -226,28 +214,27 @@ legacy :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 	)
 	previous := context.temp_allocator
 	context.temp_allocator = mem.dynamic_arena_allocator(&arena)
-	views: [8][]byte
+	// Each retained body stays in the arena until the scope refuses more.
+	views: [16][]byte
 	count := 0
 	denied := false
 
-	for _ in 0 ..< 8 {
-		bytes, result := surf.buffered_http_execute_managed(
-			"GET",
-			url,
-			nil,
-			nil,
-			"",
-			allow_http = true,
-			timeout_ms = 3000,
-			scope = ctx.a,
-			allocator_scope = ctx.a,
+	for _ in 0 ..< len(views) {
+		response, error := surf.execute(
+			{method = .GET, url = url},
+			{allow_http = true, timeout = 3 * time.Second, scope = ctx.a, allocator_scope = ctx.a},
+			context.temp_allocator,
 		)
-		if result.error.write_effect != .Not_Sent {
+		bytes := response.body
+		// The arena keeps the body; only the scope reference is released.
+		surf.response_destroy(&response)
+
+		if error.write_effect != .Not_Sent {
 			record.calls += 1
 		}
 
-		if result.error.kind != .None {
-			assert(result.error.kind == .Allocation_Failed)
+		if error.kind != .None {
+			assert(error.kind == .Allocation_Failed)
 			denied = true
 			break
 		}
@@ -269,7 +256,7 @@ legacy :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 	context.temp_allocator = previous
 	mem.dynamic_arena_destroy(&arena)
 	assert(usage(ctx.root).used.bytes == 0)
-	legacy_retry(url, &arena, managed, ctx.a, record)
+	managed_retry(url, &arena, managed, ctx.a, record)
 	mem.dynamic_arena_destroy(&arena)
 	assert(usage(ctx.root).used.bytes == 0 && usage(ctx.root).used.streams == 0)
 	record.limit, record.peak = usage(ctx.root).limits.bytes, usage(ctx.root).peak.bytes
@@ -295,7 +282,7 @@ block_cost :: proc(allocator: mem.Allocator) -> u64 {
 	return cost
 }
 
-legacy_retry :: proc(
+managed_retry :: proc(
 	url: string,
 	arena: ^mem.Dynamic_Arena,
 	managed: mem.Allocator,
@@ -312,35 +299,32 @@ legacy_retry :: proc(
 	previous := context.temp_allocator
 	context.temp_allocator = mem.dynamic_arena_allocator(arena)
 	defer context.temp_allocator = previous
-	bytes, result := surf.buffered_http_execute_managed(
-		"GET",
-		url,
-		nil,
-		nil,
-		"",
-		allow_http = true,
-		timeout_ms = 3000,
-		scope = scope,
-		allocator_scope = scope,
+	response, error := surf.execute(
+		{method = .GET, url = url},
+		{allow_http = true, timeout = 3 * time.Second, scope = scope, allocator_scope = scope},
+		context.temp_allocator,
 	)
-	assert(result.error.kind == .None && len(bytes) == 1024)
+	bytes := response.body
+	surf.response_destroy(&response)
+	assert(error.kind == .None && len(bytes) == 1024)
 	record.calls += 1
 }
 
 empty :: proc(url: string, allocator: mem.Allocator, record: ^Record) {
 	ctx := context_create(256 * 1024, allocator)
-	response, error := perform("curl", url, ctx.a, allocator, "empty")
+	response, error := perform("native", url, ctx.a, allocator, "empty")
 	record.calls += 1
 	assert(error.kind == .None && len(response.body) == 0 && cap(response.body_storage) == 0)
-	assert(usage(ctx.root).used.bytes == 0 && usage(ctx.root).used.streams == 0)
-	record.limit, record.peak = usage(ctx.root).limits.bytes, usage(ctx.root).peak.bytes
-	context_destroy(&ctx)
-	// No allocation reference remains in this zero-capacity moved owner.
+	// No allocation reference remains in this zero-capacity moved owner; the
+	// headers are charged until the response is destroyed.
 	chunk, taken := surf.response_take_body(&response)
 	assert(taken.kind == .None)
 	surf.response_destroy(&response)
-	async.owned_destroy(&chunk)
-	async.owned_destroy(&chunk)
+	assert(usage(ctx.root).used.bytes == 0 && usage(ctx.root).used.streams == 0)
+	record.limit, record.peak = usage(ctx.root).limits.bytes, usage(ctx.root).peak.bytes
+	context_destroy(&ctx)
+	surf.body_chunk_release(&chunk)
+	surf.body_chunk_release(&chunk)
 }
 
 // TLS state belongs to the connection, not to the request scope. A denied

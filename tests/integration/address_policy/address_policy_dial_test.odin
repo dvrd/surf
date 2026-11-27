@@ -6,7 +6,6 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
-import "shared:async"
 import "shared:surf"
 
 // 127.0.0.2 is not assigned here. A later answer uses a non-local address so a
@@ -438,7 +437,7 @@ header_reserved_exports_the_request_fields_rejected_on_submit :: proc(t: ^testin
 	testing.expect(t, !surf.header_reserved("Content-Type"))
 	testing.expect(t, !surf.header_reserved("Accept"))
 	testing.expect(t, !surf.header_reserved(""))
-	headers := [1]async.Http_Header {
+	headers := [1]surf.Header {
 		{name = "Host", value = "example.test"},
 	}
 	response, error := surf.execute(
@@ -598,10 +597,10 @@ tcp_dials_the_endpoint_the_policy_checked :: proc(t: ^testing.T) {
 	}
 
 	defer dial_tcp_stop(&peer, tcp_worker)
-	roots: async.Root_Pool
-	defer async.root_pool_destroy(&roots)
+	roots: surf.Trust_Roots
+	defer surf.trust_roots_destroy(&roots)
 
-	if !testing.expect_value(t, async.root_pool_load_file(&roots, "tests/support/credentials/root.pem"), nil) {
+	if !testing.expect_value(t, surf.trust_roots_load_file(&roots, "tests/support/credentials/root.pem"), surf.Trust_Roots_Error.None) {
 		return
 	}
 

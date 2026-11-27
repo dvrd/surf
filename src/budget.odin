@@ -77,6 +77,7 @@ budget_retain_allocator :: proc(source: mem.Allocator) -> (async.Budget_Binding,
 
 	return binding, budget_allocator_error(error)
 }
+
 budget_create_allocator :: proc(
 	scope: async.Budget_Scope,
 	backing: mem.Allocator,
@@ -88,6 +89,7 @@ budget_create_allocator :: proc(
 
 	return binding, budget_allocator_error(error)
 }
+
 budget_allocator_error :: proc(error: async.Budget_Allocator_Error) -> HTTP_Error {
 	if error.kind == .None {
 		return {}
@@ -101,15 +103,17 @@ budget_allocator_error :: proc(error: async.Budget_Allocator_Error) -> HTTP_Erro
 
 	return result
 }
+
 budget_error :: proc(reason: async.Budget_Error) -> HTTP_Error {
-	kind: async.Http_Error_Kind = .Allocation_Failed
+	kind: HTTP_Error_Kind = .Allocation_Failed
 
 	if reason == .Invalid_Config || reason == .Invalid_Handle || reason == .Foreign_Root {
 		kind = .Invalid_Config
 	}
 
-	return {kind = kind, budget = reason, phase = .Admission, write_effect = .Not_Sent}
+	return {kind = kind, budget = budget_failure(reason), phase = .Admission, write_effect = .Not_Sent}
 }
+
 budget_cleanup :: proc(ctx: ^Budget_Context) {
 	old := ctx^
 	ctx^ = {}
@@ -120,6 +124,7 @@ budget_cleanup :: proc(ctx: ^Budget_Context) {
 	async.budget_release_scope(&old.coverage)
 	async.budget_release(&old.stream)
 }
+
 budget_response :: proc(ctx: ^Budget_Context, response: ^Response) {
 	response._allocator_scope = ctx.coverage
 	ctx.coverage = {}

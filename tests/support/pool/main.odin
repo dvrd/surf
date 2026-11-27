@@ -46,8 +46,8 @@ wait :: proc(c: ^surf.Client, h: surf.Request_Handle) -> surf.Completion {
 		thread.yield()
 	}
 }
-submit :: proc(c: ^surf.Client, r: ^runtime_async.Runtime, request: http.Request) -> surf.Request_Handle {
-	h, error := surf.client_submit(c, request, runtime_async.deadline_after(r, 3 * time.Second))
+submit :: proc(c: ^surf.Client, r: ^runtime_async.Runtime, request: surf.Request) -> surf.Request_Handle {
+	h, error := surf.client_submit(c, request, time.tick_add(time.tick_now(), 3 * time.Second))
 	assert(error.kind == .None)
 
 	return h
@@ -63,11 +63,11 @@ main :: proc() {
 	allocator := mem.tracking_allocator(&track)
 	scope, cause := budget.create_root({bytes = 32 << 20, streams = 2, jobs = 8}, allocator)
 	assert(cause == .None)
-	roots: tls.Root_Pool
+	roots: surf.Trust_Roots
 
 	if encrypted {
 		raw, error := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator); assert(error == nil)
-		assert(tls.root_pool_parse(&roots, raw, allocator) == nil); delete(raw, allocator)
+		assert(surf.trust_roots_parse(&roots, raw, allocator) == .None); delete(raw, allocator)
 	}
 
 	before := fd_count()
@@ -123,10 +123,10 @@ main :: proc() {
 	if framing {
 		Case :: struct {
 			path:           string,
-			method:         http.Method,
+			method:         surf.Method,
 			body:           string,
 			status:         int,
-			failure:        http.Error_Kind,
+			failure:        surf.HTTP_Error_Kind,
 			new_connection: bool,
 		}
 
@@ -220,7 +220,7 @@ main :: proc() {
 	assert(surf.client_destroy(&c).kind == .None)
 	assert(runtime_async.wait_idle(&r).kind == .None)
 	assert(runtime_async.destroy(&r).kind == .None)
-	tls.root_pool_destroy(&roots)
+	surf.trust_roots_destroy(&roots)
 	assert(fd_count() == before)
 	usage, _ := budget.snapshot(scope)
 	assert(usage.used == (budget.Usage{}))
@@ -364,11 +364,11 @@ run_mode :: proc(
 	if mode == "clients" || mode == "trust" {
 		b: surf.Client
 		other := config
-		wrong: tls.Root_Pool
+		wrong: surf.Trust_Roots
 
 		if mode == "trust" {
 			raw, cause := os.read_entire_file(fmt.tprintf("%s/wrong.pem", dir), allocator); assert(cause == nil)
-			assert(tls.root_pool_parse(&wrong, raw, allocator) == nil); delete(raw, allocator)
+			assert(surf.trust_roots_parse(&wrong, raw, allocator) == .None); delete(raw, allocator)
 			other.http.tls.roots = &wrong
 		}
 
@@ -394,7 +394,7 @@ run_mode :: proc(
 
 		assert(surf.client_destroy(&b).kind == .None)
 
-		tls.root_pool_destroy(&wrong)
+		surf.trust_roots_destroy(&wrong)
 		third, success := fetch(c, r, fmt.tprintf("%s://127.0.0.1:%d/C", scheme, endpoint.port))
 		assert(success.kind == .None && third == first)
 		result.completed += 1

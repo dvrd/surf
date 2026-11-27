@@ -82,12 +82,12 @@ run_client :: proc() {
 	allocator := mem.tracking_allocator(&track)
 	scope, cause := budget.create_root({bytes = 96 << 20, streams = 3, jobs = 16}, allocator)
 	assert(cause == .None)
-	roots: tls.Root_Pool
+	roots: surf.Trust_Roots
 
 	if encrypted {
 		root, e := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
 		assert(e == nil)
-		assert(tls.root_pool_parse(&roots, root, allocator) == nil)
+		assert(surf.trust_roots_parse(&roots, root, allocator) == .None)
 		delete(root, allocator)
 	}
 
@@ -141,16 +141,16 @@ run_client :: proc() {
 	}
 
 	timed := action == "total" || action == "close"
-	deadline: async.Deadline
+	deadline: time.Tick
 
 	if timed && phase != "queued" {
-		deadline = async.deadline_after(&r, 700 * time.Millisecond)
+		deadline = time.tick_add(time.tick_now(), 700 * time.Millisecond)
 	}
 
 	// A queued request must still be waiting for the connection when its own
 	// cutoff passes, so the blocker outlives it.
 	if action == "close" && phase == "queued" {
-		deadline = async.deadline_after(&r, 1500 * time.Millisecond)
+		deadline = time.tick_add(time.tick_now(), 1500 * time.Millisecond)
 	}
 
 	blocker, error := surf.client_submit(
@@ -171,10 +171,10 @@ run_client :: proc() {
 	target := blocker
 
 	if phase == "queued" {
-		queued_deadline: async.Deadline
+		queued_deadline: time.Tick
 
 		if timed {
-			queued_deadline = async.deadline_after(&r, 700 * time.Millisecond)
+			queued_deadline = time.tick_add(time.tick_now(), 700 * time.Millisecond)
 		}
 
 		target, error = surf.client_submit(&c, {method = .GET, url = url}, queued_deadline)
@@ -260,7 +260,7 @@ run_client :: proc() {
 	assert(surf.client_destroy(&c).kind == .None)
 	assert(async.wait_idle(&r).kind == .None)
 	assert(async.destroy(&r).kind == .None)
-	tls.root_pool_destroy(&roots)
+	surf.trust_roots_destroy(&roots)
 	assert(fd_count() == before)
 	state, e := budget.snapshot(scope)
 	assert(e == .None && state.used == (budget.Usage{}))
@@ -336,12 +336,12 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 	cheap, valid := net.parse_endpoint(string(bytes))
 	assert(valid)
 	delete(bytes, allocator)
-	roots: tls.Root_Pool
+	roots: surf.Trust_Roots
 
 	if encrypted {
 		root, re := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
 		assert(re == nil)
-		assert(tls.root_pool_parse(&roots, root, allocator) == nil)
+		assert(surf.trust_roots_parse(&roots, root, allocator) == .None)
 		delete(root, allocator)
 	}
 
@@ -509,7 +509,7 @@ run_raw :: proc(endpoint: net.Endpoint, dir, mode: string, encrypted: bool) {
 	assert(surf.client_destroy(&c).kind == .None)
 	assert(async.wait_idle(&r).kind == .None)
 	assert(async.destroy(&r).kind == .None)
-	tls.root_pool_destroy(&roots)
+	surf.trust_roots_destroy(&roots)
 	assert(fd_count() == before)
 	state, se := budget.snapshot(scope)
 	assert(se == .None && state.used == (budget.Usage{}))

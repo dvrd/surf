@@ -1,6 +1,5 @@
 package main
 
-import "shared:async"
 import "shared:surf"
 import "core:fmt"
 import "core:mem"
@@ -11,7 +10,7 @@ import "core:time"
 perform :: proc(
 	base, path, file_path: string,
 	length: i64,
-	method: async.Http_Method,
+	method: surf.Method,
 	config: surf.Config,
 	expected_status: int = 200,
 ) -> i64 {
@@ -84,10 +83,10 @@ main :: proc() {
 	stall := plain
 	stall.timeout = 100 * time.Millisecond
 	perform(http_url, "/stall", file_path, large, .PUT, stall)
-	pool := new(async.Root_Pool)
+	pool := new(surf.Trust_Roots)
 	defer free(pool)
-	defer async.root_pool_destroy(pool)
-	assert(async.root_pool_load_file(pool, root_path) == nil)
+	defer surf.trust_roots_destroy(pool)
+	assert(surf.trust_roots_load_file(pool, root_path) == .None)
 	secure := surf.Config {
 		tls = {roots = pool},
 		max_body_size = 8,

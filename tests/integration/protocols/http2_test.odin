@@ -2,13 +2,12 @@ package tests
 
 import "core:testing"
 import "core:time"
-import "shared:async"
 import "shared:surf"
 
 CONN_EVENT :: "\"event\":\"conn\""
 REQUEST_EVENT :: "\"event\":\"request\""
 
-h2_client :: proc(t: ^testing.T, c: ^surf.Client, roots: ^async.Root_Pool, timeout: time.Duration, limit := 0) -> bool {
+h2_client :: proc(t: ^testing.T, c: ^surf.Client, roots: ^surf.Trust_Roots, timeout: time.Duration, limit := 0) -> bool {
 	config := surf.Config {
 		tls           = {roots = roots},
 		timeout       = timeout,
@@ -217,7 +216,7 @@ http2_untrusted_certificate_is_refused_before_any_request :: proc(t: ^testing.T)
 	}
 	defer peer_roots_free(wrong)
 
-	for roots in ([]^async.Root_Pool{wrong, nil}) {
+	for roots in ([]^surf.Trust_Roots{wrong, nil}) {
 		response, error := surf.execute(
 			{method = .GET, url = peer_url(peer, "/echo")},
 			{tls = {roots = roots}, timeout = 3 * time.Second},

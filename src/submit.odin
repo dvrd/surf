@@ -5,10 +5,10 @@ import "core:io"
 import "core:mem"
 import "core:sync"
 import "core:thread"
+import "core:time"
 import "shared:async"
 
 // How a request is submitted, beyond the request itself.
-@(private)
 Submit_Options :: struct {
 	upload:        Upload_Kind,
 	upload_length: i64,
@@ -20,11 +20,12 @@ Submit_Options :: struct {
 
 // Queues request. It is copied: nothing of it is borrowed after the call. A
 // zero deadline is Config.timeout from now; it bounds every redirect hop.
+// The deadline is on the monotonic clock (time.tick_now).
 // Poll for the Completion, take the Response, then release the handle.
 client_submit :: proc(
 	c: ^Client,
-	request: async.Http_Request,
-	deadline: async.Deadline = {},
+	request: Request,
+	deadline: time.Tick = {},
 ) -> (
 	Request_Handle,
 	Client_Error,
@@ -144,7 +145,7 @@ client_request_stage :: proc(c: ^Client, handle: Request_Handle) -> (Request_Sta
 // Response; responses taken with client_take are not charged.
 client_execute :: proc(
 	c: ^Client,
-	request: async.Http_Request,
+	request: Request,
 	allocator := context.allocator,
 ) -> (
 	Response,
@@ -157,7 +158,7 @@ client_execute :: proc(
 // thread, exactly upload.content_length bytes.
 client_execute_upload :: proc(
 	c: ^Client,
-	request: async.Http_Request,
+	request: Request,
 	upload: ^Upload_Source,
 	allocator := context.allocator,
 ) -> (
@@ -242,7 +243,6 @@ client_execute_upload :: proc(
 
 // Reads the caller's source on the calling thread and queues it chunk by
 // chunk, waiting while the queue is full.
-@(private)
 upload_push_source :: proc(
 	c: ^Client,
 	s: ^Client_State,
@@ -270,7 +270,7 @@ upload_push_source :: proc(
 			return
 		}
 
-		chunk, copied := async.owned_copy_bounded(buffer[:n], n, s.allocator)
+		chunk, copied := body_chunk_copy(buffer[:n], n, s.allocator)
 		if copied.kind != .None {
 			_ = client_upload_finish(c, handle, .Unknown)
 			return
@@ -279,7 +279,7 @@ upload_push_source :: proc(
 		for {
 			status, pushed := client_upload_submit(c, handle, &chunk)
 			if pushed.kind != .None || status == .Closed || status == .Invalid {
-				async.owned_destroy(&chunk)
+				body_chunk_release(&chunk)
 				return
 			}
 
@@ -301,7 +301,7 @@ upload_push_source :: proc(
 // the caller's Root_Pool. Called from a runtime worker it runs on a helper
 // thread instead, since a worker cannot host a second runtime.
 execute :: proc(
-	request: async.Http_Request,
+	request: Request,
 	config: Config,
 	allocator := context.allocator,
 ) -> (
@@ -313,7 +313,7 @@ execute :: proc(
 
 // Requires config.max_redirects == 0: a streamed body cannot be sent again.
 execute_upload :: proc(
-	request: async.Http_Request,
+	request: Request,
 	source: Upload_Source,
 	config: Config,
 	allocator := context.allocator,
@@ -335,7 +335,7 @@ execute_upload :: proc(
 }
 
 execute_with_upload :: proc(
-	request: async.Http_Request,
+	request: Request,
 	config: Config,
 	upload: ^Upload_Source,
 	allocator: mem.Allocator,
@@ -365,18 +365,16 @@ execute_with_upload :: proc(
 	return response, error
 }
 
-@(private)
 Execute_Job :: struct {
-	request:  async.Http_Request,
+	request:  Request,
 	config:   Config,
 	upload:   ^Upload_Source,
 	response: Response,
 	error:    HTTP_Error,
 }
 
-@(private)
 execute_once :: proc(
-	request: async.Http_Request,
+	request: Request,
 	config: Config,
 	upload: ^Upload_Source,
 	allocator: mem.Allocator,
@@ -414,9 +412,8 @@ execute_once :: proc(
 	return result, failure
 }
 
-@(private)
 execute_run :: proc(
-	request: async.Http_Request,
+	request: Request,
 	config: Config,
 	upload: ^Upload_Source,
 	allocator: mem.Allocator,
@@ -470,7 +467,6 @@ execute_run :: proc(
 	return
 }
 
-@(private)
 client_error_http :: proc(error: Client_Error) -> HTTP_Error {
 	if error.http.kind != .None {
 		return error.http
@@ -488,11 +484,10 @@ client_error_http :: proc(error: Client_Error) -> HTTP_Error {
 	return {kind = .Invalid_Config, phase = .Configuration, write_effect = .Not_Sent}
 }
 
-@(private)
 submit :: proc(
 	c: ^Client,
-	request: async.Http_Request,
-	deadline: async.Deadline,
+	request: Request,
+	deadline: time.Tick,
 	options: Submit_Options,
 ) -> (
 	Request_Handle,
@@ -534,10 +529,10 @@ submit :: proc(
 		return {}, error
 	}
 
-	slot.deadline = deadline
-
 	if deadline == {} {
 		slot.deadline = async.deadline_after(s.runtime, effective_timeout(s.config))
+	} else {
+		slot.deadline = async.deadline_after(s.runtime, max(time.tick_diff(time.tick_now(), deadline), 0))
 	}
 
 	slot.phase = .Pending
@@ -550,10 +545,9 @@ submit :: proc(
 }
 
 // Checks what can be checked before anything is queued.
-@(private)
-request_validate :: proc(config: Config, request: async.Http_Request, options: Submit_Options) -> HTTP_Error {
+request_validate :: proc(config: Config, request: Request, options: Submit_Options) -> HTTP_Error {
 	refuse :: proc(kind: async.Http_Error_Kind) -> HTTP_Error {
-		return {kind = kind, phase = .Configuration, write_effect = .Not_Sent}
+		return {kind = http_error_kind(kind), phase = .Configuration, write_effect = .Not_Sent}
 	}
 
 	u, parse := async.http_url_parse(request.url)
@@ -579,7 +573,7 @@ request_validate :: proc(config: Config, request: async.Http_Request, options: S
 		return refuse(.Invalid_Trailer)
 	}
 
-	if len(request.body) > 0 && !async.http_request_body_allowed(request.method) {
+	if len(request.body) > 0 && !async.http_request_body_allowed(method_async(request.method)) {
 		return refuse(.Invalid_Method)
 	}
 
@@ -588,7 +582,7 @@ request_validate :: proc(config: Config, request: async.Http_Request, options: S
 			return refuse(.Invalid_Config)
 		}
 
-		if options.upload_length > 0 && !async.http_request_body_allowed(request.method) {
+		if options.upload_length > 0 && !async.http_request_body_allowed(method_async(request.method)) {
 			return refuse(.Invalid_Method)
 		}
 	}
@@ -597,8 +591,7 @@ request_validate :: proc(config: Config, request: async.Http_Request, options: S
 }
 
 // Copies request into the slot.
-@(private)
-slot_fill :: proc(s: ^Client_State, slot: ^Slot, request: async.Http_Request, options: Submit_Options) -> Client_Error {
+slot_fill :: proc(s: ^Client_State, slot: ^Slot, request: Request, options: Submit_Options) -> Client_Error {
 	size := len(request.url) + len(request.body)
 
 	for h in request.headers {
@@ -634,7 +627,7 @@ slot_fill :: proc(s: ^Client_State, slot: ^Slot, request: async.Http_Request, op
 		slot.headers[i] = {name = string(name), value = string(value)}
 	}
 
-	slot.method = request.method
+	slot.method = method_async(request.method)
 	slot.upload = options.upload
 	slot.upload_length = options.upload_length
 	slot.source = options.source
@@ -664,13 +657,11 @@ slot_fill :: proc(s: ^Client_State, slot: ^Slot, request: async.Http_Request, op
 	return {}
 }
 
-@(private)
 slot_handle :: proc(s: ^Client_State, slot: ^Slot) -> Request_Handle {
 	return {owner_id = s.id, slot = u32(slot_index(s, slot)), generation = slot.generation}
 }
 
 // Locks the client and finds the handle's slot. Unlocked again on error.
-@(private)
 slot_lock :: proc(c: ^Client, handle: Request_Handle) -> (^Client_State, ^Slot, Client_Error) {
 	s, error := client_state(c)
 	if error.kind != .None {

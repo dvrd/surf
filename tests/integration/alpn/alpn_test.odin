@@ -47,8 +47,8 @@ upload_producer :: proc(
 	return 0, .Unsupported
 }
 
-alpn_roots :: proc(t: ^testing.T, roots: ^async.Root_Pool) -> bool {
-	return testing.expect_value(t, async.root_pool_load_file(roots, "tests/support/http3/localhost.pem"), nil)
+alpn_roots :: proc(t: ^testing.T, roots: ^surf.Trust_Roots) -> bool {
+	return testing.expect_value(t, surf.trust_roots_load_file(roots, "tests/support/http3/localhost.pem"), surf.Trust_Roots_Error.None)
 }
 
 // Over TLS the client offers h2 and http/1.1 and speaks whichever the server
@@ -56,8 +56,8 @@ alpn_roots :: proc(t: ^testing.T, roots: ^async.Root_Pool) -> bool {
 @(test)
 alpn_tls_speaks_the_protocol_the_server_selects :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 30 * time.Second)
-	roots: async.Root_Pool
-	defer async.root_pool_destroy(&roots)
+	roots: surf.Trust_Roots
+	defer surf.trust_roots_destroy(&roots)
 
 	if !alpn_roots(t, &roots) {
 		return

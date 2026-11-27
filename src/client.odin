@@ -37,13 +37,10 @@ CLIENT_MAX_CHUNKS :: 64
 CLIENT_MAX_WEBSOCKETS :: 256
 DNS_MAX_NAME_SERVERS :: 8
 // Hosts-file addresses considered for one name.
-@(private)
 DNS_HOSTS_ENTRIES :: 8
 
 // Bounds a graceful close of an origin's connections.
-@(private)
 CLIENT_CLOSE_TIMEOUT :: 2 * time.Second
-@(private)
 CLIENT_READ_BYTES :: 16 << 10
 
 Request_Handle :: struct {
@@ -103,10 +100,13 @@ Client_Error_Kind :: enum {
 	Error,
 }
 
+// kind .Error: the runtime refused; the causes it gave follow.
 Client_Error :: struct {
-	kind:    Client_Error_Kind,
-	http:    HTTP_Error,
-	runtime: async.Error,
+	kind:        Client_Error_Kind,
+	http:        HTTP_Error,
+	network:     net.Network_Error,
+	allocation:  mem.Allocator_Error,
+	system_code: i32,
 }
 
 Request_Stage :: enum {
@@ -129,7 +129,6 @@ Client :: struct {
 	_state: ^Client_State,
 }
 
-@(private)
 Client_State :: struct {
 	mu:              sync.Mutex,
 	id:              u64,
@@ -174,7 +173,6 @@ Client_State :: struct {
 	notify_pending:  bool,
 }
 
-@(private)
 client_id_next: u64
 
 client_init :: proc(
@@ -265,7 +263,7 @@ client_init :: proc(
 	if error := async.spawn(runtime, &s.task); error.kind != .None {
 		c._self, c._state = nil, nil
 		client_state_free(s)
-		return {kind = .Error, runtime = error}
+		return client_runtime_error(error)
 	}
 
 	return {}
@@ -284,7 +282,7 @@ client_start :: proc(c: ^Client, config: Client_Config, allocator := context.all
 
 	if error := async.init(r, {workers = 1, task_capacity = 64, io_capacity = 1024}); error.kind != .None {
 		free(r, allocator)
-		return {kind = .Error, runtime = error}
+		return client_runtime_error(error)
 	}
 
 	if error := client_init(c, r, config, allocator); error.kind != .None {
@@ -301,7 +299,7 @@ client_start :: proc(c: ^Client, config: Client_Config, allocator := context.all
 		_ = async.destroy(r)
 		client_state_free(s)
 		free(r, allocator)
-		return {kind = .Error, runtime = error}
+		return client_runtime_error(error)
 	}
 
 	return {}
@@ -378,7 +376,6 @@ client_destroy :: proc(c: ^Client) -> Client_Error {
 	return {}
 }
 
-@(private)
 client_state :: proc(c: ^Client) -> (^Client_State, Client_Error) {
 	if c == nil || c._self != c || c._state == nil {
 		return nil, {kind = .Invalid_State}
@@ -387,7 +384,6 @@ client_state :: proc(c: ^Client) -> (^Client_State, Client_Error) {
 	return c._state, {}
 }
 
-@(private)
 client_state_alloc :: proc(s: ^Client_State) -> Client_Error {
 	slots, error := make([]Slot, s.capacities.requests, s.allocator)
 	if error != nil {
@@ -416,7 +412,6 @@ client_state_alloc :: proc(s: ^Client_State) -> Client_Error {
 	return {}
 }
 
-@(private)
 client_resolver_prepare :: proc(s: ^Client_State) -> Client_Error {
 	if error := net.resolver_snapshot_prepare(
 		&s.resolver,
@@ -432,7 +427,6 @@ client_resolver_prepare :: proc(s: ^Client_State) -> Client_Error {
 	return {}
 }
 
-@(private)
 client_state_free :: proc(s: ^Client_State) {
 	if s == nil {
 		return
@@ -477,7 +471,6 @@ client_state_free :: proc(s: ^Client_State) {
 
 // ---- the task ----
 
-@(private)
 client_task_resume :: proc(data: rawptr) -> async.Resume_Result {
 	s := cast(^Client_State)data
 
@@ -535,7 +528,6 @@ client_task_resume :: proc(data: rawptr) -> async.Resume_Result {
 	return .Done if done else result
 }
 
-@(private)
 client_task_cancel :: proc(data: rawptr) -> async.Resume_Result {
 	s := cast(^Client_State)data
 
@@ -578,7 +570,6 @@ client_task_cancel :: proc(data: rawptr) -> async.Resume_Result {
 	return .Done if done else .Yield
 }
 
-@(private)
 client_task_done :: proc(data: rawptr) {
 	s := cast(^Client_State)data
 
@@ -607,5 +598,14 @@ client_task_done :: proc(data: rawptr) {
 
 	if once {
 		async.shutdown(s.runtime)
+	}
+}
+
+client_runtime_error :: proc(error: async.Error) -> Client_Error {
+	return {
+		kind = .Error,
+		network = error.network_cause,
+		allocation = error.allocation_cause,
+		system_code = error.system_code,
 	}
 }

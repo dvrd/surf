@@ -181,6 +181,7 @@ redirect_url :: proc(
 
 	return cast(string)result, {}
 }
+
 redirect_parts :: proc(base: async.Http_URL, location: string, parts: ^[5]string) -> int {
 	assert(len(location) > 0 && len(location) <= async.HTTP_MAX_HEADER_SIZE)
 	count := 0

@@ -3,10 +3,9 @@ package tests
 import "../../support/site"
 import "core:testing"
 import "core:time"
-import "shared:async"
 import "shared:surf"
 
-h3_roots :: proc(t: ^testing.T) -> ^async.Root_Pool {
+h3_roots :: proc(t: ^testing.T) -> ^surf.Trust_Roots {
 	return peer_roots(t, "tests/support/http3/localhost.pem")
 }
 

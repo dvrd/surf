@@ -1,6 +1,5 @@
 package main
 
-import "shared:async"
 import "shared:surf"
 import "core:fmt"
 import "core:mem"
@@ -33,12 +32,12 @@ main :: proc() {
 	mode := os.args[1]
 	port, parsed := strconv.parse_int(os.args[2])
 	assert(parsed)
-	roots := new(async.Root_Pool)
+	roots := new(surf.Trust_Roots)
 	defer free(roots)
-	defer async.root_pool_destroy(roots)
+	defer surf.trust_roots_destroy(roots)
 
 	if strings.has_prefix(mode, "tls") {
-		assert(async.root_pool_load_file(roots, os.args[3]) == nil)
+		assert(surf.trust_roots_load_file(roots, os.args[3]) == .None)
 	}
 
 	assert(nbio.acquire_thread_event_loop() == nil)
