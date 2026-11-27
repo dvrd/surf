@@ -224,7 +224,11 @@ trust_roots_load_file :: proc(roots: ^Trust_Roots, path: string) -> Trust_Roots_
 }
 
 // PEM certificates in data.
-trust_roots_parse :: proc(roots: ^Trust_Roots, data: []u8, allocator := context.allocator) -> Trust_Roots_Error {
+trust_roots_parse :: proc(
+	roots: ^Trust_Roots,
+	data: []u8,
+	allocator := context.allocator,
+) -> Trust_Roots_Error {
 	if roots == nil {
 		return .Invalid_State
 	}
@@ -337,7 +341,14 @@ Body_Chunk_Error :: struct {
 }
 
 // A chunk holding a copy of data, refused when data is longer than limit.
-body_chunk_copy :: proc(data: []u8, limit: int, allocator := context.allocator) -> (Body_Chunk, Body_Chunk_Error) {
+body_chunk_copy :: proc(
+	data: []u8,
+	limit: int,
+	allocator := context.allocator,
+) -> (
+	Body_Chunk,
+	Body_Chunk_Error,
+) {
 	owned, error := async.owned_copy_bounded(data, limit, allocator)
 	if error.kind != .None {
 		return {}, body_chunk_error(error)
