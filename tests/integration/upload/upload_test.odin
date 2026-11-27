@@ -404,8 +404,19 @@ upload_expired_deadline_is_not_sent :: proc(t: ^testing.T) {
 	}
 	defer surf.client_release(&u.client, handle)
 
-	upload_push(t, &u.client, handle, []u8{'a'})
-	testing.expect_value(t, surf.client_upload_finish(&u.client, handle).kind, .None)
+	// The client may fail the expired request before the chunk arrives.
+	chunk, copied := surf.body_chunk_copy([]u8{'a'}, 1)
+	assert(copied.kind == .None)
+	status, pushed := surf.client_upload_submit(&u.client, handle, &chunk)
+	testing.expect_value(t, pushed.kind, .None)
+
+	if status == .Accepted {
+		testing.expect_value(t, surf.client_upload_finish(&u.client, handle).kind, .None)
+	} else {
+		testing.expect_value(t, status, surf.Upload_Submit_Status.Closed)
+		surf.body_chunk_release(&chunk)
+	}
+
 	late, done := upload_wait(&u.client, handle, 3 * time.Second)
 
 	if !testing.expect(t, done, "an expired request completes") {
