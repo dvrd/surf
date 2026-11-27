@@ -7,7 +7,6 @@ import "core:sync"
 import "core:time"
 import "shared:async"
 
-@(private)
 Slot_Phase :: enum u8 {
 	Free,
 	// Submitted; the task has not picked it up.
@@ -17,7 +16,6 @@ Slot_Phase :: enum u8 {
 	Done,
 }
 
-@(private)
 Request_Step :: enum u8 {
 	Start,
 	Send,
@@ -25,7 +23,6 @@ Request_Step :: enum u8 {
 	Body,
 }
 
-@(private)
 Upload_Kind :: enum u8 {
 	None,
 	// The copied request.body.
@@ -38,7 +35,6 @@ Upload_Kind :: enum u8 {
 
 // One request from submit to release. Slots never move: the exchange inside
 // must stay put between its begin and its destroy.
-@(private)
 Slot :: struct {
 	generation:     u64,
 	phase:          Slot_Phase,
@@ -97,7 +93,6 @@ Slot :: struct {
 }
 
 // Drives one request as far as it can go now.
-@(private)
 request_step :: proc(s: ^Client_State, slot: ^Slot) -> (yield: bool) {
 	if slot.cancel {
 		request_fail(s, slot, {kind = .IO_Failed, phase = .Cancellation, transport = net.Connection_Error.Cancelled})
@@ -130,7 +125,6 @@ request_step :: proc(s: ^Client_State, slot: ^Slot) -> (yield: bool) {
 	return false
 }
 
-@(private)
 request_begin :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	u, parse := async.http_url_parse(slot.url)
 	if parse.kind != .None {
@@ -189,7 +183,6 @@ request_begin :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	return true
 }
 
-@(private)
 request_send :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	total: i64 = 0
 
@@ -257,7 +250,6 @@ request_send :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 
 // The upload stops early when the server already answered (read its response)
 // or the producer failed. advanced: go on to the next step now.
-@(private)
 upload_interrupted :: proc(s: ^Client_State, slot: ^Slot) -> (stop: bool, advanced: bool) {
 	if slot.upload == .Queue && slot.queue_finished && slot.queue_error != nil {
 		request_fail(s, slot, {kind = .IO_Failed, phase = .Write, source_io = slot.queue_error})
@@ -274,7 +266,6 @@ upload_interrupted :: proc(s: ^Client_State, slot: ^Slot) -> (stop: bool, advanc
 }
 
 // The bytes to write next. ready false: wait for the producer.
-@(private)
 upload_data :: proc(s: ^Client_State, slot: ^Slot, total: i64) -> (data: []u8, ready: bool) {
 	switch slot.upload {
 	case .Body:
@@ -338,7 +329,6 @@ upload_data :: proc(s: ^Client_State, slot: ^Slot, total: i64) -> (data: []u8, r
 	return nil, false
 }
 
-@(private)
 upload_advance :: proc(slot: ^Slot, n: int) {
 	#partial switch slot.upload {
 	case .Source:
@@ -349,7 +339,6 @@ upload_advance :: proc(slot: ^Slot, n: int) {
 }
 
 // An HTTP/1.1 server that answers early stops the upload: read its response.
-@(private)
 request_write_failed :: proc(s: ^Client_State, slot: ^Slot, error: async.Error) -> bool {
 	if error.kind == .Peer_Closed {
 		slot.stage = .Reading
@@ -362,7 +351,6 @@ request_write_failed :: proc(s: ^Client_State, slot: ^Slot, error: async.Error) 
 	return false
 }
 
-@(private)
 request_stage_update :: proc(slot: ^Slot) {
 	if _, bound := async.client_exchange_protocol(&slot.x); bound {
 		slot.stage = .Writing
@@ -371,7 +359,6 @@ request_stage_update :: proc(slot: ^Slot) {
 	}
 }
 
-@(private)
 request_head :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	head, error := async.client_exchange_head(&slot.x)
 	if error.kind == .Pending {
@@ -442,7 +429,6 @@ request_head :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	return true
 }
 
-@(private)
 request_body :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	limit := effective_body_limit(s.config)
 
@@ -478,7 +464,6 @@ request_body :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	}
 }
 
-@(private)
 request_complete :: proc(s: ^Client_State, slot: ^Slot) {
 	request_exchange_end(s, slot)
 	slot.response.body = slot.response.body_storage[:]
@@ -488,12 +473,10 @@ request_complete :: proc(s: ^Client_State, slot: ^Slot) {
 	request_finish(s, slot)
 }
 
-@(private)
 request_exchange_fail :: proc(s: ^Client_State, slot: ^Slot, error: async.Error) {
 	request_fail(s, slot, exchange_error(s, slot, error))
 }
 
-@(private)
 request_fail :: proc(s: ^Client_State, slot: ^Slot, error: HTTP_Error) {
 	failure := error
 	effect := failure.write_effect
@@ -520,7 +503,6 @@ request_fail :: proc(s: ^Client_State, slot: ^Slot, error: HTTP_Error) {
 	request_finish(s, slot)
 }
 
-@(private)
 request_finish :: proc(s: ^Client_State, slot: ^Slot) {
 	upload_queue_clear(slot)
 
@@ -535,7 +517,6 @@ request_finish :: proc(s: ^Client_State, slot: ^Slot) {
 	slot_signal(s, slot)
 }
 
-@(private)
 request_exchange_end :: proc(s: ^Client_State, slot: ^Slot) {
 	if !slot.x_live {
 		return
@@ -552,7 +533,6 @@ request_exchange_end :: proc(s: ^Client_State, slot: ^Slot) {
 	}
 }
 
-@(private)
 slot_signal :: proc(s: ^Client_State, slot: ^Slot) {
 	if slot.waiter != nil {
 		sync.sema_post(slot.waiter)
@@ -561,12 +541,10 @@ slot_signal :: proc(s: ^Client_State, slot: ^Slot) {
 	s.notify_pending = true
 }
 
-@(private)
 slot_index :: proc(s: ^Client_State, slot: ^Slot) -> int {
 	return int((uintptr(slot) - uintptr(raw_data(s.slots))) / size_of(Slot))
 }
 
-@(private)
 upload_queue_clear :: proc(slot: ^Slot) {
 	for &chunk in slot.queue {
 		async.owned_destroy(&chunk)
@@ -577,7 +555,6 @@ upload_queue_clear :: proc(slot: ^Slot) {
 }
 
 // Frees everything the slot holds and makes it free.
-@(private)
 slot_clear :: proc(s: ^Client_State, slot: ^Slot) {
 	if slot.x_live {
 		request_exchange_end(s, slot)
@@ -605,7 +582,6 @@ slot_clear :: proc(s: ^Client_State, slot: ^Slot) {
 }
 
 // Body bytes the caller accepts, after decoding.
-@(private)
 response_limit :: proc(s: ^Client_State, slot: ^Slot) -> u64 {
 	if slot.stream && slot.limits.max_decoded_bytes > 0 {
 		return slot.limits.max_decoded_bytes
@@ -614,7 +590,6 @@ response_limit :: proc(s: ^Client_State, slot: ^Slot) -> u64 {
 	return u64(effective_body_limit(s.config))
 }
 
-@(private)
 status_redirect :: proc(status: int) -> bool {
 	switch status {
 	case 301, 302, 303, 307, 308:
@@ -624,7 +599,6 @@ status_redirect :: proc(status: int) -> bool {
 	return false
 }
 
-@(private)
 header_find :: proc(headers: []async.Http_Header, name: string) -> (string, bool) {
 	for h in headers {
 		if strings.equal_fold(h.name, name) {
@@ -637,7 +611,6 @@ header_find :: proc(headers: []async.Http_Header, name: string) -> (string, bool
 
 // ---- errors ----
 
-@(private)
 begin_error :: proc(error: async.Error) -> HTTP_Error {
 	#partial switch error.kind {
 	case .Invalid_Config:
@@ -654,7 +627,6 @@ begin_error :: proc(error: async.Error) -> HTTP_Error {
 }
 
 // What the exchange's failure means to a caller.
-@(private)
 exchange_error :: proc(s: ^Client_State, slot: ^Slot, error: async.Error) -> HTTP_Error {
 	failure := async.client_exchange_failure(&slot.x)
 	_, bound := async.client_exchange_protocol(&slot.x)
@@ -681,9 +653,9 @@ exchange_error :: proc(s: ^Client_State, slot: ^Slot, error: async.Error) -> HTT
 	case !on_wire && slot.origin != nil && slot.origin.refused:
 		result = {kind = .Address_Rejected, phase = .Connect}
 	case failure.decode != .None:
-		result = {kind = .Content_Decoding_Failed, decoding = failure.decode, phase = .Decode}
+		result = {kind = .Content_Decoding_Failed, decoding = decode_failure(failure.decode), phase = .Decode}
 	case http_kind != .None && http_kind != .IO_Failed:
-		result = {kind = http_kind, allocation = failure.http.allocation}
+		result = {kind = http_error_kind(http_kind), allocation = failure.http.allocation}
 	case !bound:
 		cause := error.network_cause
 		if slot.parsed.secure && (failure.tls != nil || dial_tls_failed(cause)) {
@@ -698,7 +670,11 @@ exchange_error :: proc(s: ^Client_State, slot: ^Slot, error: async.Error) -> HTT
 		result = {kind = .IO_Failed, transport = error.network_cause}
 	}
 
-	result.tls_error = failure.tls
+	tls, carried := tls_failure(failure.tls)
+	result.tls_error = tls
+	if result.transport == nil {
+		result.transport = carried
+	}
 
 	// The server said it never processed the request: nothing was acted on.
 	if failure.h2.not_processed || failure.h3.not_processed {
@@ -708,7 +684,6 @@ exchange_error :: proc(s: ^Client_State, slot: ^Slot, error: async.Error) -> HTT
 	return result
 }
 
-@(private)
 dial_tls_failed :: proc(cause: net.Network_Error) -> bool {
 	if connection, ok := cause.(net.Connection_Error); ok {
 		return connection == .Protocol_Failed

@@ -4,7 +4,6 @@ import "core:mem"
 import "shared:async"
 
 // Copies the head into response, owned by allocator. The body starts empty.
-@(private)
 response_head_copy :: proc(
 	response: ^Response,
 	status: int,
@@ -27,7 +26,6 @@ response_head_copy :: proc(
 	return {}
 }
 
-@(private)
 response_trailers_copy :: proc(response: ^Response, trailers: []async.Http_Header) -> HTTP_Error {
 	if len(trailers) == 0 {
 		return {}
@@ -44,15 +42,14 @@ response_trailers_copy :: proc(response: ^Response, trailers: []async.Http_Heade
 }
 
 // A deep copy of source owned by allocator.
-@(private)
 response_clone :: proc(source: ^Response, allocator: mem.Allocator) -> (Response, HTTP_Error) {
 	result: Response
 
-	if failure := response_head_copy(&result, source.status, source.headers, allocator); failure.kind != .None {
+	if failure := response_head_copy(&result, source.status, headers_async(source.headers), allocator); failure.kind != .None {
 		return {}, failure
 	}
 
-	if failure := response_trailers_copy(&result, source.trailers); failure.kind != .None {
+	if failure := response_trailers_copy(&result, headers_async(source.trailers)); failure.kind != .None {
 		response_destroy(&result)
 		return {}, failure
 	}
@@ -69,13 +66,12 @@ response_clone :: proc(source: ^Response, allocator: mem.Allocator) -> (Response
 	return result, {}
 }
 
-@(private)
 header_fields_copy :: proc(
 	headers: []async.Http_Header,
 	allocator: mem.Allocator,
 ) -> (
 	storage: []u8,
-	fields: []async.Http_Header,
+	fields: []Header,
 	error: mem.Allocator_Error,
 ) {
 	size := 0
@@ -91,7 +87,7 @@ header_fields_copy :: proc(
 		return nil, nil, .Out_Of_Memory
 	}
 
-	fields, error = make([]async.Http_Header, len(headers), allocator)
+	fields, error = make([]Header, len(headers), allocator)
 	if error == nil && len(fields) != len(headers) {
 		error = .Out_Of_Memory
 	}

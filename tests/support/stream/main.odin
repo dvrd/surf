@@ -73,7 +73,7 @@ Fixture :: struct {
 	track:           mem.Tracking_Allocator,
 	runtime:         ^async.Runtime,
 	client:          ^surf.Client,
-	roots:           async.Root_Pool,
+	roots:           surf.Trust_Roots,
 	head:            surf.Stream_Head,
 	held:            [2]async.Owned_Chunk,
 	held_offset:     [2]u64,
@@ -229,7 +229,7 @@ arm_failure :: proc(f: ^Fixture, point: int) {
 	f.failure.armed = true
 }
 
-upload_chunk :: proc(f: ^Fixture, size: int, offset: int) -> async.Owned_Chunk {
+upload_chunk :: proc(f: ^Fixture, size: int, offset: int) -> surf.Body_Chunk {
 	bytes := make([]u8, max(size, 1), f.allocator)
 
 	for &value, index in bytes {
@@ -240,7 +240,7 @@ upload_chunk :: proc(f: ^Fixture, size: int, offset: int) -> async.Owned_Chunk {
 	assert(error.kind == .None && bytes == nil)
 	f.evidence.source_created += 1
 
-	return result
+	return surf.body_chunk_from(result)
 }
 
 tracked_bytes :: proc(f: ^Fixture) -> i64 {
@@ -276,7 +276,7 @@ initialize :: proc(f: ^Fixture) {
 	if f.encrypted {
 		bytes, error := os.read_entire_file(fmt.tprintf("%s/root.pem", f.directory), f.allocator)
 		assert(error == nil)
-		assert(async.root_pool_parse(&f.roots, bytes, f.allocator) == nil)
+		assert(surf.trust_roots_parse(&f.roots, bytes, f.allocator) == .None)
 		delete(bytes, f.allocator)
 	}
 
@@ -407,8 +407,8 @@ options :: proc(f: ^Fixture) -> surf.Stream_Options {
 submit :: proc(f: ^Fixture, endpoint: net.Endpoint) -> surf.Request_Handle {
 	scheme := "https" if f.encrypted else "http"
 	url := fmt.tprintf("%s://127.0.0.1:%d/start", scheme, endpoint.port)
-	fields := [1]async.Http_Header{{name = "Authorization", value = "Bearer owned-fixture"}}
-	request := async.Http_Request {
+	fields := [1]surf.Header{{name = "Authorization", value = "Bearer owned-fixture"}}
+	request := surf.Request {
 		method = .POST if is_upload(f.mode) else .GET,
 		url    = url,
 	}
@@ -431,7 +431,7 @@ submit :: proc(f: ^Fixture, endpoint: net.Endpoint) -> surf.Request_Handle {
 		duration = 300 * time.Millisecond
 	}
 
-	handle, error := surf.client_submit_stream(f.client, request, options(f), async.deadline_after(f.runtime, duration))
+	handle, error := surf.client_submit_stream(f.client, request, options(f), time.tick_add(time.tick_now(), duration))
 	assert(error.kind == .None)
 	response: surf.Response
 	assert(surf.client_take(f.client, handle, &response).kind == .Invalid_State && response.body == nil)
@@ -467,14 +467,14 @@ reject_after_finish :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 	assert(status == .Invalid || status == .Closed)
 	assert(error.kind == .None)
 	assert(
-		owned.valid(&rejected) &&
-		raw_data(rejected.storage) == raw_data(before.storage) &&
-		len(rejected.storage) == len(before.storage) &&
-		rejected.release == before.release,
+		surf.body_chunk_valid(&rejected) &&
+		raw_data(rejected._owned.storage) == raw_data(before._owned.storage) &&
+		len(rejected._owned.storage) == len(before._owned.storage) &&
+		rejected._owned.release == before._owned.release,
 	)
 	f.evidence.source_rejected += 1
 	f.evidence.occupied_preserved = true
-	owned.destroy(&rejected)
+	surf.body_chunk_release(&rejected)
 }
 
 produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
@@ -488,7 +488,7 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 
 	if f.mode == "upload-backing" {
 		assert(f.size == 3)
-		chunks: [3]async.Owned_Chunk
+		chunks: [3]surf.Body_Chunk
 
 		for &chunk, index in chunks {
 			chunk = upload_chunk(f, 1, index)
@@ -496,14 +496,14 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 
 		for index in 0 ..< UPLOAD_CHUNKS {
 			status, error := surf.client_upload_submit(f.client, handle, &chunks[index])
-			assert(status == .Accepted && error.kind == .None && !owned.valid(&chunks[index]))
+			assert(status == .Accepted && error.kind == .None && !surf.body_chunk_valid(&chunks[index]))
 			f.evidence.source_accepted += 1
 			f.evidence.source_accepted_bytes += 1
 		}
 
 		// The runtime has not started, so nothing drained the queue.
 		status, error := surf.client_upload_submit(f.client, handle, &chunks[2])
-		assert(status == .Backpressure && error.kind == .None && owned.valid(&chunks[2]))
+		assert(status == .Backpressure && error.kind == .None && surf.body_chunk_valid(&chunks[2]))
 		f.evidence.source_rejected += 1
 		f.evidence.credit_preserved = true
 		assert(async.start(f.runtime).kind == .None)
@@ -519,7 +519,7 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 				break
 			}
 
-			assert(status == .Backpressure && owned.valid(&chunks[2]) && time.tick_since(started) < 5 * time.Second)
+			assert(status == .Backpressure && surf.body_chunk_valid(&chunks[2]) && time.tick_since(started) < 5 * time.Second)
 			thread.yield()
 		}
 
@@ -538,7 +538,7 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 	if f.mode == "upload-empty" {
 		empty := upload_chunk(f, 0, 0)
 		status, error := surf.client_upload_submit(f.client, handle, &empty)
-		assert(status == .Accepted && error.kind == .None && !owned.valid(&empty))
+		assert(status == .Accepted && error.kind == .None && !surf.body_chunk_valid(&empty))
 		f.evidence.source_accepted += 1
 	}
 
@@ -561,7 +561,7 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 			status, error := surf.client_upload_submit(f.client, handle, &chunk)
 
 			if status == .Accepted {
-				assert(error.kind == .None && !owned.valid(&chunk))
+				assert(error.kind == .None && !surf.body_chunk_valid(&chunk))
 				f.evidence.source_accepted += 1
 				f.evidence.source_accepted_bytes += u64(length)
 				offset += length
@@ -569,11 +569,11 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 				break
 			}
 
-			assert(owned.valid(&chunk))
+			assert(surf.body_chunk_valid(&chunk))
 			f.evidence.source_rejected += 1
 
 			if status == .Closed {
-				owned.destroy(&chunk)
+				surf.body_chunk_release(&chunk)
 				return
 			}
 
@@ -597,7 +597,7 @@ produce :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 					if f.mode == "upload-source-error-blocked" {
 						f.source_error_at = time.tick_now()
 						assert(surf.client_upload_finish(f.client, handle, .Unexpected_EOF).kind == .None)
-						owned.destroy(&chunk)
+						surf.body_chunk_release(&chunk)
 						return
 					}
 				}
@@ -691,11 +691,11 @@ consume :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 			continue
 		}
 
-		chunk: async.Owned_Chunk
+		chunk: surf.Body_Chunk
 		state, error := surf.client_stream_next(f.client, handle, &chunk)
 
 		if error.kind != .None {
-			assert(!owned.valid(&chunk))
+			assert(!surf.body_chunk_valid(&chunk))
 			remember_error(f, error)
 			return
 		}
@@ -715,7 +715,7 @@ consume :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 			continue
 		}
 
-		assert(state == .Chunk && owned.valid(&chunk) && len(chunk.data) > 0 && len(chunk.data) <= CHUNK_BYTES)
+		assert(state == .Chunk && surf.body_chunk_valid(&chunk) && len(chunk.data) > 0 && len(chunk.data) <= CHUNK_BYTES)
 		offset := f.evidence.bytes
 		check_payload(f, chunk.data)
 
@@ -729,11 +729,11 @@ consume :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 			(f.mode == "timeout" || f.mode == "cancel" || f.mode == "fairness") && held < 2
 
 		if !keep {
-			owned.destroy(&chunk)
+			surf.body_chunk_release(&chunk)
 			continue
 		}
 
-		assert(owned.move(&f.held[held], &chunk))
+		assert(owned.move(&f.held[held], &chunk._owned))
 		f.held_offset[held] = offset
 		held += 1
 
@@ -773,7 +773,7 @@ fairness :: proc(f: ^Fixture, held: surf.Request_Handle) {
 	cheap, cause := surf.client_submit(
 		f.client,
 		{method = .GET, url = fmt.tprintf("http://127.0.0.1:%d/cheap", endpoint.port)},
-		async.deadline_after(f.runtime, 2 * time.Second),
+		time.tick_add(time.tick_now(), 2 * time.Second),
 	)
 	assert(cause.kind == .None)
 	started := time.tick_now()
@@ -870,7 +870,7 @@ cleanup :: proc(f: ^Fixture, handle: surf.Request_Handle) {
 	mem.free(f.runtime, f.allocator)
 	f.client = nil
 	f.runtime = nil
-	async.root_pool_destroy(&f.roots)
+	surf.trust_roots_destroy(&f.roots)
 
 	if strings.has_prefix(f.mode, "late") || f.mode == "gzip-crc-held" {
 		retained := tracked_bytes(f)

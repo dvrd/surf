@@ -88,8 +88,7 @@ run_outcomes :: proc() {
 	thread.destroy(secure_thread)
 	expect := [?]string{
 		"/native-reset", "/native-large", "/native-malformed", "/native-slow",
-		"/curl-reset", "/curl-large", "/curl-malformed", "/curl-slow",
-		"/status", "/native-redirect", "/native-redirected-reset", "/native-unsafe-redirect",
+		"/native-redirect", "/native-redirected-reset", "/native-unsafe-redirect",
 	}
 	sync.lock(&seen_mu)
 	defer sync.unlock(&seen_mu)

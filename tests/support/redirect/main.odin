@@ -63,12 +63,12 @@ main :: proc() {
 	allocator := mem.tracking_allocator(&track)
 	scope, cause := budget.create_root({bytes = 32 << 20, streams = 1, jobs = 8}, allocator)
 	assert(cause == .None)
-	roots: tls.Root_Pool
+	roots: surf.Trust_Roots
 
 	if encrypted {
 		root, error := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
 		assert(error == nil)
-		assert(tls.root_pool_parse(&roots, root, allocator) == nil)
+		assert(surf.trust_roots_parse(&roots, root, allocator) == .None)
 		delete(root, allocator)
 	}
 
@@ -147,7 +147,7 @@ main :: proc() {
 	host := "one.redirect.test" if mode == "dns32" else "127.0.0.1"
 	path := "/dir/start" if mode == "relative" else "/start"
 	url := fmt.tprintf("%s://%s:%d%s", scheme, host, endpoint.port, path)
-	method := async.Http_Method.GET
+	method := surf.Method.GET
 
 	if strings.has_prefix(mode, "head") {
 		method = .HEAD
@@ -157,7 +157,7 @@ main :: proc() {
 		method = .POST
 	}
 
-	fields := [1]async.Http_Header{{name = "Accept", value = "text/plain"}}
+	fields := [1]surf.Header{{name = "Accept", value = "text/plain"}}
 
 	if mode == "cross-auth" {
 		fields[0] = {
@@ -187,10 +187,10 @@ main :: proc() {
 		body = payload[:]
 	}
 
-	cutoff: async.Deadline
+	cutoff: time.Tick
 
 	if warmup_case {
-		cutoff = async.deadline_after(&r, 200 * time.Millisecond)
+		cutoff = time.tick_add(time.tick_now(), 200 * time.Millisecond)
 	}
 
 	handle, error := surf.client_submit(&c, {method = method, url = url, headers = fields[:], body = body}, cutoff)
@@ -330,7 +330,7 @@ main :: proc() {
 	async.shutdown(&r)
 	assert(async.join(&r).kind == .None)
 	assert(async.destroy(&r).kind == .None)
-	tls.root_pool_destroy(&roots)
+	surf.trust_roots_destroy(&roots)
 	assert(fd_count() == fd_before)
 	response_status := response.status
 	surf.response_destroy(&response)

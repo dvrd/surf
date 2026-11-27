@@ -1,7 +1,6 @@
 package surf
 
 import "core:testing"
-import "shared:async"
 
 @(test)
 request_validate_refuses_framing_and_bad_input_before_send :: proc(t: ^testing.T) {
@@ -10,14 +9,14 @@ request_validate_refuses_framing_and_bad_input_before_send :: proc(t: ^testing.T
 	body := []u8{1, 2, 3, 4}
 
 	for name in ([]string{"Transfer-Encoding", "Content-Length", "Connection", "Host", "TE", "Expect"}) {
-		headers := []async.Http_Header{{name = name, value = "x"}}
+		headers := []Header{{name = name, value = "x"}}
 		error := request_validate(config, {method = .POST, url = url, headers = headers, body = body}, {})
 		testing.expect_value(t, error.kind, .Reserved_Header)
 		testing.expect_value(t, error.phase, .Configuration)
 		testing.expect_value(t, error.write_effect, .Not_Sent)
 	}
 
-	bad := []async.Http_Header{{name = "X-Test", value = "a\r\nb"}}
+	bad := []Header{{name = "X-Test", value = "a\r\nb"}}
 	testing.expect_value(t, request_validate(config, {method = .GET, url = url, headers = bad}, {}).kind, .Invalid_Header)
 	testing.expect_value(t, request_validate(config, {method = .GET, url = "ftp://x"}, {}).kind, .Invalid_URL)
 	testing.expect_value(t, request_validate(config, {method = .GET, url = "http://example.com/"}, {}).kind, .Insecure_URL)
@@ -28,6 +27,6 @@ request_validate_refuses_framing_and_bad_input_before_send :: proc(t: ^testing.T
 	testing.expect_value(t, request_validate(follow, {method = .PUT, url = url}, upload).kind, .Invalid_Config)
 	testing.expect_value(t, request_validate(config, {method = .PUT, url = url}, upload).kind, .None)
 
-	allowed := []async.Http_Header{{name = "Authorization", value = "Bearer x"}, {name = "Content-Type", value = "a/b"}}
+	allowed := []Header{{name = "Authorization", value = "Bearer x"}, {name = "Content-Type", value = "a/b"}}
 	testing.expect_value(t, request_validate(config, {method = .POST, url = url, headers = allowed, body = body}, {}).kind, .None)
 }

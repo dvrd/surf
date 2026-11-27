@@ -4,6 +4,7 @@ import "base:intrinsics"
 import rt "base:runtime"
 import "core:crypto/legacy/sha1"
 import "core:encoding/base64"
+import "core:fmt"
 import "core:net"
 import "core:os"
 import "core:strconv"
@@ -67,129 +68,151 @@ Ws_Peer :: struct {
 	go:            int,
 }
 
+// The session ends through its operations: a failed open, or a read that
+// ended with the session once no close is outstanding.
 Ws_Test :: struct {
-	session:                                                    WebSocket_Async,
-	rt:                                                         async.Runtime,
-	peer:                                                       Ws_Peer,
-	upgrade:                                                    WebSocket_Async_Op,
-	read:                                                       WebSocket_Async_Op,
-	write_a:                                                    WebSocket_Async_Op,
-	write_b:                                                    WebSocket_Async_Op,
-	close:                                                      WebSocket_Async_Op,
-	protocols:                                                  [1]string,
-	src:                                                        [32]u8,
-	dst:                                                        [128]u8,
-	payload6:                                                   [6]u8,
-	payload1:                                                   [1]u8,
-	write_text:                                                 string,
-	expect_read:                                                string,
-	upgrade_error, read_error, write_error, close_error:        WebSocket_Async_Error,
-	write_errors:                                               [2]WebSocket_Async_Error,
-	write_ns:                                                   [2]int,
-	reject_bytes, reject_count, reject_utf8, reject_size:       WebSocket_Async_Error_Kind,
-	read_opcode:                                                async.WS_Message_Kind,
-	src_n, read_n, write_n, saw_upgrade, saw_read, saw_write:   int,
-	saw_close, write_count, done:                               int,
-	read_ok, write_ok, read_is_text, close_once, clean:         bool,
-	phase:                                                      WebSocket_Async_Phase,
-	rt_up, listener_up:                                         bool,
-	worker:                                                     ^thread.Thread,
-	policy_host:                                                string,
-	policy_endpoint:                                            net.Endpoint,
-	policy_calls:                                               int,
+	client:                                              Client,
+	handle:                                              WebSocket_Handle,
+	ready:                                               int,
+	peer:                                                Ws_Peer,
+	open:                                                WebSocket_Op,
+	read:                                                WebSocket_Op,
+	write_a:                                             WebSocket_Op,
+	write_b:                                             WebSocket_Op,
+	close:                                               WebSocket_Op,
+	protocols:                                           [1]string,
+	src:                                                 [32]u8,
+	dst:                                                 [128]u8,
+	payload6:                                            [6]u8,
+	payload1:                                            [1]u8,
+	subprotocol:                                         [16]u8,
+	subprotocol_n:                                       int,
+	write_text:                                          string,
+	expect_read:                                         string,
+	open_error, read_error, write_error, close_error:    WebSocket_Error,
+	write_errors:                                        [2]WebSocket_Error,
+	write_ns:                                            [2]int,
+	reject_bytes, reject_count, reject_utf8, reject_size: Client_Error_Kind,
+	cancel_close:                                        Client_Error_Kind,
+	src_n, read_n, write_n, saw_open, saw_write:         int,
+	saw_close, write_count, done:                        int,
+	read_ok, write_ok, read_is_text, close_once, clean:  bool,
+	read_ended, close_pending:                           bool,
+	client_up, listener_up:                              bool,
+	worker:                                              ^thread.Thread,
+	policy_host:                                         [32]u8,
+	policy_host_n:                                       int,
+	policy_endpoint:                                     net.Endpoint,
+	policy_calls:                                        int,
 }
 
 @(test)
-websocket_async_bind_rejects_bad_config_and_ignores_close_cancel :: proc(t: ^testing.T) {
-	testing.set_fail_timeout(t, 5 * time.Second)
-	marker := 1
-	session := new(WebSocket_Async)
-	defer free(session)
-	session.user = &marker
-	session.route.address[0] = 0xAB
-	rt_value: async.Runtime
-	testing.expect_value(t, websocket_async_bind(nil, &rt_value, {}).kind, .Invalid_Config)
-	testing.expect_value(t, websocket_async_bind(session, nil, {}).kind, .Invalid_Config)
-	bad := WebSocket_Async_Config {
-		endpoint = {address = net.IP4_Loopback, port = 9},
-		host     = "127.0.0.1",
+websocket_open_rejects_bad_requests_synchronously :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 15 * time.Second)
+	c: Client
+	capacities := DEFAULT_CAPACITIES
+	capacities.websockets = 1
+	start_error := client_start(&c, {capacities = capacities}, rt.heap_allocator())
+	testing.expect_value(t, start_error.kind, .None)
+	if start_error.kind != .None {
+		return
+	}
+	defer client_destroy(&c)
+
+	listener, listen_error := net.listen_tcp({net.IP4_Loopback, 0})
+	testing.expect(t, listen_error == nil)
+	if listen_error != nil {
+		return
+	}
+	defer net.close(listener)
+
+	endpoint, _ := net.bound_endpoint(listener)
+	url := fmt.tprintf("wss://127.0.0.1:%d/ws", endpoint.port)
+	done: int
+	op := WebSocket_Op {
+		callback  = ws_count_callback,
+		user_data = &done,
 	}
 
-	bad.max_message_size = -1
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.max_message_size = 0
-	bad.max_frame_payload = async.WS_MAX_MESSAGE_BYTES + 1
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.max_frame_payload = 0
-	bad.max_fragments = 65537
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.max_fragments = 0
-	bad.handshake_timeout = -time.Second
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.handshake_timeout = 0
-	bad.target = "ws"
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.target = ""
-	pool: async.Root_Pool
-	bad.roots = &pool
-	bad.host = "[::1]:443"
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.roots = nil
-	bad.host = ""
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.host = "127.0.0.1"
-	bad.idle_timeout = 25 * time.Hour
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.idle_timeout = 0
-	bad.message_timeout = -time.Second
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.message_timeout = 0
-	bad.ping_interval = 25 * time.Hour
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.ping_interval = 0
-	bad.endpoint = {}
-	bad.port = 65536
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	bad.port = 0
-	bad.host = ":80"
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, bad).kind, .Invalid_Config)
-	testing.expect(t, session.user == &marker && session.route.address[0] == 0xAB && !session.bound)
-	good := WebSocket_Async_Config {
-		endpoint = {address = net.IP4_Loopback, port = 9},
-		host     = "127.0.0.1",
+	_, nil_op := client_websocket_open(&c, url, {}, nil)
+	testing.expect_value(t, nil_op.kind, .Invalid_State)
+	no_callback: WebSocket_Op
+	_, missing := client_websocket_open(&c, url, {}, &no_callback)
+	testing.expect_value(t, missing.kind, .Invalid_State)
+	_, scheme := client_websocket_open(&c, "https://127.0.0.1/", {}, &op)
+	testing.expect_value(t, scheme.kind, .Invalid_Config)
+	testing.expect_value(t, scheme.http.kind, .Invalid_URL)
+	_, insecure := client_websocket_open(&c, "ws://127.0.0.1:9/", {}, &op)
+	testing.expect_value(t, insecure.kind, .Invalid_Config)
+	testing.expect_value(t, insecure.http.kind, .Insecure_URL)
+	_, empty := client_websocket_open(&c, "wss:///ws", {}, &op)
+	testing.expect_value(t, empty.kind, .Invalid_Config)
+	_, negative := client_websocket_open(&c, url, {max_message_size = -1}, &op)
+	testing.expect_value(t, negative.kind, .Invalid_Config)
+	_, timeout := client_websocket_open(&c, url, {message_timeout = -time.Second}, &op)
+	testing.expect_value(t, timeout.kind, .Invalid_Config)
+	_, ping := client_websocket_open(&c, url, {ping_interval = -2}, &op)
+	testing.expect_value(t, ping.kind, .Invalid_Config)
+	testing.expect(t, !op._pending)
+
+	stale := WebSocket_Handle{}
+	read_op := WebSocket_Op {
+		callback  = ws_count_callback,
+		user_data = &done,
+	}
+	buffer: [8]u8
+	testing.expect_value(t, client_websocket_read(&c, stale, &read_op, buffer[:]).kind, .Invalid_Handle)
+
+	// The listener never accepts, so the upgrade stays in flight.
+	handle, opened := client_websocket_open(&c, url, {ping_interval = WEBSOCKET_PING_OFF}, &op)
+	testing.expect_value(t, opened.kind, .None)
+	if opened.kind != .None {
+		return
 	}
 
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, good).kind, .None)
-	testing.expect(t, session.bound && session.user == &marker)
-	testing.expect_value(t, string(session.route.address[:session.route.address_n]), "127.0.0.1")
-	testing.expect_value(t, websocket_async_bind(session, &rt_value, good).kind, .Invalid_Config)
-	op: WebSocket_Async_Op
-	op.callback = ws_on_upgrade
-	op.user_data = session
-	testing.expect_value(t, websocket_async_write(session, &op, .Text, []u8{'a'}).kind, .Invalid_State)
-	testing.expect_value(t, websocket_async_read(session, &op, nil).kind, .Invalid_State)
-	testing.expect_value(t, websocket_async_close(session, &op).kind, .Invalid_State)
-	pending := WebSocket_Async_Op {
-		pending = true,
-		kind    = .Close,
+	_, full := client_websocket_open(&c, url, {}, &read_op)
+	testing.expect_value(t, full.kind, .Capacity)
+	testing.expect_value(t, client_websocket_read(&c, handle, &read_op, buffer[:]).kind, .Invalid_State)
+	testing.expect_value(t, client_websocket_write(&c, handle, &read_op, .Text, buffer[:1]).kind, .Invalid_State)
+	testing.expect_value(t, client_websocket_close(&c, handle, &read_op).kind, .Invalid_State)
+	testing.expect_value(t, client_websocket_close(&c, handle, &read_op, 1005).kind, .Invalid_Config)
+	long_reason := strings.repeat("r", 124, context.temp_allocator)
+	testing.expect_value(t, client_websocket_close(&c, handle, &read_op, 1000, long_reason).kind, .Invalid_Config)
+	bad := [1]u8{0xff}
+	testing.expect_value(t, client_websocket_write(&c, handle, &read_op, .Text, bad[:]).kind, .Invalid_Config)
+	testing.expect_value(t, client_websocket_read(&c, handle, &op, buffer[:]).kind, .Invalid_State)
+	testing.expect_value(t, client_websocket_cancel(&c, handle, &read_op).kind, .Invalid_State)
+	testing.expect_value(t, client_websocket_cancel(&c, handle, &op).kind, .None)
+
+	if !ws_until(t, &done, 1, 5 * time.Second, "the cancelled open") {
+		return
 	}
 
-	testing.expect_value(t, websocket_async_cancel(session, &pending).kind, .Invalid_State)
-	testing.expect(t, pending.pending)
+	testing.expect_value(t, op.kind, WebSocket_Op_Kind.Open)
+	testing.expect_value(t, op.error.kind, WebSocket_Error_Kind.Cancelled)
+	testing.expect_value(t, client_websocket_read(&c, handle, &read_op, buffer[:]).kind, .Closed)
+	testing.expect_value(t, client_websocket_release(&c, handle).kind, .None)
+	testing.expect_value(t, client_websocket_release(&c, handle).kind, .Invalid_Handle)
+	testing.expect_value(t, client_websocket_read(&c, handle, &read_op, buffer[:]).kind, .Invalid_Handle)
+}
+
+ws_count_callback :: proc(op: ^WebSocket_Op) {
+	counter := cast(^int)op.user_data
+	intrinsics.atomic_add(counter, 1)
 }
 
 @(test)
-websocket_async_fragments_ping_and_echo :: proc(t: ^testing.T) {
+websocket_fragments_ping_and_echo :: proc(t: ^testing.T) {
 	ws_run(t, .Echo)
 }
 
 @(test)
-websocket_async_bounds_queue_and_message :: proc(t: ^testing.T) {
+websocket_bounds_queue_and_message :: proc(t: ^testing.T) {
 	ws_run(t, .Queue)
 }
 
 @(test)
-websocket_async_upgrade_authentication_rejected :: proc(t: ^testing.T) {
+websocket_upgrade_authentication_rejected :: proc(t: ^testing.T) {
 	ws_run(t, .Bad_Accept)
 	if testing.failed(t) {
 		return
@@ -199,7 +222,7 @@ websocket_async_upgrade_authentication_rejected :: proc(t: ^testing.T) {
 }
 
 @(test)
-websocket_async_invalid_utf8_and_masked_server_frame :: proc(t: ^testing.T) {
+websocket_invalid_utf8_and_masked_server_frame :: proc(t: ^testing.T) {
 	ws_run(t, .Bad_UTF8)
 	if testing.failed(t) {
 		return
@@ -209,27 +232,27 @@ websocket_async_invalid_utf8_and_masked_server_frame :: proc(t: ^testing.T) {
 }
 
 @(test)
-websocket_async_message_too_big :: proc(t: ^testing.T) {
+websocket_message_too_big :: proc(t: ^testing.T) {
 	ws_run(t, .Too_Big)
 }
 
 @(test)
-websocket_async_slow_peer_times_out :: proc(t: ^testing.T) {
+websocket_slow_peer_times_out :: proc(t: ^testing.T) {
 	ws_run(t, .Slow)
 }
 
 @(test)
-websocket_async_cancel_during_upgrade :: proc(t: ^testing.T) {
+websocket_cancel_during_upgrade :: proc(t: ^testing.T) {
 	ws_run(t, .Cancel)
 }
 
 @(test)
-websocket_async_dials_localhost_from_the_hosts_file :: proc(t: ^testing.T) {
+websocket_dials_localhost_from_the_hosts_file :: proc(t: ^testing.T) {
 	ws_run(t, .Echo, true)
 }
 
 @(test)
-websocket_async_tls_loopback_by_endpoint_and_by_name :: proc(t: ^testing.T) {
+websocket_tls_loopback_by_address_and_by_name :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 90 * time.Second)
 	if !ws_build(t) {
 		return
@@ -271,31 +294,28 @@ websocket_async_tls_loopback_by_endpoint_and_by_name :: proc(t: ^testing.T) {
 		return
 	}
 
-	pool := new(async.Root_Pool)
+	pool := new(Trust_Roots)
 	defer free(pool)
-	defer async.root_pool_destroy(pool)
-	load_error := async.root_pool_load_file(pool, "tests/support/credentials/root.pem")
-	testing.expect(t, load_error == nil)
-	if load_error != nil {
+	defer trust_roots_destroy(pool)
+	load_error := trust_roots_load_file(pool, "tests/support/credentials/root.pem")
+	testing.expect(t, load_error == .None)
+	if load_error != .None {
 		return
 	}
 
-	endpoint := net.Endpoint {
-		address = net.IP4_Loopback,
-		port    = port,
-	}
-
-	ws_tls_echo(t, endpoint, pool)
+	// The peer serves, in order: echo by address, a wrong host, echo by name
+	// and the platform roots.
+	ws_tls_echo(t, fmt.tprintf("wss://127.0.0.1:%d/ws", port), pool, false)
 	if testing.failed(t) {
 		return
 	}
 
-	ws_tls_wrong_host(t, endpoint, pool)
+	ws_tls_wrong_host(t, port, pool)
 	if testing.failed(t) {
 		return
 	}
 
-	ws_tls_named(t, port, pool)
+	ws_tls_echo(t, fmt.tprintf("wss://LocalHost:%d/ws", port), pool, true)
 	if testing.failed(t) {
 		return
 	}
@@ -330,16 +350,17 @@ ws_run :: proc(t: ^testing.T, mode: Ws_Peer_Mode, named := false) {
 		return
 	}
 
-	cfg := ws_case_config(h, endpoint, mode)
+	config := Config {
+		allow_http = true,
+	}
+	url := fmt.tprintf("ws://127.0.0.1:%d/ws", endpoint.port)
 	if named {
-		cfg.endpoint = {}
-		cfg.host = "localhost"
-		cfg.port = endpoint.port
-		cfg.address_policy = ws_named_policy
-		cfg.address_policy_data = h
+		url = fmt.tprintf("ws://localhost:%d/ws", endpoint.port)
+		config.address_policy = ws_named_policy
+		config.address_policy_data = h
 	}
 
-	if !ws_client_start(t, h, cfg) {
+	if !ws_client_start(t, h, config, url, ws_case_options(h, mode)) {
 		return
 	}
 
@@ -347,7 +368,7 @@ ws_run :: proc(t: ^testing.T, mode: Ws_Peer_Mode, named := false) {
 		return
 	}
 
-	if !ws_wait(t, h, 8 * time.Second) {
+	if !ws_until(t, &h.done, 1, 8 * time.Second, "the websocket session") {
 		return
 	}
 
@@ -356,7 +377,7 @@ ws_run :: proc(t: ^testing.T, mode: Ws_Peer_Mode, named := false) {
 	if named {
 		v4, ok := h.policy_endpoint.address.(net.IP4_Address)
 		testing.expect_value(t, h.policy_calls, 1)
-		testing.expect_value(t, h.policy_host, "localhost")
+		testing.expect_value(t, string(h.policy_host[:h.policy_host_n]), "localhost")
 		testing.expect(t, ok && v4 == net.IP4_Loopback)
 		testing.expect_value(t, h.policy_endpoint.port, endpoint.port)
 	}
@@ -365,7 +386,7 @@ ws_run :: proc(t: ^testing.T, mode: Ws_Peer_Mode, named := false) {
 ws_named_policy :: proc(host: string, addresses: []net.Endpoint, user: rawptr) -> bool {
 	h := cast(^Ws_Test)user
 	h.policy_calls += 1
-	h.policy_host = host
+	h.policy_host_n = copy(h.policy_host[:], host)
 	if len(addresses) > 0 {
 		h.policy_endpoint = addresses[0]
 	}
@@ -373,12 +394,9 @@ ws_named_policy :: proc(host: string, addresses: []net.Endpoint, user: rawptr) -
 	return true
 }
 
-ws_case_config :: proc(h: ^Ws_Test, endpoint: net.Endpoint, mode: Ws_Peer_Mode) -> WebSocket_Async_Config {
+ws_case_options :: proc(h: ^Ws_Test, mode: Ws_Peer_Mode) -> WebSocket_Options {
 	h.protocols[0] = "chat"
-	cfg := WebSocket_Async_Config {
-		endpoint          = endpoint,
-		host              = "127.0.0.1",
-		target            = "/ws",
+	options := WebSocket_Options {
 		subprotocols      = h.protocols[:],
 		handshake_timeout = 5 * time.Second,
 		idle_timeout      = 5 * time.Second,
@@ -388,58 +406,51 @@ ws_case_config :: proc(h: ^Ws_Test, endpoint: net.Endpoint, mode: Ws_Peer_Mode) 
 
 	switch mode {
 	case .Echo:
-		cfg.max_frame_payload = 5
+		options.max_frame_payload = 5
 		h.write_text = "hello-from-client"
 		h.expect_read = "hello-from-server"
 	case .Queue:
-		cfg.max_message_size = 16
-		cfg.max_queued_bytes = 8
+		options.max_message_size = 16
+		options.max_queued_bytes = 8
 	case .Too_Big:
-		cfg.max_message_size = 16
+		options.max_message_size = 16
 	case .Slow:
-		cfg.handshake_timeout = time.Second
+		options.handshake_timeout = time.Second
 	case .Bad_Accept, .Unauthorized, .Bad_UTF8, .Masked, .Cancel, .Wakes, .Stall_Message, .Stall_Frame, .Idle:
 	}
 
-	return cfg
+	return options
 }
 
-ws_client_start :: proc(t: ^testing.T, h: ^Ws_Test, cfg: WebSocket_Async_Config) -> bool {
-	init_error := async.init(&h.rt, {workers = 1, task_capacity = 4, io_capacity = 16})
-	testing.expect_value(t, init_error.kind, .None)
-	if init_error.kind != .None {
-		return false
-	}
-
-	h.rt_up = true
-	h.session.user = h
-	saved := context.allocator
-	context.allocator = rt.heap_allocator()
-	bind_error := websocket_async_bind(&h.session, &h.rt, cfg, ws_on_done)
-	context.allocator = saved
-	testing.expect_value(t, bind_error.kind, .None)
-	if bind_error.kind != .None {
-		return false
-	}
-
-	h.upgrade.callback = ws_on_upgrade
-	h.upgrade.user_data = h
-	submit_error := websocket_async_upgrade(&h.session, &h.upgrade)
-	testing.expect_value(t, submit_error.kind, .None)
-	if submit_error.kind != .None {
-		return false
-	}
-
-	spawn_error := async.spawn(&h.rt, &h.session.task)
-	testing.expect_value(t, spawn_error.kind, .None)
-	if spawn_error.kind != .None {
-		return false
-	}
-
-	start_error := async.start(&h.rt)
+ws_client_start :: proc(t: ^testing.T, h: ^Ws_Test, config: Config, url: string, options: WebSocket_Options) -> bool {
+	start_error := client_start(&h.client, {http = config}, rt.heap_allocator())
 	testing.expect_value(t, start_error.kind, .None)
+	if start_error.kind != .None {
+		return false
+	}
 
-	return start_error.kind == .None
+	h.client_up = true
+	h.open.callback = ws_on_open
+	h.open.user_data = h
+	handle, open_error := client_websocket_open(&h.client, url, options, &h.open)
+	testing.expect_value(t, open_error.kind, .None)
+	if open_error.kind != .None {
+		return false
+	}
+
+	h.handle = handle
+	intrinsics.atomic_store_explicit(&h.ready, 1, .Release)
+
+	return true
+}
+
+// Callbacks may run before client_websocket_open has returned the handle.
+ws_handle :: proc(h: ^Ws_Test) -> WebSocket_Handle {
+	for intrinsics.atomic_load_explicit(&h.ready, .Acquire) == 0 {
+		thread.yield()
+	}
+
+	return h.handle
 }
 
 // The peer accepted, so the upgrade request is in flight or waiting for its answer.
@@ -456,36 +467,41 @@ ws_cancel_when_accepted :: proc(t: ^testing.T, h: ^Ws_Test) -> bool {
 	}
 
 	time.sleep(50 * time.Millisecond)
-	cancel_error := websocket_async_cancel(&h.session, &h.upgrade)
+	cancel_error := client_websocket_cancel(&h.client, h.handle, &h.open)
 	testing.expect_value(t, cancel_error.kind, .None)
 
 	return cancel_error.kind == .None
 }
 
-ws_wait :: proc(t: ^testing.T, h: ^Ws_Test, limit: time.Duration) -> bool {
+ws_until :: proc(t: ^testing.T, flag: ^int, value: int, limit: time.Duration, what: string) -> bool {
 	start := time.tick_now()
 
-	for intrinsics.atomic_load_explicit(&h.done, .Acquire) == 0 {
+	for intrinsics.atomic_load_explicit(flag, .Acquire) < value {
 		if time.tick_since(start) > limit {
-			testing.expect(t, false, "websocket session did not finish")
+			testing.expectf(t, false, "timed out waiting for %s", what)
 			return false
 		}
 
-		thread.yield()
+		time.sleep(time.Millisecond)
 	}
 
 	return true
 }
 
+// Releases the session and destroys the client, so every callback has run.
 ws_test_stop :: proc(h: ^Ws_Test) {
+	if h.client_up {
+		if intrinsics.atomic_load_explicit(&h.ready, .Acquire) != 0 {
+			_ = client_websocket_release(&h.client, h.handle)
+		}
+
+		_ = client_destroy(&h.client)
+		h.client_up = false
+	}
+
 	if h.listener_up {
 		net.close(h.peer.listener)
 		h.listener_up = false
-	}
-
-	if h.rt_up {
-		_ = async.destroy(&h.rt)
-		h.rt_up = false
 	}
 
 	if h.worker != nil {
@@ -494,13 +510,8 @@ ws_test_stop :: proc(h: ^Ws_Test) {
 	}
 }
 
-ws_expect_terminal :: proc(t: ^testing.T, h: ^Ws_Test) {
-	testing.expect_value(t, h.phase, .Ended)
-	testing.expect_value(t, h.saw_upgrade, 1)
-}
-
 ws_expect_case :: proc(t: ^testing.T, h: ^Ws_Test, mode: Ws_Peer_Mode) {
-	ws_expect_terminal(t, h)
+	testing.expect_value(t, h.saw_open, 1)
 
 	switch mode {
 	case .Echo:
@@ -509,66 +520,72 @@ ws_expect_case :: proc(t: ^testing.T, h: ^Ws_Test, mode: Ws_Peer_Mode) {
 		testing.expect(t, h.peer.continuations >= 1 && h.peer.pongs >= 1 && h.peer.closes >= 1)
 		testing.expect(t, h.read_ok && h.read_is_text && h.write_ok)
 		testing.expect_value(t, h.write_n, len("hello-from-client"))
-		testing.expect(t, h.clean && h.saw_close == 1 && h.close_error.kind == .None)
-		testing.expect(t, websocket_async_subprotocol(&h.session) == "chat")
+		testing.expect(t, h.clean && h.saw_close == 1)
+		testing.expect_value(t, h.close_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, h.cancel_close, Client_Error_Kind.Invalid_State)
+		testing.expect_value(t, string(h.subprotocol[:h.subprotocol_n]), "chat")
 	case .Queue:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.reject_bytes, .Queue_Full)
-		testing.expect_value(t, h.reject_count, .Queue_Full)
-		testing.expect_value(t, h.reject_utf8, .Invalid_UTF8)
-		testing.expect_value(t, h.reject_size, .Message_Oversized)
+		testing.expect_value(t, h.reject_bytes, Client_Error_Kind.Capacity)
+		testing.expect_value(t, h.reject_count, Client_Error_Kind.Capacity)
+		testing.expect_value(t, h.reject_utf8, Client_Error_Kind.Invalid_Config)
+		testing.expect_value(t, h.reject_size, Client_Error_Kind.Invalid_Config)
 		testing.expect_value(t, h.write_count, 2)
-		testing.expect_value(t, h.write_errors[0].kind, .None)
-		testing.expect_value(t, h.write_errors[1].kind, .None)
+		testing.expect_value(t, h.write_errors[0].kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, h.write_errors[1].kind, WebSocket_Error_Kind.None)
 		testing.expect_value(t, h.write_ns[0], 6)
 		testing.expect_value(t, h.write_ns[1], 1)
 		testing.expect_value(t, h.peer.texts, 2)
-		testing.expect_value(t, h.read_error.kind, .Closed)
+		testing.expect_value(t, h.read_error.kind, WebSocket_Error_Kind.Closed)
 		testing.expect_value(t, h.read_error.close.peer_code, 1000)
-		testing.expect(t, h.clean && h.close_error.kind == .None)
-		testing.expect(t, websocket_async_subprotocol(&h.session) == "chat")
+		testing.expect(t, h.clean)
+		testing.expect_value(t, h.close_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, string(h.subprotocol[:h.subprotocol_n]), "chat")
 	case .Bad_Accept:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.upgrade_error.kind, .Upgrade_Failed)
-		testing.expect_value(t, h.upgrade_error.close.upgrade, .Invalid_Accept)
+		testing.expect(t, h.open_error.kind != .None)
+		testing.expect_value(t, h.open_error.upgrade, .Invalid_Accept)
 		testing.expect(t, !h.clean)
 	case .Unauthorized:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.upgrade_error.kind, .Upgrade_Failed)
-		testing.expect_value(t, h.upgrade_error.close.upgrade, .Invalid_Status)
-		testing.expect_value(t, h.upgrade_error.close.status, 401)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.Refused)
+		testing.expect_value(t, h.open_error.upgrade, .Invalid_Status)
+		testing.expect_value(t, h.open_error.status, 401)
 		testing.expect(t, !h.clean)
 	case .Bad_UTF8:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.upgrade_error.kind, .None)
-		testing.expect_value(t, h.read_error.kind, .Invalid_UTF8)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, h.read_error.kind, WebSocket_Error_Kind.Protocol_Failed)
+		testing.expect_value(t, h.read_error.close.reason, WebSocket_Close_Reason.Invalid_Data)
 		testing.expect_value(t, h.read_error.close.code, 1007)
 		testing.expect(t, !h.clean)
 	case .Masked:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.upgrade_error.kind, .None)
-		testing.expect_value(t, h.read_error.kind, .Protocol_Failed)
-		testing.expect_value(t, h.read_error.close.frame, .Unexpected_Masking)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, h.read_error.kind, WebSocket_Error_Kind.Protocol_Failed)
+		testing.expect_value(t, h.read_error.close.reason, WebSocket_Close_Reason.Protocol_Error)
 		testing.expect(t, !h.clean)
 	case .Too_Big:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.upgrade_error.kind, .None)
-		testing.expect_value(t, h.read_error.kind, .Message_Oversized)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, h.read_error.kind, WebSocket_Error_Kind.Message_Oversized)
 		testing.expect_value(t, h.read_error.close.code, 1009)
 		testing.expect(t, !h.clean)
 	case .Slow:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.upgrade_error.kind, .Timeout)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.Timeout)
 		testing.expect(t, !h.clean)
 	case .Cancel:
 		testing.expect_value(t, h.peer.status, WS_PEER_OK)
-		testing.expect_value(t, h.upgrade_error.kind, .Cancelled)
+		testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.Cancelled)
 		testing.expect(t, !h.clean)
 	case .Wakes, .Stall_Message, .Stall_Frame, .Idle:
 	}
 }
 
-ws_tls_echo :: proc(t: ^testing.T, endpoint: net.Endpoint, roots: ^async.Root_Pool) {
+// url is wss:// at the TLS peer; named checks that the hosts file gave
+// 127.0.0.1 for its host.
+ws_tls_echo :: proc(t: ^testing.T, url: string, roots: ^Trust_Roots, named: bool) {
 	h := new(Ws_Test)
 	defer free(h)
 	defer ws_test_stop(h)
@@ -576,13 +593,16 @@ ws_tls_echo :: proc(t: ^testing.T, endpoint: net.Endpoint, roots: ^async.Root_Po
 	h.protocols[0] = "chat"
 	h.write_text = "hello-tls"
 	h.expect_read = "hello-tls"
-	cfg := WebSocket_Async_Config {
-		endpoint          = endpoint,
-		host              = "localhost",
-		target            = "/ws",
-		server_name       = "localhost",
+	config := Config {
+		tls = {roots = roots},
+	}
+	if named {
+		config.address_policy = ws_named_policy
+		config.address_policy_data = h
+	}
+
+	options := WebSocket_Options {
 		subprotocols      = h.protocols[:],
-		roots             = roots,
 		max_frame_payload = 4,
 		handshake_timeout = 5 * time.Second,
 		idle_timeout      = 5 * time.Second,
@@ -590,149 +610,133 @@ ws_tls_echo :: proc(t: ^testing.T, endpoint: net.Endpoint, roots: ^async.Root_Po
 		close_timeout     = 2 * time.Second,
 	}
 
-	ws_tls_echo_run(t, h, cfg)
-}
-
-// secure with explicit roots, dialing localhost by name.
-ws_tls_named :: proc(t: ^testing.T, port: int, roots: ^async.Root_Pool) {
-	h := new(Ws_Test)
-	defer free(h)
-	defer ws_test_stop(h)
-	h.peer.mode = .Echo
-	h.protocols[0] = "chat"
-	h.write_text = "hello-name"
-	h.expect_read = "hello-name"
-	cfg := WebSocket_Async_Config {
-		host              = "LocalHost",
-		port              = port,
-		target            = "/ws",
-		subprotocols      = h.protocols[:],
-		secure            = true,
-		roots             = roots,
-		handshake_timeout = 5 * time.Second,
-		close_timeout     = 2 * time.Second,
-	}
-
-	ws_tls_echo_run(t, h, cfg)
-	testing.expect_value(t, string(h.session.route.address[:h.session.route.address_n]), "127.0.0.1")
-}
-
-ws_tls_echo_run :: proc(t: ^testing.T, h: ^Ws_Test, cfg: WebSocket_Async_Config) {
-	if !ws_client_start(t, h, cfg) {
+	if !ws_client_start(t, h, config, url, options) {
 		return
 	}
 
-	if !ws_wait(t, h, 10 * time.Second) {
+	if !ws_until(t, &h.done, 1, 10 * time.Second, "the TLS session") {
 		return
 	}
 
 	ws_test_stop(h)
-	ws_expect_terminal(t, h)
-	testing.expect_value(t, h.upgrade_error.kind, .None)
+	testing.expect_value(t, h.saw_open, 1)
+	testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.None)
 	testing.expect(t, h.read_ok && h.read_is_text && h.write_ok && h.clean)
-	testing.expect(t, websocket_async_subprotocol(&h.session) == "chat")
-	testing.expect_value(t, h.close_error.kind, .None)
+	testing.expect_value(t, string(h.subprotocol[:h.subprotocol_n]), "chat")
+	testing.expect_value(t, h.close_error.kind, WebSocket_Error_Kind.None)
+	if named {
+		v4, ok := h.policy_endpoint.address.(net.IP4_Address)
+		testing.expect_value(t, string(h.policy_host[:h.policy_host_n]), "LocalHost")
+		testing.expect(t, ok && v4 == net.IP4_Loopback)
+	}
 }
 
-// secure without roots verifies against the platform's roots, which do not
-// hold the test root.
+// Without roots the session verifies against the platform's roots, which do
+// not hold the test root.
 ws_tls_platform_roots :: proc(t: ^testing.T, port: int) {
 	h := new(Ws_Test)
 	defer free(h)
 	defer ws_test_stop(h)
 	h.peer.mode = .Bad_Accept
-	cfg := WebSocket_Async_Config {
-		host              = "localhost",
-		port              = port,
-		target            = "/ws",
-		secure            = true,
+	options := WebSocket_Options {
 		handshake_timeout = 5 * time.Second,
 		close_timeout     = time.Second,
 	}
 
-	if !ws_client_start(t, h, cfg) {
+	if !ws_client_start(t, h, {}, fmt.tprintf("wss://localhost:%d/ws", port), options) {
 		return
 	}
 
-	if !ws_wait(t, h, 10 * time.Second) {
+	if !ws_until(t, &h.done, 1, 10 * time.Second, "the platform-roots session") {
 		return
 	}
 
 	ws_test_stop(h)
-	ws_expect_terminal(t, h)
-	testing.expect_value(t, h.upgrade_error.kind, .TLS_Failed)
-	testing.expect(t, h.upgrade_error.tls_error != nil)
-	testing.expect(t, h.saw_read == 0 && !h.clean)
+	testing.expect_value(t, h.saw_open, 1)
+	testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.TLS_Failed)
+	testing.expect(t, h.open_error.tls_error != .None)
+	testing.expect(t, h.read_n == 0 && !h.clean)
 }
 
-ws_tls_wrong_host :: proc(t: ^testing.T, endpoint: net.Endpoint, roots: ^async.Root_Pool) {
+// wrong.example resolves to the peer through a stub name server; its
+// certificate names only localhost and 127.0.0.1.
+ws_tls_wrong_host :: proc(t: ^testing.T, port: int, roots: ^Trust_Roots) {
+	dns := new(Ws_Dns)
+	defer free(dns)
+	dns.answer = true
+	server, dns_worker, dns_ok := ws_dns_start(t, dns)
+	if !dns_ok {
+		return
+	}
+
+	defer ws_dns_stop(dns, dns_worker)
 	h := new(Ws_Test)
 	defer free(h)
 	defer ws_test_stop(h)
 	h.peer.mode = .Bad_Accept
-	cfg := WebSocket_Async_Config {
-		endpoint          = endpoint,
-		host              = "localhost",
-		target            = "/ws",
-		server_name       = "wrong.example",
-		roots             = roots,
+	servers := [1]net.Endpoint{server}
+	config := Config {
+		tls = {roots = roots},
+		resolver = {name_servers = servers[:]},
+	}
+	options := WebSocket_Options {
 		handshake_timeout = 5 * time.Second,
 		close_timeout     = time.Second,
 	}
 
-	if !ws_client_start(t, h, cfg) {
+	if !ws_client_start(t, h, config, fmt.tprintf("wss://wrong.example:%d/ws", port), options) {
 		return
 	}
 
-	if !ws_wait(t, h, 10 * time.Second) {
+	if !ws_until(t, &h.done, 1, 10 * time.Second, "the wrong-host session") {
 		return
 	}
 
 	ws_test_stop(h)
-	ws_expect_terminal(t, h)
-	testing.expect_value(t, h.upgrade_error.kind, .TLS_Failed)
-	testing.expect(t, h.upgrade_error.tls_error != nil)
-	testing.expect(t, h.saw_read == 0 && !h.clean)
+	testing.expect_value(t, h.saw_open, 1)
+	testing.expect_value(t, h.open_error.kind, WebSocket_Error_Kind.TLS_Failed)
+	testing.expect(t, h.open_error.tls_error != .None)
+	testing.expect(t, h.read_n == 0 && !h.clean)
 }
 
-ws_on_done :: proc(data: rawptr) {
-	session := cast(^WebSocket_Async)data
-	h := cast(^Ws_Test)session.user
-	h.clean = session.ended.clean
-	h.phase = session.phase
-	intrinsics.atomic_store_explicit(&h.done, 1, .Release)
-}
-
-ws_on_upgrade :: proc(op: ^WebSocket_Async_Op) {
+ws_on_open :: proc(op: ^WebSocket_Op) {
 	h := cast(^Ws_Test)op.user_data
-	h.upgrade_error = op.error
-	h.saw_upgrade = 1
+	h.open_error = op.error
+	h.saw_open = 1
 	if op.error.kind != .None {
+		intrinsics.atomic_store_explicit(&h.done, 1, .Release)
 		return
 	}
+
+	handle := ws_handle(h)
+	name, _ := client_websocket_subprotocol(&h.client, handle, h.subprotocol[:])
+	h.subprotocol_n = len(name)
 
 	switch h.peer.mode {
 	case .Echo:
 		h.src_n = copy(h.src[:], h.write_text)
 		h.write_a.callback = ws_on_write
 		h.write_a.user_data = h
-		_ = websocket_async_write(&h.session, &h.write_a, .Text, h.src[:h.src_n])
-		h.read.callback = ws_on_read
-		h.read.user_data = h
-		_ = websocket_async_read(&h.session, &h.read, h.dst[:])
+		_ = client_websocket_write(&h.client, handle, &h.write_a, .Text, h.src[:h.src_n])
+		ws_submit_read(h)
 	case .Queue:
 		ws_queue_probe(h)
 	case .Bad_UTF8, .Masked, .Too_Big:
-		h.read.callback = ws_on_read
-		h.read.user_data = h
-		_ = websocket_async_read(&h.session, &h.read, h.dst[:])
+		ws_submit_read(h)
 	case .Bad_Accept, .Unauthorized, .Slow, .Cancel, .Wakes, .Stall_Message, .Stall_Frame, .Idle:
 	}
 }
 
-// Runs on the session task, so nothing queued here is handed to the session
+ws_submit_read :: proc(h: ^Ws_Test) {
+	h.read.callback = ws_on_read
+	h.read.user_data = h
+	_ = client_websocket_read(&h.client, ws_handle(h), &h.read, h.dst[:])
+}
+
+// Runs on the client's task, so nothing queued here is handed to the session
 // before the last write is checked.
 ws_queue_probe :: proc(h: ^Ws_Test) {
+	handle := ws_handle(h)
 	for i in 0 ..< len(h.payload6) {
 		h.payload6[i] = 'a'
 	}
@@ -742,48 +746,54 @@ ws_queue_probe :: proc(h: ^Ws_Test) {
 	h.write_a.user_data = h
 	h.write_b.callback = ws_on_write
 	h.write_b.user_data = h
-	first := websocket_async_write(&h.session, &h.write_a, .Text, h.payload6[:])
-	h.reject_bytes = websocket_async_write(&h.session, &h.write_b, .Text, h.payload6[:4]).kind
-	second := websocket_async_write(&h.session, &h.write_b, .Text, h.payload1[:])
-	extra: WebSocket_Async_Op
-	extra.callback = ws_on_write
-	extra.user_data = h
-	// Every write below is rejected, and a rejected operation is never queued: the stack operation ends here.
-	rejected := (^WebSocket_Async_Op)(rawptr(&extra))
-	h.reject_count = websocket_async_write(&h.session, rejected, .Text, h.payload6[:2]).kind
+	first := client_websocket_write(&h.client, handle, &h.write_a, .Text, h.payload6[:])
+	h.reject_bytes = client_websocket_write(&h.client, handle, &h.write_b, .Text, h.payload6[:4]).kind
+	second := client_websocket_write(&h.client, handle, &h.write_b, .Text, h.payload1[:])
+	extra := WebSocket_Op {
+		callback  = ws_on_write,
+		user_data = h,
+	}
+	// Every write below is refused, and a refused operation is never queued.
+	h.reject_count = client_websocket_write(&h.client, handle, &extra, .Text, h.payload6[:2]).kind
 	bad := [1]u8{0xff}
-	h.reject_utf8 = websocket_async_write(&h.session, rejected, .Text, bad[:]).kind
+	h.reject_utf8 = client_websocket_write(&h.client, handle, &extra, .Text, bad[:]).kind
 	big: [20]u8
-	h.reject_size = websocket_async_write(&h.session, rejected, .Text, big[:]).kind
+	h.reject_size = client_websocket_write(&h.client, handle, &extra, .Text, big[:]).kind
 
 	if first.kind != .None || second.kind != .None {
 		h.reject_bytes = first.kind if first.kind != .None else second.kind
 	}
 
-	h.read.callback = ws_on_read
-	h.read.user_data = h
-	_ = websocket_async_read(&h.session, &h.read, h.dst[:])
+	ws_submit_read(h)
 	ws_submit_close(h)
 }
 
-ws_on_read :: proc(op: ^WebSocket_Async_Op) {
+// A failed read is how the session ended; a successful one is followed by the
+// next read, which waits for that end.
+ws_on_read :: proc(op: ^WebSocket_Op) {
 	h := cast(^Ws_Test)op.user_data
-	h.read_error = op.error
-	h.read_n = op.n
-	h.read_opcode = op.opcode
-	h.saw_read = 1
 
-	if h.peer.mode == .Echo && op.error.kind == .None {
-		h.read_ok = ws_bytes_equal(h.dst[:op.n], h.expect_read)
-		h.read_is_text = op.opcode == .Text
+	if op.error.kind != .None {
+		h.read_error = op.error
+		h.read_ended = true
+		h.clean = h.clean || op.error.close.clean
+		ws_check_done(h)
+		return
 	}
 
+	h.read_n = op.n
+	if !h.read_ok && h.expect_read != "" {
+		h.read_ok = ws_bytes_equal(h.dst[:op.n], h.expect_read)
+		h.read_is_text = op.message == .Text
+	}
+
+	ws_submit_read(h)
 	if h.read_ok && h.write_ok {
 		ws_submit_close(h)
 	}
 }
 
-ws_on_write :: proc(op: ^WebSocket_Async_Op) {
+ws_on_write :: proc(op: ^WebSocket_Op) {
 	h := cast(^Ws_Test)op.user_data
 
 	if h.peer.mode == .Queue {
@@ -805,10 +815,19 @@ ws_on_write :: proc(op: ^WebSocket_Async_Op) {
 	}
 }
 
-ws_on_close :: proc(op: ^WebSocket_Async_Op) {
+ws_on_close :: proc(op: ^WebSocket_Op) {
 	h := cast(^Ws_Test)op.user_data
 	h.close_error = op.error
+	h.clean = h.clean || op.error.close.clean
 	h.saw_close = 1
+	h.close_pending = false
+	ws_check_done(h)
+}
+
+ws_check_done :: proc(h: ^Ws_Test) {
+	if h.read_ended && !h.close_pending {
+		intrinsics.atomic_store_explicit(&h.done, 1, .Release)
+	}
 }
 
 ws_submit_close :: proc(h: ^Ws_Test) {
@@ -819,7 +838,11 @@ ws_submit_close :: proc(h: ^Ws_Test) {
 	h.close_once = true
 	h.close.callback = ws_on_close
 	h.close.user_data = h
-	_ = websocket_async_close(&h.session, &h.close, 1000, "bye")
+	handle := ws_handle(h)
+	if client_websocket_close(&h.client, handle, &h.close, 1000, "bye").kind == .None {
+		h.close_pending = true
+		h.cancel_close = client_websocket_cancel(&h.client, handle, &h.close).kind
+	}
 }
 
 ws_bytes_equal :: proc(buf: []u8, text: string) -> bool {
@@ -1270,37 +1293,118 @@ ws_read_port :: proc(file: ^os.File) -> (int, bool) {
 	return 0, false
 }
 
+Ws_Dns :: struct {
+	socket:  net.UDP_Socket,
+	queries: int,
+	stop:    int,
+	// Answer every A question with 127.0.0.1; otherwise NXDOMAIN.
+	answer:  bool,
+}
+
+ws_dns_start :: proc(t: ^testing.T, dns: ^Ws_Dns) -> (server: net.Endpoint, worker: ^thread.Thread, ok: bool) {
+	socket, socket_error := net.make_bound_udp_socket(net.IP4_Loopback, 0)
+	testing.expect(t, socket_error == nil)
+	if socket_error != nil {
+		return
+	}
+
+	dns.socket = socket
+	_ = net.set_option(socket, .Receive_Timeout, 50 * time.Millisecond)
+	bound, bound_error := net.bound_endpoint(socket)
+	testing.expect(t, bound_error == nil)
+	if bound_error != nil {
+		net.close(socket)
+		return
+	}
+
+	worker = thread.create_and_start_with_poly_data(dns, ws_dns_serve)
+	testing.expect(t, worker != nil)
+	if worker == nil {
+		net.close(socket)
+		return
+	}
+
+	return bound, worker, true
+}
+
+ws_dns_stop :: proc(dns: ^Ws_Dns, worker: ^thread.Thread) {
+	intrinsics.atomic_store_explicit(&dns.stop, 1, .Release)
+	thread.destroy(worker)
+	net.close(dns.socket)
+}
+
+ws_dns_serve :: proc(dns: ^Ws_Dns) {
+	buf: [512]u8
+
+	for intrinsics.atomic_load_explicit(&dns.stop, .Acquire) == 0 {
+		n, from, err := net.recv_udp(dns.socket, buf[:])
+		if err != nil || n < 12 {
+			continue
+		}
+
+		intrinsics.atomic_add(&dns.queries, 1)
+
+		if !dns.answer {
+			buf[2] |= 0x80
+			buf[3] = 0x83
+			_, _ = net.send_udp(dns.socket, buf[:n], from)
+			continue
+		}
+
+		// The question ends after its name, type and class.
+		at := 12
+		for at < n && buf[at] != 0 {
+			at += int(buf[at]) + 1
+		}
+
+		at += 5
+		if at > n {
+			continue
+		}
+
+		a_question := buf[at - 4] == 0 && buf[at - 3] == 1
+		buf[2] = 0x80 | (buf[2] & 0x01)
+		buf[3] = 0x80
+		buf[6], buf[7] = 0, 1 if a_question else 0
+		buf[8], buf[9], buf[10], buf[11] = 0, 0, 0, 0
+
+		if a_question {
+			record := [16]u8{0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 1}
+			at += copy(buf[at:], record[:])
+		}
+
+		_, _ = net.send_udp(dns.socket, buf[:at], from)
+	}
+}
+
 Ws_Policy_Harness :: struct {
-	session:  WebSocket_Async,
-	runtime:  async.Runtime,
-	upgrade:  WebSocket_Async_Op,
-	error:    WebSocket_Async_Error,
-	done:     int,
-	calls:    int,
-	host:     string,
-	endpoint: net.Endpoint,
-	allow:    bool,
-	listener: net.TCP_Socket,
-	accepts:  int,
-	mu:       sync.Mutex,
-	started:  bool,
+	client:    Client,
+	handle:    WebSocket_Handle,
+	open:      WebSocket_Op,
+	error:     WebSocket_Error,
+	done:      int,
+	calls:     int,
+	host:      [32]u8,
+	host_n:    int,
+	endpoint:  net.Endpoint,
+	allow:     bool,
+	listener:  net.TCP_Socket,
+	accepts:   int,
+	mu:        sync.Mutex,
+	servers:   [1]net.Endpoint,
+	client_up: bool,
 }
 
-ws_policy_done :: proc(data: rawptr) {
-	session := cast(^WebSocket_Async)data
-	harness := cast(^Ws_Policy_Harness)session.user
-	intrinsics.atomic_store_explicit(&harness.done, 1, .Release)
-}
-
-ws_policy_upgrade :: proc(op: ^WebSocket_Async_Op) {
+ws_policy_open :: proc(op: ^WebSocket_Op) {
 	harness := cast(^Ws_Policy_Harness)op.user_data
 	harness.error = op.error
+	intrinsics.atomic_store_explicit(&harness.done, 1, .Release)
 }
 
 ws_policy_decide :: proc(host: string, addresses: []net.Endpoint, user: rawptr) -> bool {
 	harness := cast(^Ws_Policy_Harness)user
 	harness.calls += 1
-	harness.host = host
+	harness.host_n = copy(harness.host[:], host)
 
 	if len(addresses) == 1 {
 		harness.endpoint = addresses[0]
@@ -1338,12 +1442,11 @@ ws_policy_accepts :: proc(harness: ^Ws_Policy_Harness) -> int {
 }
 
 ws_policy_finish :: proc(harness: ^Ws_Policy_Harness, worker: ^thread.Thread) {
-	if harness.started {
-		async.shutdown(&harness.runtime)
-		_ = async.join(&harness.runtime)
+	if harness.client_up {
+		_ = client_websocket_release(&harness.client, harness.handle)
+		_ = client_destroy(&harness.client)
 	}
 
-	_ = async.destroy(&harness.runtime)
 	net.close(harness.listener)
 
 	if worker != nil {
@@ -1351,12 +1454,12 @@ ws_policy_finish :: proc(harness: ^Ws_Policy_Harness, worker: ^thread.Thread) {
 	}
 }
 
-// With name_servers, the session dials nowhere.invalid at the listener's port
-// and asks only those servers.
+// Opens ws://host at the listener's port, resolving host only through server.
 ws_policy_run :: proc(
 	t: ^testing.T,
 	allow: bool,
-	name_servers: []net.Endpoint = nil,
+	host: string,
+	server: net.Endpoint,
 ) -> (
 	harness: ^Ws_Policy_Harness,
 	worker: ^thread.Thread,
@@ -1380,6 +1483,7 @@ ws_policy_run :: proc(
 	harness = new(Ws_Policy_Harness)
 	harness.listener = listener
 	harness.allow = allow
+	harness.servers[0] = server
 	worker = thread.create_and_start_with_poly_data(harness, ws_policy_accept)
 	testing.expect(t, worker != nil)
 
@@ -1389,61 +1493,13 @@ ws_policy_run :: proc(
 		return nil, nil, false
 	}
 
-	init_error := async.init(&harness.runtime, {workers = 1, task_capacity = 4, io_capacity = 16})
-	testing.expect_value(t, init_error.kind, .None)
-
-	if init_error.kind != .None {
-		ws_policy_finish(harness, worker)
-		free(harness)
-		return nil, nil, false
-	}
-
-	harness.session.user = harness
-	config := WebSocket_Async_Config {
-		endpoint            = endpoint,
-		host                = "ws.example",
-		handshake_timeout   = 2 * time.Second,
+	config := Config {
+		allow_http          = true,
+		resolver            = {name_servers = harness.servers[:]},
 		address_policy      = ws_policy_decide,
 		address_policy_data = harness,
 	}
-
-	if name_servers != nil {
-		config.endpoint = {}
-		config.host = "nowhere.invalid"
-		config.port = endpoint.port
-		config.resolver.name_servers = name_servers
-	}
-
-	bind_error := websocket_async_bind(&harness.session, &harness.runtime, config, ws_policy_done)
-	testing.expect_value(t, bind_error.kind, .None)
-
-	if bind_error.kind != .None {
-		ws_policy_finish(harness, worker)
-		free(harness)
-		return nil, nil, false
-	}
-
-	harness.upgrade.callback = ws_policy_upgrade
-	harness.upgrade.user_data = harness
-	submit_error := websocket_async_upgrade(&harness.session, &harness.upgrade)
-	testing.expect_value(t, submit_error.kind, .None)
-
-	if submit_error.kind != .None {
-		ws_policy_finish(harness, worker)
-		free(harness)
-		return nil, nil, false
-	}
-
-	spawn_error := async.spawn(&harness.runtime, &harness.session.task)
-	testing.expect_value(t, spawn_error.kind, .None)
-
-	if spawn_error.kind != .None {
-		ws_policy_finish(harness, worker)
-		free(harness)
-		return nil, nil, false
-	}
-
-	start_error := async.start(&harness.runtime)
+	start_error := client_start(&harness.client, {http = config}, rt.heap_allocator())
 	testing.expect_value(t, start_error.kind, .None)
 
 	if start_error.kind != .None {
@@ -1452,175 +1508,140 @@ ws_policy_run :: proc(
 		return nil, nil, false
 	}
 
-	harness.started = true
+	harness.client_up = true
+	harness.open.callback = ws_policy_open
+	harness.open.user_data = harness
+	url := fmt.tprintf("ws://%s:%d/", host, endpoint.port)
+	handle, open_error := client_websocket_open(&harness.client, url, {handshake_timeout = 2 * time.Second}, &harness.open)
+	testing.expect_value(t, open_error.kind, .None)
+
+	if open_error.kind != .None {
+		ws_policy_finish(harness, worker)
+		free(harness)
+		return nil, nil, false
+	}
+
+	harness.handle = handle
 
 	return harness, worker, true
 }
 
-ws_policy_wait :: proc(t: ^testing.T, harness: ^Ws_Policy_Harness) {
-	deadline := time.tick_now()
-
-	for intrinsics.atomic_load_explicit(&harness.done, .Acquire) == 0 {
-		if time.tick_since(deadline) > 8 * time.Second {
-			testing.expect(t, false)
-			return
-		}
-
-		time.sleep(time.Millisecond)
+ws_policy_case :: proc(t: ^testing.T, allow: bool, answer: bool, host: string) -> (harness: ^Ws_Policy_Harness, dns: ^Ws_Dns) {
+	dns = new(Ws_Dns)
+	dns.answer = answer
+	server, dns_worker, dns_ok := ws_dns_start(t, dns)
+	if !dns_ok {
+		free(dns)
+		return nil, nil
 	}
+
+	worker: ^thread.Thread
+	ok: bool
+	harness, worker, ok = ws_policy_run(t, allow, host, server)
+	if ok {
+		ws_until(t, &harness.done, 1, 8 * time.Second, "the open")
+		ws_policy_finish(harness, worker)
+	}
+
+	ws_dns_stop(dns, dns_worker)
+	if !ok {
+		free(dns)
+		return nil, nil
+	}
+
+	return harness, dns
 }
 
 @(test)
-websocket_async_rejects_the_endpoint_before_connect :: proc(t: ^testing.T) {
-	testing.set_fail_timeout(t, 12 * time.Second)
-	harness, worker, ok := ws_policy_run(t, false)
-
-	if !ok {
+websocket_rejects_the_endpoint_before_connect :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 15 * time.Second)
+	harness, dns := ws_policy_case(t, false, true, "ws.example")
+	if harness == nil {
 		return
 	}
 
-	defer {
-		ws_policy_finish(harness, worker)
-		free(harness)
-	}
-
-	ws_policy_wait(t, harness)
-	testing.expect_value(t, harness.error.kind, .Address_Rejected)
+	defer free(harness)
+	defer free(dns)
+	testing.expect_value(t, harness.error.kind, WebSocket_Error_Kind.Address_Rejected)
+	testing.expect_value(t, harness.error.status, 0)
 	testing.expect_value(t, harness.calls, 1)
-	testing.expect_value(t, harness.host, "ws.example")
+	testing.expect_value(t, string(harness.host[:harness.host_n]), "ws.example")
 	testing.expect(t, ws_policy_loopback(harness))
 	testing.expect(t, harness.endpoint.port > 0)
 	testing.expect_value(t, ws_policy_accepts(harness), 0)
 }
 
 @(test)
-websocket_async_connects_to_the_endpoint_the_policy_checked :: proc(t: ^testing.T) {
-	testing.set_fail_timeout(t, 12 * time.Second)
-	harness, worker, ok := ws_policy_run(t, true)
-
-	if !ok {
+websocket_connects_to_the_endpoint_the_policy_checked :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 15 * time.Second)
+	harness, dns := ws_policy_case(t, true, true, "ws.example")
+	if harness == nil {
 		return
 	}
 
-	defer {
-		ws_policy_finish(harness, worker)
-		free(harness)
-	}
-
-	ws_policy_wait(t, harness)
-	testing.expect(t, harness.error.kind != .Address_Rejected)
+	defer free(harness)
+	defer free(dns)
+	testing.expect(t, harness.error.kind != .Refused)
 	testing.expect(t, harness.error.kind != .None)
 	testing.expect_value(t, harness.calls, 1)
-	testing.expect_value(t, harness.host, "ws.example")
+	testing.expect_value(t, string(harness.host[:harness.host_n]), "ws.example")
 	testing.expect(t, ws_policy_loopback(harness))
 	testing.expect(t, harness.endpoint.port > 0)
 	testing.expect_value(t, ws_policy_accepts(harness), 1)
 }
 
-Ws_Dns :: struct {
-	socket:  net.UDP_Socket,
-	queries: int,
-	stop:    int,
-}
-
-// Answers every query with NXDOMAIN.
-ws_dns_serve :: proc(dns: ^Ws_Dns) {
-	buf: [512]u8
-
-	for intrinsics.atomic_load_explicit(&dns.stop, .Acquire) == 0 {
-		n, from, err := net.recv_udp(dns.socket, buf[:])
-		if err != nil || n < 12 {
-			continue
-		}
-
-		intrinsics.atomic_add(&dns.queries, 1)
-		buf[2] |= 0x80
-		buf[3] = 0x83
-		_, _ = net.send_udp(dns.socket, buf[:n], from)
-	}
-}
-
 @(test)
-websocket_async_unresolvable_name_fails_before_connect :: proc(t: ^testing.T) {
-	testing.set_fail_timeout(t, 12 * time.Second)
-	dns := new(Ws_Dns)
+websocket_unresolvable_name_fails_before_connect :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 15 * time.Second)
+	harness, dns := ws_policy_case(t, true, false, "nowhere.invalid")
+	if harness == nil {
+		return
+	}
+
+	defer free(harness)
 	defer free(dns)
-	socket, socket_error := net.make_bound_udp_socket(net.IP4_Loopback, 0)
-	testing.expect(t, socket_error == nil)
-	if socket_error != nil {
-		return
-	}
-
-	dns.socket = socket
-	defer net.close(socket)
-	_ = net.set_option(socket, .Receive_Timeout, 50 * time.Millisecond)
-	server, bound_error := net.bound_endpoint(socket)
-	testing.expect(t, bound_error == nil)
-	if bound_error != nil {
-		return
-	}
-
-	dns_worker := thread.create_and_start_with_poly_data(dns, ws_dns_serve)
-	testing.expect(t, dns_worker != nil)
-	if dns_worker == nil {
-		return
-	}
-
-	defer {
-		intrinsics.atomic_store_explicit(&dns.stop, 1, .Release)
-		thread.destroy(dns_worker)
-	}
-
-	servers := [1]net.Endpoint{server}
-	harness, worker, ok := ws_policy_run(t, true, servers[:])
-	if !ok {
-		return
-	}
-
-	defer {
-		ws_policy_finish(harness, worker)
-		free(harness)
-	}
-
-	ws_policy_wait(t, harness)
-	testing.expect_value(t, harness.error.kind, .Resolve_Failed)
+	_, resolving := harness.error.network.(net.Resolve_Error)
+	testing.expect_value(t, harness.error.kind, WebSocket_Error_Kind.Resolve_Failed)
+	testing.expect(t, resolving)
 	testing.expect_value(t, harness.calls, 0)
 	testing.expect_value(t, ws_policy_accepts(harness), 0)
 	testing.expect(t, intrinsics.atomic_load(&dns.queries) > 0)
 }
 
 Ws_Owa_Conn :: struct {
-	session:       WebSocket_Async,
-	peer:          Ws_Peer,
-	worker:        ^thread.Thread,
-	owner:         ^Ws_Owa,
-	upgrade:       WebSocket_Async_Op,
-	read:          WebSocket_Async_Op,
-	close:         WebSocket_Async_Op,
-	dst:           [64]u8,
-	messages:      [2][16]u8,
-	message_ns:    [2]int,
-	upgrade_error: WebSocket_Async_Error,
-	read_error:    WebSocket_Async_Error,
-	close_error:   WebSocket_Async_Error,
+	handle:      WebSocket_Handle,
+	ready:       int,
+	peer:        Ws_Peer,
+	worker:      ^thread.Thread,
+	owner:       ^Ws_Owa,
+	open:        WebSocket_Op,
+	read:        WebSocket_Op,
+	close:       WebSocket_Op,
+	dst:         [64]u8,
+	messages:    [2][16]u8,
+	message_ns:  [2]int,
+	open_error:  WebSocket_Error,
+	read_error:  WebSocket_Error,
+	close_error: WebSocket_Error,
 	// Reads the owner submits, one at a time.
-	want:          int,
-	upgraded:      int,
-	reading:       int,
-	reads:         int,
-	failed:        int,
-	closed:        int,
-	done:          int,
-	clean:         bool,
-	listener_up:   bool,
+	want:        int,
+	upgraded:    int,
+	reading:     int,
+	reads:       int,
+	failed:      int,
+	closing:     int,
+	done:        int,
+	clean:       bool,
+	listener_up: bool,
 }
 
-// The caller's own task on the session's runtime. It submits the reads and is
+// The caller's own task on the client's runtime. It submits the reads and is
 // otherwise woken for nothing.
 Ws_Owa :: struct {
 	rt:        async.Runtime,
 	task:      async.Task,
 	wake:      async.Signal,
+	client:    Client,
 	conns:     [3]Ws_Owa_Conn,
 	count:     int,
 	resumes:   int,
@@ -1628,6 +1649,7 @@ Ws_Owa :: struct {
 	task_done: int,
 	rt_up:     bool,
 	signal_up: bool,
+	client_up: bool,
 }
 
 ws_owa_resume :: proc(data: rawptr) -> async.Resume_Result {
@@ -1638,7 +1660,7 @@ ws_owa_resume :: proc(data: rawptr) -> async.Resume_Result {
 	}
 
 	for &conn in owa.conns[:owa.count] {
-		ws_owa_submit(&conn)
+		ws_owa_submit(owa, &conn)
 	}
 
 	return .Waiting
@@ -1649,34 +1671,34 @@ ws_owa_task_done :: proc(data: rawptr) {
 	intrinsics.atomic_store_explicit(&owa.task_done, 1, .Release)
 }
 
-ws_owa_submit :: proc(conn: ^Ws_Owa_Conn) {
-	if intrinsics.atomic_load_explicit(&conn.upgraded, .Acquire) == 0 ||
+ws_owa_submit :: proc(owa: ^Ws_Owa, conn: ^Ws_Owa_Conn) {
+	if intrinsics.atomic_load_explicit(&conn.ready, .Acquire) == 0 ||
+	   intrinsics.atomic_load_explicit(&conn.upgraded, .Acquire) == 0 ||
 	   intrinsics.atomic_load_explicit(&conn.reading, .Acquire) != 0 ||
 	   intrinsics.atomic_load_explicit(&conn.failed, .Acquire) != 0 ||
 	   intrinsics.atomic_load_explicit(&conn.reads, .Acquire) >= conn.want ||
-	   conn.upgrade_error.kind != .None {
+	   conn.open_error.kind != .None {
 		return
 	}
 
 	intrinsics.atomic_store_explicit(&conn.reading, 1, .Release)
 	conn.read.callback = ws_owa_on_read
 	conn.read.user_data = conn
-	error := websocket_async_read(&conn.session, &conn.read, conn.dst[:])
+	error := client_websocket_read(&owa.client, conn.handle, &conn.read, conn.dst[:])
 	if error.kind != .None {
-		conn.read_error = error
 		intrinsics.atomic_store_explicit(&conn.failed, 1, .Release)
 		intrinsics.atomic_store_explicit(&conn.reading, 0, .Release)
 	}
 }
 
-ws_owa_on_upgrade :: proc(op: ^WebSocket_Async_Op) {
+ws_owa_on_open :: proc(op: ^WebSocket_Op) {
 	conn := cast(^Ws_Owa_Conn)op.user_data
-	conn.upgrade_error = op.error
+	conn.open_error = op.error
 	intrinsics.atomic_store_explicit(&conn.upgraded, 1, .Release)
 	_ = async.signal_wake(conn.owner.wake)
 }
 
-ws_owa_on_read :: proc(op: ^WebSocket_Async_Op) {
+ws_owa_on_read :: proc(op: ^WebSocket_Op) {
 	conn := cast(^Ws_Owa_Conn)op.user_data
 	reads := intrinsics.atomic_load_explicit(&conn.reads, .Acquire)
 
@@ -1686,38 +1708,22 @@ ws_owa_on_read :: proc(op: ^WebSocket_Async_Op) {
 	} else {
 		conn.read_error = op.error
 		intrinsics.atomic_store_explicit(&conn.failed, 1, .Release)
+
+		// Without a close, the failed read is how the session ended.
+		if intrinsics.atomic_load_explicit(&conn.closing, .Acquire) == 0 {
+			intrinsics.atomic_store_explicit(&conn.done, 1, .Release)
+		}
 	}
 
 	intrinsics.atomic_store_explicit(&conn.reading, 0, .Release)
 	_ = async.signal_wake(conn.owner.wake)
 }
 
-ws_owa_on_close :: proc(op: ^WebSocket_Async_Op) {
+ws_owa_on_close :: proc(op: ^WebSocket_Op) {
 	conn := cast(^Ws_Owa_Conn)op.user_data
 	conn.close_error = op.error
-	intrinsics.atomic_store_explicit(&conn.closed, 1, .Release)
-}
-
-ws_owa_on_done :: proc(data: rawptr) {
-	session := cast(^WebSocket_Async)data
-	conn := cast(^Ws_Owa_Conn)session.user
-	conn.clean = session.ended.clean
+	conn.clean = op.error.close.clean
 	intrinsics.atomic_store_explicit(&conn.done, 1, .Release)
-}
-
-ws_owa_until :: proc(t: ^testing.T, flag: ^int, value: int, limit: time.Duration, what: string) -> bool {
-	start := time.tick_now()
-
-	for intrinsics.atomic_load_explicit(flag, .Acquire) < value {
-		if time.tick_since(start) > limit {
-			testing.expectf(t, false, "timed out waiting for %s", what)
-			return false
-		}
-
-		time.sleep(time.Millisecond)
-	}
-
-	return true
 }
 
 ws_owa_start :: proc(t: ^testing.T, owa: ^Ws_Owa) -> bool {
@@ -1744,17 +1750,18 @@ ws_owa_start :: proc(t: ^testing.T, owa: ^Ws_Owa) -> bool {
 	owa.signal_up = true
 	spawn_error := async.spawn(&owa.rt, &owa.task)
 	testing.expect_value(t, spawn_error.kind, .None)
+	if spawn_error.kind != .None {
+		return false
+	}
 
-	return spawn_error.kind == .None
+	client_error := client_init(&owa.client, &owa.rt, {http = {allow_http = true}}, rt.heap_allocator())
+	testing.expect_value(t, client_error.kind, .None)
+	owa.client_up = client_error.kind == .None
+
+	return owa.client_up
 }
 
-ws_owa_connect :: proc(
-	t: ^testing.T,
-	owa: ^Ws_Owa,
-	mode: Ws_Peer_Mode,
-	want: int,
-	config: WebSocket_Async_Config,
-) -> bool {
+ws_owa_connect :: proc(t: ^testing.T, owa: ^Ws_Owa, mode: Ws_Peer_Mode, want: int, options: WebSocket_Options) -> bool {
 	conn := &owa.conns[owa.count]
 	owa.count += 1
 	conn.owner = owa
@@ -1780,39 +1787,30 @@ ws_owa_connect :: proc(
 		return false
 	}
 
-	cfg := config
-	cfg.endpoint = endpoint
-	conn.session.user = conn
-	saved := context.allocator
-	context.allocator = rt.heap_allocator()
-	bind_error := websocket_async_bind(&conn.session, &owa.rt, cfg, ws_owa_on_done)
-	context.allocator = saved
-	testing.expect_value(t, bind_error.kind, .None)
-	if bind_error.kind != .None {
+	conn.open.callback = ws_owa_on_open
+	conn.open.user_data = conn
+	url := fmt.tprintf("ws://127.0.0.1:%d/ws", endpoint.port)
+	handle, open_error := client_websocket_open(&owa.client, url, options, &conn.open)
+	testing.expect_value(t, open_error.kind, .None)
+	if open_error.kind != .None {
 		return false
 	}
 
-	conn.upgrade.callback = ws_owa_on_upgrade
-	conn.upgrade.user_data = conn
-	submit_error := websocket_async_upgrade(&conn.session, &conn.upgrade)
-	testing.expect_value(t, submit_error.kind, .None)
-	if submit_error.kind != .None {
-		return false
-	}
+	conn.handle = handle
+	intrinsics.atomic_store_explicit(&conn.ready, 1, .Release)
+	_ = async.signal_wake(owa.wake)
 
-	spawn_error := async.spawn(&owa.rt, &conn.session.task)
-	testing.expect_value(t, spawn_error.kind, .None)
-
-	return spawn_error.kind == .None
+	return true
 }
 
-ws_owa_close :: proc(t: ^testing.T, conn: ^Ws_Owa_Conn) -> bool {
+ws_owa_close :: proc(t: ^testing.T, owa: ^Ws_Owa, conn: ^Ws_Owa_Conn) -> bool {
 	conn.close.callback = ws_owa_on_close
 	conn.close.user_data = conn
-	error := websocket_async_close(&conn.session, &conn.close, 1000, "bye")
+	intrinsics.atomic_store_explicit(&conn.closing, 1, .Release)
+	error := client_websocket_close(&owa.client, conn.handle, &conn.close, 1000, "bye")
 	testing.expect_value(t, error.kind, .None)
 
-	return error.kind == .None && ws_owa_until(t, &conn.done, 1, 5 * time.Second, "close")
+	return error.kind == .None && ws_until(t, &conn.done, 1, 5 * time.Second, "close")
 }
 
 ws_owa_stop :: proc(owa: ^Ws_Owa) {
@@ -1833,6 +1831,23 @@ ws_owa_stop :: proc(owa: ^Ws_Owa) {
 		owa.signal_up = false
 	}
 
+	if owa.client_up {
+		for &conn in owa.conns[:owa.count] {
+			if intrinsics.atomic_load_explicit(&conn.ready, .Acquire) != 0 {
+				_ = client_websocket_release(&owa.client, conn.handle)
+			}
+		}
+
+		_ = client_close(&owa.client)
+		start := time.tick_now()
+		for !client_quiescent(&owa.client) && time.tick_since(start) < 5 * time.Second {
+			time.sleep(time.Millisecond)
+		}
+
+		_ = client_destroy(&owa.client)
+		owa.client_up = false
+	}
+
 	if owa.rt_up {
 		_ = async.destroy(&owa.rt)
 		owa.rt_up = false
@@ -1851,24 +1866,19 @@ ws_owa_stop :: proc(owa: ^Ws_Owa) {
 	}
 }
 
-ws_owa_config :: proc() -> WebSocket_Async_Config {
-	return {
-		host = "127.0.0.1",
-		target = "/ws",
-		handshake_timeout = 5 * time.Second,
-		close_timeout = 500 * time.Millisecond,
-	}
+ws_owa_options :: proc() -> WebSocket_Options {
+	return {handshake_timeout = 5 * time.Second, close_timeout = 500 * time.Millisecond}
 }
 
 // The read stays pending while the caller's task is woken for other reasons,
 // then completes with each whole message in order.
 @(test)
-websocket_async_read_survives_unrelated_wakes :: proc(t: ^testing.T) {
+websocket_read_survives_unrelated_wakes :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 20 * time.Second)
 	owa := new(Ws_Owa)
 	defer free(owa)
 	defer ws_owa_stop(owa)
-	if !ws_owa_start(t, owa) || !ws_owa_connect(t, owa, .Wakes, 2, ws_owa_config()) {
+	if !ws_owa_start(t, owa) || !ws_owa_connect(t, owa, .Wakes, 2, ws_owa_options()) {
 		return
 	}
 
@@ -1879,14 +1889,14 @@ websocket_async_read_survives_unrelated_wakes :: proc(t: ^testing.T) {
 	}
 
 	conn := &owa.conns[0]
-	if !ws_owa_until(t, &conn.reading, 1, 5 * time.Second, "the read") {
+	if !ws_until(t, &conn.reading, 1, 5 * time.Second, "the read") {
 		return
 	}
 
 	for _ in 0 ..< 5 {
 		before := intrinsics.atomic_load(&owa.resumes)
 		_ = async.signal_wake(owa.wake)
-		if !ws_owa_until(t, &owa.resumes, before + 1, 2 * time.Second, "a wake") {
+		if !ws_until(t, &owa.resumes, before + 1, 2 * time.Second, "a wake") {
 			return
 		}
 
@@ -1897,18 +1907,18 @@ websocket_async_read_survives_unrelated_wakes :: proc(t: ^testing.T) {
 	}
 
 	intrinsics.atomic_store_explicit(&conn.peer.go, 1, .Release)
-	if !ws_owa_until(t, &conn.reads, 2, 5 * time.Second, "both messages") {
+	if !ws_until(t, &conn.reads, 2, 5 * time.Second, "both messages") {
 		return
 	}
 
 	testing.expect_value(t, string(conn.messages[0][:conn.message_ns[0]]), "first")
 	testing.expect_value(t, string(conn.messages[1][:conn.message_ns[1]]), "second")
-	testing.expect_value(t, conn.read_error.kind, .None)
-	if !ws_owa_close(t, conn) {
+	testing.expect_value(t, conn.read_error.kind, WebSocket_Error_Kind.None)
+	if !ws_owa_close(t, owa, conn) {
 		return
 	}
 
-	testing.expect_value(t, conn.close_error.kind, .None)
+	testing.expect_value(t, conn.close_error.kind, WebSocket_Error_Kind.None)
 	testing.expect(t, conn.clean)
 	ws_owa_stop(owa)
 	testing.expect_value(t, conn.peer.status, WS_PEER_OK)
@@ -1917,20 +1927,20 @@ websocket_async_read_survives_unrelated_wakes :: proc(t: ^testing.T) {
 // One configuration: a stalled message or frame ends its session, an idle
 // session whose peer answers Pings outlives every one of those bounds.
 @(test)
-websocket_async_stalled_message_times_out_and_idle_session_stays_open :: proc(t: ^testing.T) {
+websocket_stalled_message_times_out_and_idle_session_stays_open :: proc(t: ^testing.T) {
 	testing.set_fail_timeout(t, 20 * time.Second)
 	owa := new(Ws_Owa)
 	defer free(owa)
 	defer ws_owa_stop(owa)
-	config := ws_owa_config()
-	config.idle_timeout = time.Second
-	config.ping_interval = 250 * time.Millisecond
-	config.frame_timeout = 400 * time.Millisecond
-	config.message_timeout = 400 * time.Millisecond
+	options := ws_owa_options()
+	options.idle_timeout = time.Second
+	options.ping_interval = 250 * time.Millisecond
+	options.frame_timeout = 400 * time.Millisecond
+	options.message_timeout = 400 * time.Millisecond
 	if !ws_owa_start(t, owa) ||
-	   !ws_owa_connect(t, owa, .Stall_Message, 1, config) ||
-	   !ws_owa_connect(t, owa, .Stall_Frame, 1, config) ||
-	   !ws_owa_connect(t, owa, .Idle, 1, config) {
+	   !ws_owa_connect(t, owa, .Stall_Message, 1, options) ||
+	   !ws_owa_connect(t, owa, .Stall_Frame, 1, options) ||
+	   !ws_owa_connect(t, owa, .Idle, 1, options) {
 		return
 	}
 
@@ -1941,21 +1951,22 @@ websocket_async_stalled_message_times_out_and_idle_session_stays_open :: proc(t:
 	}
 
 	idle := &owa.conns[2]
-	if !ws_owa_until(t, &idle.reading, 1, 5 * time.Second, "the idle read") {
+	if !ws_until(t, &idle.reading, 1, 5 * time.Second, "the idle read") {
 		return
 	}
 
 	opened := time.tick_now()
 	for i in 0 ..< 2 {
 		conn := &owa.conns[i]
-		if !ws_owa_until(t, &conn.failed, 1, 5 * time.Second, "the stalled read") {
+		if !ws_until(t, &conn.failed, 1, 5 * time.Second, "the stalled read") {
 			return
 		}
 
-		testing.expect_value(t, conn.upgrade_error.kind, .None)
-		testing.expect_value(t, conn.read_error.kind, .Timeout)
+		testing.expect_value(t, conn.open_error.kind, WebSocket_Error_Kind.None)
+		testing.expect_value(t, conn.read_error.kind, WebSocket_Error_Kind.Timeout)
 		testing.expect_value(t, conn.read_error.close.code, 1001)
 		testing.expect_value(t, intrinsics.atomic_load(&conn.reads), 0)
+		testing.expect_value(t, intrinsics.atomic_load(&conn.done), 1)
 	}
 
 	for time.tick_since(opened) < 2 * time.Second {
@@ -1966,14 +1977,11 @@ websocket_async_stalled_message_times_out_and_idle_session_stays_open :: proc(t:
 	testing.expect_value(t, intrinsics.atomic_load(&idle.failed), 0)
 	testing.expect_value(t, intrinsics.atomic_load(&idle.done), 0)
 	testing.expect(t, intrinsics.atomic_load(&idle.peer.pings) >= 2)
-	if !ws_owa_close(t, idle) {
+	if !ws_owa_close(t, owa, idle) {
 		return
 	}
 
-	testing.expect_value(t, idle.read_error.kind, .Closed)
-	testing.expect_value(t, idle.close_error.kind, .None)
+	testing.expect_value(t, idle.read_error.kind, WebSocket_Error_Kind.Closed)
+	testing.expect_value(t, idle.close_error.kind, WebSocket_Error_Kind.None)
 	testing.expect(t, idle.clean)
-	for i in 0 ..< 2 {
-		ws_owa_until(t, &owa.conns[i].done, 1, 5 * time.Second, "the stalled session")
-	}
 }

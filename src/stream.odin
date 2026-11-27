@@ -2,6 +2,7 @@ package surf
 
 import "core:io"
 import "core:sync"
+import "core:time"
 import "shared:async"
 
 Content_Decoding :: enum {
@@ -47,9 +48,9 @@ stream_head_destroy :: proc(head: ^Stream_Head) {
 // options.upload_length the request body is request.body.
 client_submit_stream :: proc(
 	c: ^Client,
-	request: async.Http_Request,
+	request: Request,
 	options: Stream_Options = {},
-	deadline: async.Deadline = {},
+	deadline: time.Tick = {},
 ) -> (
 	Request_Handle,
 	Client_Error,
@@ -103,7 +104,7 @@ client_stream_take_head :: proc(c: ^Client, handle: Request_Handle, destination:
 client_stream_next :: proc(
 	c: ^Client,
 	handle: Request_Handle,
-	destination: ^async.Owned_Chunk,
+	destination: ^Body_Chunk,
 ) -> (
 	Stream_Read_Status,
 	Client_Error,
@@ -119,7 +120,7 @@ client_stream_next :: proc(
 	}
 
 	if len(slot.chunks) > 0 {
-		destination^ = slot.chunks[0]
+		destination^ = body_chunk_from(slot.chunks[0])
 		ordered_remove(&slot.chunks, 0)
 		sync.unlock(&s.mu)
 		async.signal_wake(s.wake)
@@ -143,7 +144,7 @@ client_stream_next :: proc(
 client_upload_submit :: proc(
 	c: ^Client,
 	handle: Request_Handle,
-	source: ^async.Owned_Chunk,
+	source: ^Body_Chunk,
 ) -> (
 	Upload_Submit_Status,
 	Client_Error,
@@ -168,7 +169,7 @@ client_upload_submit :: proc(
 		return .Backpressure, {}
 	}
 
-	if _, e := append(&slot.queue, source^); e != nil {
+	if _, e := append(&slot.queue, source._owned); e != nil {
 		sync.unlock(&s.mu)
 		return .Invalid, {kind = .Allocation_Failed}
 	}
@@ -203,13 +204,11 @@ client_upload_finish :: proc(c: ^Client, handle: Request_Handle, source_error: i
 
 // ---- the task ----
 
-@(private)
 stream_head_publish :: proc(s: ^Client_State, slot: ^Slot, head: async.Client_Response) {
 	slot.head_ready = true
 	slot_signal(s, slot)
 }
 
-@(private)
 stream_body :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	limit := response_limit(s, slot)
 

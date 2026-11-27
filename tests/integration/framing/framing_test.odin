@@ -5,14 +5,13 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "core:time"
-import "shared:async"
 import "shared:surf"
 
 // The peer never closes and never sends more than the wire: a client that
 // waited for a body it should not read would run into the 3s deadline.
 framing_fetch :: proc(
 	t: ^testing.T,
-	method: async.Http_Method,
+	method: surf.Method,
 	wire: string,
 	limit: int,
 ) -> (

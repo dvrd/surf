@@ -65,7 +65,7 @@ produce :: proc(p: ^Producer) {
 			s.endpoint.port,
 			id,
 		)
-		cutoff := async.deadline_after(&s.runtime, 10 * time.Second)
+		cutoff := time.tick_add(time.tick_now(), 10 * time.Second)
 		started := time.tick_now()
 
 		for {
@@ -218,12 +218,12 @@ main :: proc() {
 	allocator := mem.tracking_allocator(&track)
 	scope, error := budget.create_root({bytes = 64 << 20, streams = 8, jobs = 8}, allocator)
 	assert(error == .None)
-	roots: tls.Root_Pool
+	roots: surf.Trust_Roots
 
 	if encrypted {
 		pem, read_error := os.read_entire_file(fmt.tprintf("%s/root.pem", dir), allocator)
 		assert(read_error == nil)
-		assert(tls.root_pool_parse(&roots, pem, allocator) == nil)
+		assert(surf.trust_roots_parse(&roots, pem, allocator) == .None)
 		delete(pem, allocator)
 	}
 
@@ -341,7 +341,7 @@ main :: proc() {
 	}
 
 	assert(surf.client_quiescent(&s.client) && surf.client_destroy(&s.client).kind == .None)
-	tls.root_pool_destroy(&roots)
+	surf.trust_roots_destroy(&roots)
 	assert(fd_count() == before)
 
 	if !s.shutdown {

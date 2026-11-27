@@ -5,7 +5,6 @@ import "core:fmt"
 import "core:mem"
 import "core:testing"
 import "core:time"
-import "shared:async"
 import "shared:surf"
 
 body_fetch :: proc(t: ^testing.T, wire: string, allocator: mem.Allocator) -> (surf.Response, bool) {
@@ -47,20 +46,20 @@ response_body_transfer_survives_response_destroy :: proc(t: ^testing.T) {
 	original := raw_data(response.body)
 	capacity := cap(response.body_storage)
 	chunk, transfer_error := surf.response_take_body(&response)
-	defer async.owned_destroy(&chunk)
+	defer surf.body_chunk_release(&chunk)
 	testing.expect_value(t, transfer_error.kind, .None)
 	testing.expect(t, raw_data(chunk.data) == original && string(chunk.data) == "body")
-	testing.expect_value(t, len(chunk.storage), capacity)
+	testing.expect_value(t, len(chunk._owned.storage), capacity)
 	testing.expect(t, response.body == nil && cap(response.body_storage) == 0)
 	_, again := surf.response_take_body(&response)
 	testing.expect_value(t, again.kind, .Invalid_Input)
 	surf.response_destroy(&response)
 	testing.expect_value(t, string(chunk.data), "body")
 	testing.expect_value(t, tracker.current_memory_allocated, i64(capacity))
-	async.owned_destroy(&chunk)
+	surf.body_chunk_release(&chunk)
 	testing.expect_value(t, tracker.current_memory_allocated, 0)
 	frees := tracker.total_free_count
-	async.owned_destroy(&chunk)
+	surf.body_chunk_release(&chunk)
 	surf.response_destroy(&response)
 	testing.expect_value(t, tracker.total_free_count, frees)
 }
@@ -101,9 +100,9 @@ empty_body_can_transfer_as_an_owned_zero_byte_chunk :: proc(t: ^testing.T) {
 	defer surf.response_destroy(&response)
 	capacity := cap(response.body_storage)
 	chunk, error := surf.response_take_body(&response)
-	defer async.owned_destroy(&chunk)
+	defer surf.body_chunk_release(&chunk)
 	testing.expect_value(t, error.kind, .None)
-	testing.expect(t, async.owned_valid(&chunk) && len(chunk.data) == 0 && len(chunk.storage) == capacity)
+	testing.expect(t, surf.body_chunk_valid(&chunk) && len(chunk.data) == 0 && len(chunk._owned.storage) == capacity)
 	surf.response_destroy(&response)
-	async.owned_destroy(&chunk)
+	surf.body_chunk_release(&chunk)
 }

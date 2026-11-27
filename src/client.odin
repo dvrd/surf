@@ -1,7 +1,7 @@
 package surf
 
 // One HTTP client for every origin a program talks to, over HTTP/1.1, HTTP/2
-// and HTTP/3. shared:async's Client moves the bytes for each origin; surf adds
+// and HTTP/3, and its websocket sessions (websocket.odin). shared:async's Client moves the bytes for each origin; surf adds
 // what sits above an origin: redirects, limits, the address policy, Alt-Svc,
 // budgets and the HTTP_Error a caller sees.
 //
@@ -29,19 +29,18 @@ CLIENT_DEFAULT_ORIGINS :: 16
 CLIENT_DEFAULT_CONNECTIONS :: async.CLIENT_DEFAULT_CONNECTIONS
 CLIENT_DEFAULT_UPLOAD_CHUNKS :: 4
 CLIENT_DEFAULT_RESPONSE_CHUNKS :: 8
+CLIENT_DEFAULT_WEBSOCKETS :: 8
 CLIENT_DEFAULT_IDLE_TIMEOUT :: 30 * time.Second
 CLIENT_MAX_REQUESTS :: 4096
 CLIENT_MAX_ORIGINS :: 1024
 CLIENT_MAX_CHUNKS :: 64
+CLIENT_MAX_WEBSOCKETS :: 256
 DNS_MAX_NAME_SERVERS :: 8
 // Hosts-file addresses considered for one name.
-@(private)
 DNS_HOSTS_ENTRIES :: 8
 
 // Bounds a graceful close of an origin's connections.
-@(private)
 CLIENT_CLOSE_TIMEOUT :: 2 * time.Second
-@(private)
 CLIENT_READ_BYTES :: 16 << 10
 
 Request_Handle :: struct {
@@ -62,6 +61,9 @@ Capacities :: struct {
 	upload_chunks:          int,
 	// Response chunks queued per stream before the client stops reading.
 	response_chunks:        int,
+	// Websocket sessions opened and not yet released. Zero is
+	// CLIENT_DEFAULT_WEBSOCKETS.
+	websockets:             int,
 }
 
 DEFAULT_CAPACITIES :: Capacities {
@@ -70,6 +72,7 @@ DEFAULT_CAPACITIES :: Capacities {
 	connections_per_origin = CLIENT_DEFAULT_CONNECTIONS,
 	upload_chunks          = CLIENT_DEFAULT_UPLOAD_CHUNKS,
 	response_chunks        = CLIENT_DEFAULT_RESPONSE_CHUNKS,
+	websockets             = CLIENT_DEFAULT_WEBSOCKETS,
 }
 
 Client_Config :: struct {
@@ -78,8 +81,8 @@ Client_Config :: struct {
 	// Closes an origin's connections once it has had no request for this long.
 	// Zero is 30 s.
 	idle_timeout: time.Duration,
-	// Woken from the client's task whenever a completion or a stream event is
-	// ready. The client retains its own reference.
+	// Woken from the client's task whenever a completion, a stream event or a
+	// websocket operation is ready. The client retains its own reference.
 	notify:       async.Signal,
 }
 
@@ -97,10 +100,13 @@ Client_Error_Kind :: enum {
 	Error,
 }
 
+// kind .Error: the runtime refused; the causes it gave follow.
 Client_Error :: struct {
-	kind:    Client_Error_Kind,
-	http:    HTTP_Error,
-	runtime: async.Error,
+	kind:        Client_Error_Kind,
+	http:        HTTP_Error,
+	network:     net.Network_Error,
+	allocation:  mem.Allocator_Error,
+	system_code: i32,
 }
 
 Request_Stage :: enum {
@@ -123,7 +129,6 @@ Client :: struct {
 	_state: ^Client_State,
 }
 
-@(private)
 Client_State :: struct {
 	mu:              sync.Mutex,
 	id:              u64,
@@ -144,6 +149,11 @@ Client_State :: struct {
 	pending:         [dynamic]u32,
 	// Completed requests client_poll has not reported, oldest first.
 	completions:     [dynamic]u32,
+	websockets:      []WebSocket_Slot,
+	// Completed websocket operations whose callbacks have not run, oldest
+	// first. Callbacks run on the task once mu is released.
+	ws_done:         ^WebSocket_Op,
+	ws_done_tail:    ^WebSocket_Op,
 	// Task only below, apart from the flags read under mu.
 	origins:         [dynamic]^Origin,
 	resolver:        net.Resolver_Snapshot,
@@ -163,7 +173,6 @@ Client_State :: struct {
 	notify_pending:  bool,
 }
 
-@(private)
 client_id_next: u64
 
 client_init :: proc(
@@ -181,6 +190,9 @@ client_init :: proc(
 	}
 
 	caps := config.capacities.? or_else DEFAULT_CAPACITIES
+	if caps.websockets == 0 {
+		caps.websockets = CLIENT_DEFAULT_WEBSOCKETS
+	}
 
 	if caps.requests <= 0 ||
 	   caps.requests > CLIENT_MAX_REQUESTS ||
@@ -191,6 +203,8 @@ client_init :: proc(
 	   caps.upload_chunks > CLIENT_MAX_CHUNKS ||
 	   caps.response_chunks <= 0 ||
 	   caps.response_chunks > CLIENT_MAX_CHUNKS ||
+	   caps.websockets < 0 ||
+	   caps.websockets > CLIENT_MAX_WEBSOCKETS ||
 	   config.idle_timeout < 0 {
 		return {kind = .Invalid_Config}
 	}
@@ -249,7 +263,7 @@ client_init :: proc(
 	if error := async.spawn(runtime, &s.task); error.kind != .None {
 		c._self, c._state = nil, nil
 		client_state_free(s)
-		return {kind = .Error, runtime = error}
+		return client_runtime_error(error)
 	}
 
 	return {}
@@ -268,7 +282,7 @@ client_start :: proc(c: ^Client, config: Client_Config, allocator := context.all
 
 	if error := async.init(r, {workers = 1, task_capacity = 64, io_capacity = 1024}); error.kind != .None {
 		free(r, allocator)
-		return {kind = .Error, runtime = error}
+		return client_runtime_error(error)
 	}
 
 	if error := client_init(c, r, config, allocator); error.kind != .None {
@@ -285,7 +299,7 @@ client_start :: proc(c: ^Client, config: Client_Config, allocator := context.all
 		_ = async.destroy(r)
 		client_state_free(s)
 		free(r, allocator)
-		return {kind = .Error, runtime = error}
+		return client_runtime_error(error)
 	}
 
 	return {}
@@ -362,7 +376,6 @@ client_destroy :: proc(c: ^Client) -> Client_Error {
 	return {}
 }
 
-@(private)
 client_state :: proc(c: ^Client) -> (^Client_State, Client_Error) {
 	if c == nil || c._self != c || c._state == nil {
 		return nil, {kind = .Invalid_State}
@@ -371,13 +384,18 @@ client_state :: proc(c: ^Client) -> (^Client_State, Client_Error) {
 	return c._state, {}
 }
 
-@(private)
 client_state_alloc :: proc(s: ^Client_State) -> Client_Error {
 	slots, error := make([]Slot, s.capacities.requests, s.allocator)
 	if error != nil {
 		return {kind = .Allocation_Failed}
 	}
 	s.slots = slots
+
+	websockets, ws_error := make([]WebSocket_Slot, s.capacities.websockets, s.allocator)
+	if ws_error != nil {
+		return {kind = .Allocation_Failed}
+	}
+	s.websockets = websockets
 
 	if e := reserve(&s.pending, s.capacities.requests); e != nil {
 		return {kind = .Allocation_Failed}
@@ -394,7 +412,6 @@ client_state_alloc :: proc(s: ^Client_State) -> Client_Error {
 	return {}
 }
 
-@(private)
 client_resolver_prepare :: proc(s: ^Client_State) -> Client_Error {
 	if error := net.resolver_snapshot_prepare(
 		&s.resolver,
@@ -410,7 +427,6 @@ client_resolver_prepare :: proc(s: ^Client_State) -> Client_Error {
 	return {}
 }
 
-@(private)
 client_state_free :: proc(s: ^Client_State) {
 	if s == nil {
 		return
@@ -422,6 +438,11 @@ client_state_free :: proc(s: ^Client_State) {
 
 	for o in s.origins {
 		origin_free(s, o)
+	}
+
+	for &slot in s.websockets {
+		websocket_teardown(&slot)
+		websocket_free(s, &slot)
 	}
 
 	if s.own_h3 && s.h3_pool != nil {
@@ -441,6 +462,7 @@ client_state_free :: proc(s: ^Client_State) {
 	async.signal_release(&s.wake)
 	async.signal_release(&s.notify)
 	delete(s.slots, s.allocator)
+	delete(s.websockets, s.allocator)
 	delete(s.pending)
 	delete(s.completions)
 	delete(s.origins)
@@ -449,7 +471,6 @@ client_state_free :: proc(s: ^Client_State) {
 
 // ---- the task ----
 
-@(private)
 client_task_resume :: proc(data: rawptr) -> async.Resume_Result {
 	s := cast(^Client_State)data
 
@@ -484,14 +505,21 @@ client_task_resume :: proc(data: rawptr) -> async.Resume_Result {
 		s.closing = true
 	}
 
+	ws_yield, ws_live := websockets_resume(s)
+	if ws_yield {
+		result = .Yield
+	}
+
 	if origins_resume(s, active) {
 		result = .Yield
 	}
 
-	done := s.closing && active == 0 && len(s.pending) == 0 && len(s.origins) == 0
+	done := s.closing && active == 0 && ws_live == 0 && len(s.pending) == 0 && len(s.origins) == 0
 	notify := s.notify_pending
 	s.notify_pending = false
 	sync.unlock(&s.mu)
+
+	websocket_callbacks(s)
 
 	if notify {
 		async.signal_wake(s.notify)
@@ -500,7 +528,6 @@ client_task_resume :: proc(data: rawptr) -> async.Resume_Result {
 	return .Done if done else result
 }
 
-@(private)
 client_task_cancel :: proc(data: rawptr) -> async.Resume_Result {
 	s := cast(^Client_State)data
 
@@ -521,7 +548,7 @@ client_task_cancel :: proc(data: rawptr) -> async.Resume_Result {
 		}
 	}
 
-	done := true
+	done := websockets_cancel(s)
 
 	for o in s.origins {
 		if !o.done && async.client_cancel(&o.client) == .Done {
@@ -534,6 +561,8 @@ client_task_cancel :: proc(data: rawptr) -> async.Resume_Result {
 	s.notify_pending = false
 	sync.unlock(&s.mu)
 
+	websocket_callbacks(s)
+
 	if notify {
 		async.signal_wake(s.notify)
 	}
@@ -541,7 +570,6 @@ client_task_cancel :: proc(data: rawptr) -> async.Resume_Result {
 	return .Done if done else .Yield
 }
 
-@(private)
 client_task_done :: proc(data: rawptr) {
 	s := cast(^Client_State)data
 
@@ -556,6 +584,10 @@ client_task_done :: proc(data: rawptr) {
 	}
 	clear(&s.origins)
 
+	for &slot in s.websockets {
+		websocket_teardown(&slot)
+	}
+
 	once := s.once
 	s.finished = true
 	sync.unlock(&s.mu)
@@ -566,5 +598,14 @@ client_task_done :: proc(data: rawptr) {
 
 	if once {
 		async.shutdown(s.runtime)
+	}
+}
+
+client_runtime_error :: proc(error: async.Error) -> Client_Error {
+	return {
+		kind = .Error,
+		network = error.network_cause,
+		allocation = error.allocation_cause,
+		system_code = error.system_code,
 	}
 }

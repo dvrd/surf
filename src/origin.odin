@@ -7,7 +7,6 @@ import "shared:async"
 
 // One origin's async.Client. Origins with the same scheme, host and port share
 // connections; a closing origin is never reused.
-@(private)
 Origin :: struct {
 	client:    async.Client,
 	s:         ^Client_State,
@@ -29,7 +28,6 @@ Origin :: struct {
 }
 
 // waiting: every origin slot is taken; the request stays queued.
-@(private)
 origin_get :: proc(
 	s: ^Client_State,
 	u: async.Http_URL,
@@ -74,31 +72,16 @@ origin_get :: proc(
 	o.port, o.secure, o.decode = u.port, u.secure, decode
 	o.dial_host = o.host
 
-	if net.parse_address(o.host) == nil && s.resolver_ready {
-		endpoints: [DNS_HOSTS_ENTRIES]net.Endpoint
-		count, found, lookup := net.resolver_snapshot_lookup(&s.resolver, o.host, endpoints[:], o.port)
-
-		if found && lookup == nil && count > 0 {
-			chosen := endpoints[0]
-
-			// IPv4 first, as the dial would order a DNS answer.
-			for endpoint in endpoints[:count] {
-				if _, v4 := endpoint.address.(net.IP4_Address); v4 {
-					chosen = endpoint
-					break
-				}
-			}
-
-			literal, e := strings.clone(net.address_to_string(chosen.address, context.temp_allocator), s.allocator)
-			if e != nil {
-				free(o, s.allocator)
-				return nil, false, {kind = .Allocation_Failed, allocation = e, phase = .Admission, write_effect = .Not_Sent}
-			}
-			o.dial_host = literal
+	if address, found := client_hosts_address(s, o.host, o.port); found {
+		literal, e := strings.clone(net.address_to_string(address, context.temp_allocator), s.allocator)
+		if e != nil {
+			free(o, s.allocator)
+			return nil, false, {kind = .Allocation_Failed, allocation = e, phase = .Admission, write_effect = .Not_Sent}
 		}
+		o.dial_host = literal
 	}
 
-	if o.dial_host == o.host && net.parse_address(o.host) == nil && !origin_has_name_servers(s) {
+	if o.dial_host == o.host && net.parse_address(o.host) == nil && len(client_name_servers(s)) == 0 {
 		free(o, s.allocator)
 		return nil, false, {kind = .Dial_Failed, phase = .DNS, write_effect = .Not_Sent}
 	}
@@ -117,16 +100,11 @@ origin_get :: proc(
 	return o, false, {}
 }
 
-@(private)
 origin_config :: proc(s: ^Client_State, o: ^Origin) -> async.Client_Config {
 	// surf applies Config.max_body_size itself, once the head and its status are
 	// known.
 	limit := i64(async.HTTP_MAX_BODY_SIZE)
-	servers: []net.Endpoint
-
-	if s.resolver_ready {
-		servers, _ = net.resolver_snapshot_name_servers(&s.resolver)
-	}
+	servers := client_name_servers(s)
 
 	setup := s.config.setup_timeout
 	if setup == 0 {
@@ -155,9 +133,9 @@ origin_config :: proc(s: ^Client_State, o: ^Origin) -> async.Client_Config {
 	if o.secure {
 		config.dial.tls = async.Dial_TLS {
 			server_name        = origin_sni(o),
-			roots              = origin_roots(s),
-			client_credentials = s.config.tls.client_credentials,
-			session_cache      = s.config.tls.session_cache,
+			roots              = client_roots(s),
+			client_credentials = client_credentials(s),
+			session_cache      = client_session_cache(s),
 		}
 
 		if origin_h3(s, o) {
@@ -171,18 +149,42 @@ origin_config :: proc(s: ^Client_State, o: ^Origin) -> async.Client_Config {
 	return config
 }
 
-@(private)
-origin_has_name_servers :: proc(s: ^Client_State) -> bool {
+client_name_servers :: proc(s: ^Client_State) -> []net.Endpoint {
 	if !s.resolver_ready {
-		return false
+		return nil
 	}
 
 	servers, _ := net.resolver_snapshot_name_servers(&s.resolver)
 
-	return len(servers) > 0
+	return servers
 }
 
-@(private)
+// The address the hosts file gives a host name, IPv4 first, as a dial orders
+// a DNS answer.
+client_hosts_address :: proc(s: ^Client_State, host: string, port: int) -> (net.Address, bool) {
+	if !s.resolver_ready || net.parse_address(host) != nil {
+		return nil, false
+	}
+
+	endpoints: [DNS_HOSTS_ENTRIES]net.Endpoint
+	count, found, lookup := net.resolver_snapshot_lookup(&s.resolver, host, endpoints[:], port)
+
+	if !found || lookup != nil || count == 0 {
+		return nil, false
+	}
+
+	chosen := endpoints[0]
+
+	for endpoint in endpoints[:count] {
+		if _, v4 := endpoint.address.(net.IP4_Address); v4 {
+			chosen = endpoint
+			break
+		}
+	}
+
+	return chosen.address, true
+}
+
 origin_h3 :: proc(s: ^Client_State, o: ^Origin) -> bool {
 	if o.decode != {} {
 		return false
@@ -200,14 +202,13 @@ origin_h3 :: proc(s: ^Client_State, o: ^Origin) -> bool {
 	return false
 }
 
-@(private)
 client_h3_pool :: proc(s: ^Client_State) -> ^async.H3_Pool {
 	if s.h3_pool != nil {
 		return s.h3_pool
 	}
 
 	if s.config.http3_pool != nil {
-		s.h3_pool = s.config.http3_pool
+		s.h3_pool = &s.config.http3_pool._pool
 		return s.h3_pool
 	}
 
@@ -217,7 +218,7 @@ client_h3_pool :: proc(s: ^Client_State) -> ^async.H3_Pool {
 	}
 
 	config := async.H3_Pool_Config {
-		qpack                   = s.config.http3_qpack,
+		qpack                   = http3_qpack(s.config.http3_qpack),
 		ecn                     = s.config.http3_ecn,
 		max_response_body_bytes = async.HTTP_MAX_BODY_SIZE,
 		allocator               = s.allocator,
@@ -235,7 +236,6 @@ client_h3_pool :: proc(s: ^Client_State) -> ^async.H3_Pool {
 
 // The caller's policy sees the URL's host, also when the hosts file gave the
 // address that is dialed.
-@(private)
 origin_policy :: proc(host: string, addresses: []net.Endpoint, user: rawptr) -> bool {
 	o := cast(^Origin)user
 	config := o.s.config
@@ -248,7 +248,6 @@ origin_policy :: proc(host: string, addresses: []net.Endpoint, user: rawptr) -> 
 	return allowed
 }
 
-@(private)
 origin_close :: proc(s: ^Client_State, o: ^Origin) {
 	if o.closing {
 		return
@@ -259,7 +258,6 @@ origin_close :: proc(s: ^Client_State, o: ^Origin) {
 }
 
 // Resumes every origin's client, closes idle ones and frees closed ones.
-@(private)
 origins_resume :: proc(s: ^Client_State, active: int) -> (yield: bool) {
 	for i := 0; i < len(s.origins); {
 		o := s.origins[i]
@@ -293,7 +291,6 @@ origins_resume :: proc(s: ^Client_State, active: int) -> (yield: bool) {
 	return
 }
 
-@(private)
 origin_free :: proc(s: ^Client_State, o: ^Origin) {
 	if o.dial_host != o.host {
 		delete(o.dial_host, s.allocator)
@@ -302,7 +299,6 @@ origin_free :: proc(s: ^Client_State, o: ^Origin) {
 	free(o, s.allocator)
 }
 
-@(private)
 origin_sni :: proc(o: ^Origin) -> string {
 	for i in 0 ..< len(o.host) {
 		c := o.host[i]
@@ -312,10 +308,9 @@ origin_sni :: proc(o: ^Origin) -> string {
 	return string(o.sni_buf[:len(o.host)])
 }
 
-@(private)
-origin_roots :: proc(s: ^Client_State) -> ^async.Root_Pool {
+client_roots :: proc(s: ^Client_State) -> ^async.Root_Pool {
 	if s.config.tls.roots != nil {
-		return s.config.tls.roots
+		return &s.config.tls.roots._pool
 	}
 
 	if s.system_roots == nil {
@@ -334,4 +329,20 @@ origin_roots :: proc(s: ^Client_State) -> ^async.Root_Pool {
 	}
 
 	return s.system_roots
+}
+
+client_credentials :: proc(s: ^Client_State) -> ^async.Credential_Store {
+	if s.config.tls.client_credentials == nil {
+		return nil
+	}
+
+	return s.config.tls.client_credentials._store
+}
+
+client_session_cache :: proc(s: ^Client_State) -> ^async.Session_Cache {
+	if s.config.tls.session_cache == nil {
+		return nil
+	}
+
+	return &s.config.tls.session_cache._cache
 }

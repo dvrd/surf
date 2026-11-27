@@ -8,10 +8,10 @@ import "core:time"
 import "shared:async"
 
 HTTP_Error :: struct {
-	kind:          async.Http_Error_Kind,
+	kind:          HTTP_Error_Kind,
 	transport:     net.Network_Error,
 	network:       net.Network_Error,
-	tls_error:     async.TLS_Error,
+	tls_error:     TLS_Failure,
 	allocation:    mem.Allocator_Error,
 	phase:         HTTP_Phase,
 	write_effect:  HTTP_Write_Effect,
@@ -23,19 +23,19 @@ HTTP_Error :: struct {
 	source_io:     io.Error,
 	// Exact scope admission cause; allocator-enforced byte failures retain the
 	// standard Allocation_Failed kind without guessing a concurrent cause.
-	budget:        async.Budget_Error,
-	decoding:      async.Coding_Decode_Error,
+	budget:        Budget_Failure,
+	decoding:      Decode_Failure,
 }
 
 // Return false to refuse every address. user is Config.address_policy_data.
-Address_Policy :: async.Address_Policy
+Address_Policy :: proc(host: string, addresses: []net.Endpoint, user: rawptr) -> bool
 
 // Everything is borrowed for as long as a request or Client uses the Config.
 TLS_Config :: struct {
 	// Nil trusts the platform's roots.
-	roots:              ^async.Root_Pool,
-	client_credentials: ^async.Credential_Store,
-	session_cache:      ^async.Session_Cache,
+	roots:              ^Trust_Roots,
+	client_credentials: ^Client_Credentials,
+	session_cache:      ^TLS_Session_Cache,
 }
 
 Config :: struct {
@@ -72,23 +72,23 @@ Config :: struct {
 	// Explicit HTTP/3. Default off. Cleartext is refused. A GET or HEAD without a
 	// body falls back to TCP once when nothing reached the wire.
 	http3:               bool,
-	http3_qpack:         async.H3_Qpack_Config,
+	http3_qpack:         HTTP3_Qpack,
 	http3_ecn:           bool,
 	// Written only after an authenticated TLS response. Nil disables discovery.
 	// An advertisement for the origin's own port turns HTTP/3 on for it.
 	alt_svc:             ^Alt_Svc_Cache,
 	// Nil gives each Client its own pool. Borrowed; must outlive every Client
 	// that uses it.
-	http3_pool:          ^async.H3_Pool,
+	http3_pool:          ^HTTP3_Pool,
 }
 
 // Owns header strings/body. Do not copy and destroy twice. Destroy on success;
 // errors return an empty response. Content-Encoding is not decompressed.
 Response :: struct {
-	trailers:         []async.Http_Header,
+	trailers:         []Header,
 	trailer_storage:  []u8,
 	status:           int,
-	headers:          []async.Http_Header,
+	headers:          []Header,
 	body:             []u8,
 	allocator:        mem.Allocator,
 	header_storage:   []u8,
@@ -175,27 +175,28 @@ effective_body_limit :: proc(c: Config) -> int {
 }
 
 http_protocol_error :: proc(error: async.Http_Error) -> HTTP_Error {
-	return {kind = error.kind, allocation = error.allocation, phase = .Protocol}
+	return {kind = http_error_kind(error.kind), allocation = error.allocation, phase = .Protocol}
 }
 
 // Moves the response's complete body allocation into a separately releasable
 // owner. Headers remain with response; response_destroy stays safe afterward.
 // The allocator backing body_storage must survive until the chunk is released.
 // Borrowed/manually constructed bodies are rejected without changing response.
-response_take_body :: proc(response: ^Response) -> (chunk: async.Owned_Chunk, error: async.Owned_Error) {
+response_take_body :: proc(response: ^Response) -> (Body_Chunk, Body_Chunk_Error) {
 	if response == nil ||
 	   len(response.body) != len(response.body_storage) ||
 	   raw_data(response.body) != raw_data(response.body_storage) {
 		return {}, {kind = .Invalid_Input}
 	}
 
-	chunk, error = async.owned_take_dynamic(&response.body_storage)
-
-	if error.kind == .None {
-		response.body = nil
+	owned, error := async.owned_take_dynamic(&response.body_storage)
+	if error.kind != .None {
+		return {}, body_chunk_error(error)
 	}
 
-	return
+	response.body = nil
+
+	return body_chunk_from(owned), {}
 }
 
 // Host, Connection, Content-Length, Transfer-Encoding, Accept-Encoding,

@@ -8,8 +8,6 @@ import "core:net"
 import "core:strings"
 import "core:testing"
 import "core:time"
-import "shared:async"
-import "shared:async/tls"
 import "shared:surf"
 
 Outcome_Peer :: struct {
@@ -35,23 +33,14 @@ outcome_stop :: proc(peer: ^Outcome_Peer) {
 }
 
 @(test)
-zero_legacy_outcomes_do_not_claim_no_write :: proc(t: ^testing.T) {
-	zero: surf.Buffered_HTTP_Result
-	named := surf.Buffered_HTTP_Result {
-		status = 503,
-		ok     = false,
-	}
-
-	testing.expect_value(t, zero.error.write_effect, .Unknown)
-	testing.expect_value(t, named.error.write_effect, .Unknown)
-	testing.expect(t, !zero.transport_ok && !named.transport_ok)
+invalid_config_is_not_sent :: proc(t: ^testing.T) {
 	_, error := surf.execute({method = .POST, url = "http://127.0.0.1/"}, {timeout = -1})
 	testing.expect_value(t, error.phase, .Configuration)
 	testing.expect_value(t, error.write_effect, .Not_Sent)
-	_, result := surf.buffered_http_execute("POST", "http://127.0.0.1/", nil, nil, "")
-	testing.expect_value(t, result.error.kind, .Insecure_URL)
-	testing.expect_value(t, result.error.phase, .Configuration)
-	testing.expect_value(t, result.error.write_effect, .Not_Sent)
+	_, insecure := surf.execute({method = .POST, url = "http://127.0.0.1/"}, {})
+	testing.expect_value(t, insecure.kind, .Insecure_URL)
+	testing.expect_value(t, insecure.phase, .Configuration)
+	testing.expect_value(t, insecure.write_effect, .Not_Sent)
 }
 
 // Each failure after the request reached the peer keeps the write effect
@@ -60,7 +49,7 @@ zero_legacy_outcomes_do_not_claim_no_write :: proc(t: ^testing.T) {
 public_execute_distinguishes_read_and_timeout_after_the_write :: proc(t: ^testing.T) {
 	for sample in ([]struct {
 			action:  loopback.Action,
-			kind:    async.Http_Error_Kind,
+			kind:    surf.HTTP_Error_Kind,
 			phase:   surf.HTTP_Phase,
 		} {
 			{.Close, .Unexpected_EOF, .Read},
@@ -197,25 +186,25 @@ validated_status_survives_response_allocation_failure :: proc(t: ^testing.T) {
 @(test)
 tls_record_failures_preserve_tls_but_transport_causes_remain_specific :: proc(t: ^testing.T) {
 	broken_record := surf.http_error_classify(
-		{kind = .IO_Failed, tls_error = tls.Protocol_Error.Bad_Record_Mac},
+		{kind = .IO_Failed, tls_error = .Bad_Record_Mac},
 		.Read,
 		.Unknown,
 	)
 	testing.expect_value(t, broken_record.phase, .TLS)
 	transport_read := surf.http_error_classify(
-		{kind = .IO_Failed, tls_error = net.TCP_Recv_Error.Connection_Closed},
+		{kind = .IO_Failed, tls_error = .Transport, transport = net.TCP_Recv_Error.Connection_Closed},
 		.Read,
 		.Unknown,
 	)
 	testing.expect_value(t, transport_read.phase, .Read)
 	timed_out := surf.http_error_classify(
-		{kind = .IO_Failed, tls_error = net.TCP_Recv_Error.Timeout},
+		{kind = .IO_Failed, tls_error = .Transport, transport = net.TCP_Recv_Error.Timeout},
 		.Read,
 		.Unknown,
 	)
 	testing.expect_value(t, timed_out.phase, .Deadline)
 	cancelled := surf.http_error_classify(
-		{kind = .TLS_Failed, tls_error = async.TLS_General_Error.Cancelled},
+		{kind = .TLS_Failed, tls_error = .Cancelled},
 		.TLS,
 		.Not_Sent,
 	)
@@ -292,31 +281,6 @@ partial_response_allocation_failures_release_all_owned_storage :: proc(t: ^testi
 		surf.response_destroy(&response)
 		surf.response_destroy(&response)
 	}
-}
-
-// The legacy entry point copies its header lines with the temporary allocator
-// before anything is dialed.
-@(test)
-legacy_header_allocation_failure_is_typed_and_stops_setup :: proc(t: ^testing.T) {
-	previous := context.temp_allocator
-	state := Outcome_Failing_Allocator {
-		backing = previous,
-		fail_at = 1,
-	}
-
-	context.temp_allocator = {
-		procedure = outcome_fail_allocate,
-		data      = &state,
-	}
-
-	defer context.temp_allocator = previous
-	headers := []string{"X-Trace: 1"}
-	_, result := surf.buffered_http_execute("POST", "http://127.0.0.1/", nil, headers, "", allow_http = true)
-	testing.expect_value(t, result.error.kind, .Allocation_Failed)
-	testing.expect_value(t, result.error.allocation, .Out_Of_Memory)
-	testing.expect_value(t, result.error.phase, .Configuration)
-	testing.expect_value(t, result.error.write_effect, .Not_Sent)
-	testing.expect_value(t, state.count, 1)
 }
 
 @(test)

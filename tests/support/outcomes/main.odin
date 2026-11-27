@@ -1,6 +1,5 @@
 package main
 
-import "shared:async"
 import "shared:surf"
 import "core:fmt"
 import "core:os"
@@ -63,53 +62,16 @@ main :: proc() {
 	surf.response_destroy(&response)
 	assert((refused.phase == .Connect || refused.phase == .Deadline) && refused.write_effect == .Not_Sent)
 
-	for sample in ([]struct{path: string, phase: surf.HTTP_Phase, status: int, effect: surf.HTTP_Write_Effect}{
-		{"/curl-reset", .Read, 0, .Unknown},
-		{"/curl-large", .Body_Limit, 200, .Response_Received},
-		{"/curl-malformed", .Protocol, 0, .Unknown},
-		{"/curl-slow", .Deadline, 0, .Unknown},
-	}) {
-		url := fmt.aprintf("%s%s", http_url, sample.path)
-		_, result := surf.buffered_http_execute("POST", url, []u8{'x'}, nil, "", allow_http = true, timeout_ms = 200)
-		assert(!result.transport_ok && !result.ok && result.error.kind != .None)
-
-		if sample.path == "/curl-malformed" && result.error.provider_code == 1 {
-			assert(result.error.phase == .Protocol || result.error.phase == .Unknown)
-		} else {
-			assert(result.error.phase == sample.phase)
-		}
-
-		assert(result.status == sample.status && result.error.status == sample.status)
-		assert(result.error.write_effect == sample.effect)
-		delete(url)
-	}
-
-	_, curl_refused := surf.buffered_http_execute("POST", refused_url, nil, nil, "", allow_http = true)
-	fmt.printf("REFUSED kind=%v phase=%v effect=%v status=%d provider=%d network=%v transport=%v\n",
-		curl_refused.error.kind, curl_refused.error.phase, curl_refused.error.write_effect,
-		curl_refused.status, curl_refused.error.provider_code, curl_refused.error.network,
-		curl_refused.error.transport)
-	os.flush(os.stdout)
-	assert((curl_refused.error.phase == .Connect || curl_refused.error.phase == .Deadline) &&
-		curl_refused.error.write_effect == .Not_Sent)
-
-	status_url := fmt.aprintf("%s/status", http_url)
-	defer delete(status_url)
-	_, status_result := surf.buffered_http_execute("POST", status_url, nil, nil, "", allow_http = true)
-	assert(status_result.transport_ok && !status_result.ok && status_result.status == 503 && status_result.error.kind == .None)
-
-	pool := new(async.Root_Pool)
+	pool := new(surf.Trust_Roots)
 	defer free(pool)
-	defer async.root_pool_destroy(pool)
-	assert(async.root_pool_load_file(pool, wrong_root) == nil)
+	defer surf.trust_roots_destroy(pool)
+	assert(surf.trust_roots_load_file(pool, wrong_root) == .None)
 
 	tls_config := surf.Config{tls = {roots = pool}, setup_timeout = time.Second}
 	tls_response, tls_error := surf.execute({method = .POST, url = tls_url}, tls_config)
 	surf.response_destroy(&tls_response)
 	assert(tls_error.kind == .TLS_Failed && tls_error.phase == .TLS && tls_error.write_effect == .Not_Sent)
 
-	_, curl_tls := surf.buffered_http_execute("POST", tls_url, nil, nil, wrong_root)
-	assert(curl_tls.error.kind == .TLS_Failed && curl_tls.error.phase == .TLS && curl_tls.error.write_effect == .Not_Sent)
 
-	fmt.println("16 public native/curl outcome fixtures passed")
+	fmt.println("public outcome fixtures passed")
 }

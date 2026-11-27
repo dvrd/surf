@@ -12,7 +12,7 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
-import "shared:async"
+import "shared:surf"
 
 PEER_DIR :: "tests/support/http2"
 
@@ -225,10 +225,10 @@ peer_url :: proc(peer: ^Peer, path: string) -> string {
 	return fmt.tprintf("https://localhost:%d%s", peer.port, path)
 }
 
-peer_roots :: proc(t: ^testing.T, path: string) -> ^async.Root_Pool {
-	pool := new(async.Root_Pool)
+peer_roots :: proc(t: ^testing.T, path: string) -> ^surf.Trust_Roots {
+	pool := new(surf.Trust_Roots)
 
-	if !testing.expect_value(t, async.root_pool_load_file(pool, path), nil) {
+	if !testing.expect_value(t, surf.trust_roots_load_file(pool, path), surf.Trust_Roots_Error.None) {
 		free(pool)
 		return nil
 	}
@@ -236,7 +236,7 @@ peer_roots :: proc(t: ^testing.T, path: string) -> ^async.Root_Pool {
 	return pool
 }
 
-peer_roots_free :: proc(pool: ^async.Root_Pool) {
-	async.root_pool_destroy(pool)
+peer_roots_free :: proc(pool: ^surf.Trust_Roots) {
+	surf.trust_roots_destroy(pool)
 	free(pool)
 }

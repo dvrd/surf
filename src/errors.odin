@@ -1,10 +1,6 @@
 package surf
 
-import "base:runtime"
-import "core:io"
 import "core:net"
-import "core:reflect"
-import "shared:async"
 
 // Classify only facts available from existing typed diagnostics. A received
 // response is not proof of business success, transaction commit, or replay safety.
@@ -52,35 +48,18 @@ http_error_classify :: proc(
 	}
 	transport := result.transport
 
-	#partial switch cause in result.tls_error {
-	case async.TLS_General_Error:
-		#partial switch cause {
-		case .Invalid_Config, .Invalid_State, .Invalid_Trust_Roots:
-			if result.kind == .TLS_Failed {
-				result.phase = .Configuration
-			}
-		case .Cancelled:
-			result.phase = .Cancellation
+	#partial switch result.tls_error {
+	case .None, .Close_Notify, .Transport, .Allocation_Failed:
+	case .Invalid_Config, .Invalid_State, .Invalid_Trust_Roots:
+		if result.kind == .TLS_Failed {
+			result.phase = .Configuration
 		}
-	case net.TCP_Send_Error:
-		if transport == nil {
-			transport = cause
-		}
-	case net.TCP_Recv_Error:
-		if transport == nil {
-			transport = cause
-		}
-	case net.Dial_Error:
-		if transport == nil {
-			transport = cause
-		}
-	case io.Error, runtime.Allocator_Error:
+	case .Cancelled:
+		result.phase = .Cancellation
 	case:
-		// A TLS record or alert failure stays TLS; a clean close_notify does not.
-		if !tls_clean_close(result.tls_error) {
-			result.phase = .TLS
-		}
+		result.phase = .TLS
 	}
+
 	// A transport cause keeps the read or write phase until a timeout or
 	// cancellation is known.
 	carried_phase := http_network_phase(transport)
@@ -133,13 +112,4 @@ http_network_phase :: proc(error: net.Network_Error) -> HTTP_Phase {
 	}
 
 	return .Unknown
-}
-
-// The TLS alert enum is not exported by name: tell its zero value and
-// close_notify apart from a real failure by the variant's name.
-tls_clean_close :: proc(error: async.TLS_Error) -> bool {
-	variant := reflect.get_union_variant(error)
-	name, known := reflect.enum_name_from_value_any(variant)
-
-	return !known || name == "None" || name == "Close_Notify"
 }

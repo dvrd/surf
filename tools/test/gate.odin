@@ -14,7 +14,6 @@ GATE_NAMES :: [?]string{
 	"budgets",
 	"cancel",
 	"client",
-	"compatibility",
 	"concurrency",
 	"consumer",
 	"failure",
