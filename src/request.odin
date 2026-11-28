@@ -443,6 +443,20 @@ request_head :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 		return true
 	}
 
+	if head_coding_undecoded(slot, head) {
+		request_fail(
+			s,
+			slot,
+			{
+				kind = .Unsupported_Content_Encoding,
+				phase = .Protocol,
+				write_effect = .Response_Received,
+				status = head.status,
+			},
+		)
+		return false
+	}
+
 	if failure := response_head_copy(&slot.response, head.status, head.headers, s.response_alloc);
 	   failure.kind != .None {
 		request_fail(s, slot, failure)
@@ -625,6 +639,22 @@ status_redirect :: proc(status: int) -> bool {
 	switch status {
 	case 301, 302, 303, 307, 308:
 		return true
+	}
+
+	return false
+}
+
+// A decoded body was asked for, but async passes this coding through as sent.
+head_coding_undecoded :: proc(slot: ^Slot, head: async.Client_Response) -> bool {
+	if slot.decode == {} || head.coding != .Identity || head.content_length == 0 {
+		return false
+	}
+
+	for h in head.headers {
+		if strings.equal_fold(h.name, "Content-Encoding") &&
+		   !strings.equal_fold(h.value, "identity") {
+			return true
+		}
 	}
 
 	return false
