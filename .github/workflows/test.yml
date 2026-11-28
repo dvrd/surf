@@ -1,0 +1,60 @@
+name: Test surf
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Read the pinned Odin fork commit and the async release
+        run: |
+          echo "ODIN_COMMIT=$(cat ODIN_COMMIT)" >> "$GITHUB_ENV"
+          echo "ASYNC_COMMIT=$(jq -r '.packages[] | select(.name == "async") | .commit' .krs/packages.json)" >> "$GITHUB_ENV"
+
+      - name: Check out the Odin fork
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: dvrd/Odin
+          ref: ${{ env.ODIN_COMMIT }}
+          path: odin
+
+      # The commit .krs/packages.json records, so the suites run against the
+      # async release this checkout pins and not a newer one.
+      - name: Check out the pinned async
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: dvrd/async
+          ref: ${{ env.ASYNC_COMMIT }}
+          path: async
+
+      - name: Install dependencies
+        run: brew install llvm go-task
+
+      - name: Build the Odin compiler
+        run: cd odin && PATH="$(brew --prefix llvm)/bin:$PATH" ./build_odin.sh release
+
+      - name: Stage the shared collection
+        run: |
+          mkdir -p "$RUNNER_TEMP/shared"
+          ln -s "$GITHUB_WORKSPACE/async/src" "$RUNNER_TEMP/shared/async"
+
+      - name: Vet the library
+        run: |
+          "$GITHUB_WORKSPACE/odin/odin" check src -no-entry-point -vet -warnings-as-errors \
+            -collection:shared="$RUNNER_TEMP/shared"
+
+      - name: Run the suites
+        run: WEBTOOLS_SHARED="$RUNNER_TEMP/shared" ODIN="$GITHUB_WORKSPACE/odin/odin" task test
+
+      - name: Run the acceptance gates
+        run: WEBTOOLS_SHARED="$RUNNER_TEMP/shared" ODIN="$GITHUB_WORKSPACE/odin/odin" task gate
