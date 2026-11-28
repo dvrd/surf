@@ -4,9 +4,9 @@
     {
       "name": "async",
       "source": "https://github.com/dvrd/async.git",
-      "tag": "v0.5.1",
-      "commit": "f07c84af17fdb18a0f77c646dc4726df6d033e00",
-      "hash": "784af7238e187642195bf7fdbd1d5cdbd69397c51a68f3585bdaa30c4fbf627f"
+      "tag": "v0.5.2",
+      "commit": "0b59f15603c333b6d0ad475fd6bbbc0d96eb09cc",
+      "hash": "47e367d41d80eb86279640deb5f078901a960b03b9ea61f3fdb00284b6052110"
     }
   ]
 }
