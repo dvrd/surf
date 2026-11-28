@@ -90,6 +90,8 @@ Slot :: struct {
 	chunks:         [dynamic]async.Owned_Chunk,
 	received:       u64,
 	stream_end:     bool,
+	// True while s.completions holds this slot's entry.
+	in_completions: bool,
 }
 
 // Drives one request as far as it can go now.
@@ -566,11 +568,13 @@ request_finish :: proc(s: ^Client_State, slot: ^Slot) {
 		return
 	}
 
-	assert(slot.phase == .Done)
-	// Reserved for one entry per slot by client_init, so this never allocates.
+	assert(slot.phase == .Done && !slot.in_completions)
+	// client_init reserved one entry per slot, and slot_clear takes a slot's
+	// entry out again, so this never allocates.
 	assert(len(s.completions) < cap(s.completions))
 	index := u32(slot_index(s, slot))
 	append(&s.completions, index)
+	slot.in_completions = true
 	s.notify_pending = true
 	slot_signal(s, slot)
 }
@@ -622,6 +626,18 @@ upload_queue_clear :: proc(slot: ^Slot) {
 slot_clear :: proc(s: ^Client_State, slot: ^Slot) {
 	if slot.x_live {
 		request_exchange_end(s, slot)
+	}
+
+	// A request released before client_poll reported it still has its entry.
+	if slot.in_completions {
+		index := u32(slot_index(s, slot))
+
+		for queued, at in s.completions {
+			if queued == index {
+				ordered_remove(&s.completions, at)
+				break
+			}
+		}
 	}
 
 	upload_queue_clear(slot)

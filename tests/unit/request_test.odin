@@ -99,3 +99,30 @@ client_start_bounds_connections_per_origin :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+@(test)
+released_requests_leave_no_completion_behind :: proc(t: ^testing.T) {
+	c: Client
+	capacities := DEFAULT_CAPACITIES
+	capacities.requests = 2
+
+	if !testing.expect_value(
+		t,
+		client_start(&c, {capacities = capacities, http = {allow_http = true}}).kind,
+		Client_Error_Kind.None,
+	) {
+		return
+	}
+	defer client_destroy(&c)
+
+	// client_execute releases each request without calling client_poll.
+	for _ in 0 ..< 4 * capacities.requests {
+		response, error := client_execute(&c, {method = .GET, url = "http://127.0.0.1:1/"})
+		response_destroy(&response)
+		testing.expect_value(t, error.phase, HTTP_Phase.Connect)
+	}
+
+	testing.expect_value(t, len(c._state.completions), 0)
+	_, reported := client_poll(&c)
+	testing.expect(t, !reported)
+}

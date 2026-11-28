@@ -47,10 +47,10 @@ client_poll :: proc(c: ^Client) -> (Completion, bool) {
 		index := s.completions[0]
 		ordered_remove(&s.completions, 0)
 		slot := &s.slots[index]
+		assert(slot.in_completions && slot.phase == .Done)
+		slot.in_completions = false
 
-		if slot.phase == .Done {
-			return {request = slot_handle(s, slot), error = slot.error}, true
-		}
+		return {request = slot_handle(s, slot), error = slot.error}, true
 	}
 
 	return {}, false
@@ -679,6 +679,20 @@ slot_fill :: proc(
 	if slot.upload == .Source {
 		slot.buffer, error = make([]u8, UPLOAD_BUFFER_SIZE, s.allocator)
 		if error != nil {
+			return {kind = .Allocation_Failed}
+		}
+	}
+
+	// Both queues get their full capacity here, so queueing a chunk later
+	// never allocates and cannot fail part way through a body.
+	if slot.upload == .Queue {
+		if reserve(&slot.queue, s.capacities.upload_chunks) != nil {
+			return {kind = .Allocation_Failed}
+		}
+	}
+
+	if slot.stream {
+		if reserve(&slot.chunks, s.capacities.response_chunks) != nil {
 			return {kind = .Allocation_Failed}
 		}
 	}

@@ -173,11 +173,8 @@ client_upload_submit :: proc(
 		return .Backpressure, {}
 	}
 
-	if _, e := append(&slot.queue, source._owned); e != nil {
-		sync.unlock(&s.mu)
-		return .Invalid, {kind = .Allocation_Failed}
-	}
-
+	assert(len(slot.queue) < cap(slot.queue))
+	append(&slot.queue, source._owned)
 	source^ = {}
 	sync.unlock(&s.mu)
 	async.signal_wake(s.wake)
@@ -241,12 +238,8 @@ stream_body :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 				return false
 			}
 
-			if _, e := append(&slot.chunks, chunk); e != nil {
-				async.owned_destroy(&chunk)
-				request_fail(s, slot, {kind = .Allocation_Failed, allocation = e, phase = .Read})
-				return false
-			}
-
+			assert(len(slot.chunks) < cap(slot.chunks))
+			append(&slot.chunks, chunk)
 			slot_signal(s, slot)
 		case .Pending:
 			return false
