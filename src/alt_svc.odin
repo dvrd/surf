@@ -128,7 +128,7 @@ alt_svc_h3 :: proc(value: string) -> (port, ma: int, ok: bool) {
 
 	for rune in token {
 		if !is_digit(rune) {
-			return
+			return 0, 0, false
 		}
 		port = port * 10 + int(rune - '0')
 		if port > 65535 {
@@ -142,7 +142,7 @@ alt_svc_h3 :: proc(value: string) -> (port, ma: int, ok: bool) {
 	tail := rest[end + 1:]
 	loc := strings.index(tail, "ma=")
 	if loc < 0 {
-		return
+		return 0, 0, false
 	}
 
 	for rune in tail[loc + 3:] {
@@ -157,7 +157,9 @@ alt_svc_h3 :: proc(value: string) -> (port, ma: int, ok: bool) {
 		}
 	}
 
-	ok = ma > 0
+	if ma == 0 {
+		return 0, 0, false
+	}
 
-	return
+	return port, ma, true
 }
