@@ -443,7 +443,7 @@ submit :: proc(f: ^Fixture, endpoint: net.Endpoint) -> surf.Request_Handle {
 		request.headers = fields[:]
 	}
 
-	duration := 250 * time.Millisecond if f.mode == "redirect-deadline" else 10 * time.Second
+	duration := time.Second if f.mode == "redirect-deadline" else 10 * time.Second
 
 	if extended_correctness_budget(f) {
 		duration = 30 * time.Second

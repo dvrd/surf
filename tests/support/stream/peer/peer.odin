@@ -3247,8 +3247,10 @@ redirects :: proc(f: ^Fixture) {
 	if f.mode == "redirect-cross-auth" {
 		require(head.authorization == "Bearer owned-fixture", "initial authorization")
 	}
+	// Two 600 ms holds straddle the client's 1 s deadline, and the first
+	// leaves 400 ms for a slow machine to reach the second hop.
 	if f.mode == "redirect-deadline" {
-		time.sleep(150 * time.Millisecond)
+		time.sleep(600 * time.Millisecond)
 	}
 	if f.mode == "redirect-malformed" {
 		write_head(&first, 302, 16, fields)
@@ -3343,7 +3345,7 @@ redirects :: proc(f: ^Fixture) {
 		f.authorization_gone = true
 	}
 	if f.mode == "redirect-deadline" {
-		time.sleep(150 * time.Millisecond)
+		time.sleep(600 * time.Millisecond)
 		_ = write_all(
 			&last,
 			bytes_of("HTTP/1.1 200 Fixture\r\nContent-Length: 2\r\nConnection: close\r\n\r\n"),

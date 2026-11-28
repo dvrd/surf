@@ -350,7 +350,7 @@ validate_error :: proc(mode: string, size: int, native, peer: json.Value) -> str
 		}
 		if mode == "redirect-deadline" {
 			elapsed, elapsed_ok := support.i64_field(native, "elapsed_ns")
-			if !elapsed_ok || elapsed < 200_000_000 || elapsed > 800_000_000 {
+			if !elapsed_ok || elapsed < 900_000_000 || elapsed > 2_500_000_000 {
 				return "redirect deadline"
 			}
 		}
