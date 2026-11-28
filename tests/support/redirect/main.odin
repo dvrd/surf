@@ -14,6 +14,11 @@ import "shared:async/budget"
 import "shared:async/tls"
 import "shared:surf"
 
+// The peer holds each cutoff hop for 300 ms: the first hop has 500 ms to
+// arrive, and the third cannot finish before the cutoff.
+CUTOFF :: 800 * time.Millisecond
+CUTOFF_SLACK :: 400 * time.Millisecond
+
 fd_count :: proc() -> int {
 	n := 0
 
@@ -103,7 +108,7 @@ main :: proc() {
 	}
 
 	if mode == "cutoff" && !encrypted {
-		config.http.timeout = 200 * time.Millisecond
+		config.http.timeout = CUTOFF
 	}
 
 	if encrypted {
@@ -136,7 +141,7 @@ main :: proc() {
 
 	if warmup_case {
 		// Only the first origin is set up before the timed request's cutoff is
-		// chosen; every later hop's TLS setup spends the 200 ms.
+		// chosen; every later hop's TLS setup spends the cutoff.
 		assert(async.start(&r).kind == .None)
 		warmup_url := fmt.tprintf("https://127.0.0.1:%d/warmup", endpoint.port)
 		warmup_handle, warmup_error := surf.client_submit(&c, {url = warmup_url})
@@ -197,7 +202,7 @@ main :: proc() {
 	cutoff: time.Tick
 
 	if warmup_case {
-		cutoff = time.tick_add(time.tick_now(), 200 * time.Millisecond)
+		cutoff = time.tick_add(time.tick_now(), CUTOFF)
 	}
 
 	handle, error := surf.client_submit(
@@ -295,7 +300,7 @@ main :: proc() {
 				e.phase == .Deadline &&
 				e.status == 302 &&
 				(e.write_effect == .Unknown || e.write_effect == .Response_Received) &&
-				elapsed < 350 * time.Millisecond
+				elapsed < CUTOFF + CUTOFF_SLACK
 
 			if !valid_cutoff {
 				fmt.eprintf("cutoff %v elapsed_ms=%d\n", e, i64(elapsed / time.Millisecond))

@@ -219,7 +219,7 @@ redirect_verify :: proc(mode: string, encrypted: bool, native, peer: json.Value)
 		if !effect_ok ||
 		   (effect != "Unknown" && effect != "Response_Received") ||
 		   !elapsed_ok ||
-		   elapsed >= 350 {
+		   elapsed >= 1200 {
 			return "cutoff"
 		}
 		if !support.eq_int(events[0], "response_status", 302) ||

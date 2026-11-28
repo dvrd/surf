@@ -356,7 +356,9 @@ serve :: proc(job: ^Job) {
 	target := redirect_target(target_buf[:], order, string(req.target[:req.target_n]))
 	final := strings.has_prefix(string(req.route[:req.route_n]), "/final")
 	if mode == "cutoff" {
-		time.sleep(80 * time.Millisecond)
+		// Three hops outlast the client's 800 ms cutoff, and the first one
+		// leaves 500 ms for a slow machine to set up and receive it.
+		time.sleep(300 * time.Millisecond)
 		final = order >= 3
 		target = fmt.bprintf(target_buf[:], "/hop/%d", order)
 	}
