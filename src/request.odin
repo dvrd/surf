@@ -126,7 +126,10 @@ request_step :: proc(s: ^Client_State, slot: ^Slot) -> (yield: bool) {
 		}
 	}
 
-	return false
+	yield = s.step_yield
+	s.step_yield = false
+
+	return yield
 }
 
 request_begin :: proc(s: ^Client_State, slot: ^Slot) -> bool {
@@ -475,7 +478,7 @@ request_head :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 request_body :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 	limit := effective_body_limit(s.config)
 
-	for {
+	for _ in 0 ..< CLIENT_BODY_STEP_LIMIT {
 		n, error := async.client_exchange_read(&slot.x, s.read_buffer[:])
 
 		#partial switch error.kind {
@@ -507,9 +510,14 @@ request_body :: proc(s: ^Client_State, slot: ^Slot) -> bool {
 			return false
 		}
 	}
+
+	s.step_yield = true
+
+	return false
 }
 
 request_complete :: proc(s: ^Client_State, slot: ^Slot) {
+	assert(slot.phase == .Active)
 	request_exchange_end(s, slot)
 	slot.response.body = slot.response.body_storage[:]
 	slot.error = {}
@@ -523,6 +531,8 @@ request_exchange_fail :: proc(s: ^Client_State, slot: ^Slot, error: async.Error)
 }
 
 request_fail :: proc(s: ^Client_State, slot: ^Slot, error: HTTP_Error) {
+	assert(slot.phase == .Active)
+	assert(error.kind != .None)
 	failure := error
 	effect := failure.write_effect
 
@@ -556,6 +566,9 @@ request_finish :: proc(s: ^Client_State, slot: ^Slot) {
 		return
 	}
 
+	assert(slot.phase == .Done)
+	// Reserved for one entry per slot by client_init, so this never allocates.
+	assert(len(s.completions) < cap(s.completions))
 	index := u32(slot_index(s, slot))
 	append(&s.completions, index)
 	s.notify_pending = true
@@ -570,6 +583,7 @@ request_exchange_end :: proc(s: ^Client_State, slot: ^Slot) {
 	async.client_exchange_destroy(&slot.x)
 	slot.x_live = false
 	origin := slot.origin
+	assert(origin != nil && origin.active > 0)
 	slot.origin = nil
 	origin.active -= 1
 
@@ -587,7 +601,12 @@ slot_signal :: proc(s: ^Client_State, slot: ^Slot) {
 }
 
 slot_index :: proc(s: ^Client_State, slot: ^Slot) -> int {
-	return int((uintptr(slot) - uintptr(raw_data(s.slots))) / size_of(Slot))
+	offset := uintptr(slot) - uintptr(raw_data(s.slots))
+	assert(uintptr(slot) >= uintptr(raw_data(s.slots)) && offset % size_of(Slot) == 0)
+	index := int(offset / size_of(Slot))
+	assert(index < len(s.slots))
+
+	return index
 }
 
 upload_queue_clear :: proc(slot: ^Slot) {

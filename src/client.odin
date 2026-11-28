@@ -33,6 +33,7 @@ CLIENT_DEFAULT_WEBSOCKETS :: 8
 CLIENT_DEFAULT_IDLE_TIMEOUT :: 30 * time.Second
 CLIENT_MAX_REQUESTS :: 4096
 CLIENT_MAX_ORIGINS :: 1024
+CLIENT_MAX_CONNECTIONS :: 256
 CLIENT_MAX_CHUNKS :: 64
 CLIENT_MAX_WEBSOCKETS :: 256
 DNS_MAX_NAME_SERVERS :: 8
@@ -42,6 +43,19 @@ DNS_HOSTS_ENTRIES :: 8
 // Bounds a graceful close of an origin's connections.
 CLIENT_CLOSE_TIMEOUT :: 2 * time.Second
 CLIENT_READ_BYTES :: 16 << 10
+// Reads of one buffered body per task turn, so one large response cannot hold
+// the client's lock and starve the other requests.
+CLIENT_BODY_STEP_LIMIT :: 64
+
+#assert(CLIENT_DEFAULT_REQUESTS > 0 && CLIENT_DEFAULT_REQUESTS <= CLIENT_MAX_REQUESTS)
+#assert(CLIENT_DEFAULT_ORIGINS > 0 && CLIENT_DEFAULT_ORIGINS <= CLIENT_MAX_ORIGINS)
+#assert(CLIENT_DEFAULT_CONNECTIONS > 0 && CLIENT_DEFAULT_CONNECTIONS <= CLIENT_MAX_CONNECTIONS)
+#assert(CLIENT_DEFAULT_UPLOAD_CHUNKS > 0 && CLIENT_DEFAULT_UPLOAD_CHUNKS <= CLIENT_MAX_CHUNKS)
+#assert(CLIENT_DEFAULT_RESPONSE_CHUNKS > 0 && CLIENT_DEFAULT_RESPONSE_CHUNKS <= CLIENT_MAX_CHUNKS)
+#assert(CLIENT_DEFAULT_WEBSOCKETS >= 0 && CLIENT_DEFAULT_WEBSOCKETS <= CLIENT_MAX_WEBSOCKETS)
+// A slot index fits the u32 of a Request_Handle and of the index queues.
+#assert(CLIENT_MAX_REQUESTS <= 1 << 32 - 1)
+#assert(CLIENT_BODY_STEP_LIMIT > 0)
 
 Request_Handle :: struct {
 	owner_id:   u64,
@@ -164,6 +178,8 @@ Client_State :: struct {
 	system_roots:   ^async.Root_Pool,
 	own_h3:         bool,
 	read_buffer:    [CLIENT_READ_BYTES]u8,
+	// A request stopped at a step limit with work left: resume without waiting.
+	step_yield:     bool,
 	// One request, then the task closes and shuts the runtime down.
 	once:           bool,
 	closing:        bool,
@@ -199,6 +215,7 @@ client_init :: proc(
 	   caps.origins <= 0 ||
 	   caps.origins > CLIENT_MAX_ORIGINS ||
 	   caps.connections_per_origin <= 0 ||
+	   caps.connections_per_origin > CLIENT_MAX_CONNECTIONS ||
 	   caps.upload_chunks <= 0 ||
 	   caps.upload_chunks > CLIENT_MAX_CHUNKS ||
 	   caps.response_chunks <= 0 ||

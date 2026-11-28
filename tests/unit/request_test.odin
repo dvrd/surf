@@ -77,3 +77,25 @@ request_validate_refuses_framing_and_bad_input_before_send :: proc(t: ^testing.T
 		.None,
 	)
 }
+
+@(test)
+client_start_bounds_connections_per_origin :: proc(t: ^testing.T) {
+	for sample in ([]struct {
+			connections: int,
+			kind:        Client_Error_Kind,
+		} {
+			{0, .Invalid_Config},
+			{CLIENT_MAX_CONNECTIONS + 1, .Invalid_Config},
+			{CLIENT_MAX_CONNECTIONS, .None},
+		}) {
+		c: Client
+		capacities := DEFAULT_CAPACITIES
+		capacities.connections_per_origin = sample.connections
+		started := client_start(&c, {capacities = capacities})
+		testing.expect_value(t, started.kind, sample.kind)
+
+		if started.kind == .None {
+			client_destroy(&c)
+		}
+	}
+}

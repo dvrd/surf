@@ -554,6 +554,8 @@ submit :: proc(
 	}
 
 	slot.phase = .Pending
+	// Reserved for one entry per slot by client_init, so this never allocates.
+	assert(len(s.pending) < cap(s.pending))
 	append(&s.pending, u32(slot_index(s, slot)))
 	handle := slot_handle(s, slot)
 	sync.unlock(&s.mu)

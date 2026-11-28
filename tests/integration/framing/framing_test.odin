@@ -78,3 +78,39 @@ status_without_body_and_ordinary_body_frame_by_status_and_length :: proc(t: ^tes
 		testing.expect(t, strings.has_prefix(request, "GET / HTTP/1.1\r\n"))
 	}
 }
+
+// Larger than one task turn reads (CLIENT_BODY_STEP_LIMIT reads of
+// CLIENT_READ_BYTES): the client must resume by itself and deliver every byte.
+@(test)
+buffered_body_larger_than_one_turn_arrives_whole :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 15 * time.Second)
+	size :: 3 * surf.CLIENT_BODY_STEP_LIMIT * surf.CLIENT_READ_BYTES + 12345
+	wire: strings.Builder
+	strings.builder_init(&wire)
+	defer strings.builder_destroy(&wire)
+	fmt.sbprintf(&wire, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", size)
+
+	for index in 0 ..< size {
+		strings.write_byte(&wire, u8(index * 31 + index >> 9))
+	}
+
+	response, error, _, _ := framing_fetch(t, .GET, strings.to_string(wire), size)
+	defer surf.response_destroy(&response)
+	testing.expect_value(t, error.kind, .None)
+	testing.expect_value(t, response.status, 200)
+
+	if !testing.expect_value(t, len(response.body), size) {
+		return
+	}
+
+	intact := true
+
+	for value, index in response.body {
+		if value != u8(index * 31 + index >> 9) {
+			intact = false
+			break
+		}
+	}
+
+	testing.expect(t, intact)
+}
